@@ -19,16 +19,25 @@ from __future__ import annotations
 
 import ast
 import pathlib
-import tomllib
+import re
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _min_version() -> tuple[int, int]:
-    spec = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["requires-python"]
-    digits = spec.lstrip(">=~^ ")
-    major, _, minor = digits.partition(".")
-    return int(major), int(minor.split(".")[0])
+    """Read requires-python without a TOML parser.
+
+    `tomllib` is 3.11+, so using it here made this very test unimportable on 3.10, the version it
+    exists to protect. Fourth instance in this project of an instrument carrying the defect it was
+    written to detect, so: one regex, no imports beyond the standard library of the oldest version
+    supported.
+    """
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'^\s*requires-python\s*=\s*["\']([^"\']+)["\']', text, re.M)
+    assert m, "requires-python not found in pyproject.toml"
+    v = re.search(r"(\d+)\.(\d+)", m.group(1))
+    assert v, f"could not read a version out of {m.group(1)!r}"
+    return int(v.group(1)), int(v.group(2))
 
 
 def _python_files() -> list[pathlib.Path]:
