@@ -89,51 +89,66 @@ You never pick a mode. T2VA, I2VA, FL2VA, L2VA and Ref2VA are decided by what yo
 the wiring is the only thing that can decide them correctly.
 
 ```console
-$ h3ir compile "he reads a letter by the window and decides to leave" --seconds 10 --image character.png:"the man"
+$ h3ir compile "the woman climbs onto the creature's back and they take off into the storm" \
+    --seconds 10 --image ref1.png:"the woman" --image ref2.png:"the creature"
 
-mode=ref2va  tokens=544  timings={'analyse_s': 4.55, 'mode_s': 1.19, 'draft_s': 0.16, 'compose_s': 11.85}
-  -> PASS (with warnings)   0 error(s), 3 warning(s), 1 info
-  [WARN] P2-too-short: detailed_description is 185 words; spec guidance 350-500, official example 336
-  [WARN] R15-wardrobe-not-restated: [Shot 2] names the subject but not the garments (sweater);
-         wardrobe drifts between shots when it is only stated once
-  [WARN] R15-wardrobe-not-restated: [Shot 3] names the subject but not the garments (sweater) […]
-  [INFO] A5-music-no-tempo: non_diegetic_music should state instrumentation, tempo and dynamics
+mode=ref2va  tokens=818  timings={'analyse_s': 0.0, 'mode_s': 1.56, 'draft_s': 0.16, 'compose_s': 10.85}
+  -> PASS (with warnings)   0 error(s), 3 warning(s), 2 info
+  [WARN] P2-too-short: detailed_description is 269 words; spec guidance 350-500, official example 336
+  [WARN] R15-wardrobe-not-restated: [Shot 2] names the subject but not the garments (jacket, shirt,
+         t-shirt); wardrobe drifts between shots when it is only stated once
+  [WARN] R15-wardrobe-not-restated: [Shot 3] names the subject but not the garments […]
+  [INFO] P5b-camera-no-amplitude: a motion type appears but without the 'with <small|large> amplitude
+         at <slow|fast> speed' idiom the spec defines
 
 subject_definitions:
-<Subject 1> is the man in <Picture 1>, with wavy reddish-brown hair, light skin tone, brown eyes,
-straight nose, clean-shaven face, and a rust-colored crew neck sweater.
-<Picture 1> is the reference asset defining the visual style, character appearance, and color
-palette of the target video.
+<Subject 1> is the woman in <Picture 1>, with short dark hair with shaved sides and a small top knot,
+dark complexion, black tactical jacket with shoulder straps and buckles, black t-shirt, black cargo
+trousers with side pockets, black lace-up combat boots, slender build.
+<Subject 2> is the dragon in <Picture 2>, with large reptilian creature, dark grey and black scales
+with subtle blue iridescence, large leathery wings with visible membrane and bone structure, long
+tail with a row of spikes along the top, multiple horns protruding from the head and snout […]
 
 retention_analysis:
-<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the character's wavy
-reddish-brown hair, facial features, and rust-colored sweater are retained throughout the sequence.
+<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the woman's specific
+hairstyle, facial features, and tactical outfit (jacket, trousers, boots) are retained exactly as
+defined.
+<Subject 2> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the dragon's scale texture,
+coloration, wing structure, horns, and claws are retained exactly as defined.
 
 detailed_description:
-The target video is rendered in a soft, textured digital illustration style with natural window
-lighting and a muted, warm color palette.
-[Shot 1] The scene opens with a medium shot of <Subject 1> seated in a chair by a window, the
-morning light catching the texture of his rust-colored sweater. […] The camera is static,
-emphasizing his stillness.
-[Shot 2] At 00:04.000, the camera pushes in slowly with small amplitude to a close-up of
-<Subject 1>'s face. As he finishes reading, his eyes widen slightly […]
-[Shot 3] At 00:07.000, the camera pulls out slowly with small amplitude to a medium-wide shot as
-<Subject 1> stands up decisively. He places the letter on the table beside him, turns away from the
-window, and walks toward the door, his posture straight and purposeful.
+The target video is in a realistic 3D cinematic style, featuring high-fidelity textures, dramatic
+low-key lighting, and a desaturated color palette dominated by dark greys, blacks, and subtle blue
+iridescence.
+
+[Shot 1] The scene opens on a wet, rocky terrain under a heavy, dark storm. <Subject 2> stands low to
+the ground, its massive dark grey and black scales glistening with rain […] The camera is static,
+framing both subjects in a medium-wide shot to establish their scale difference.
+
+[Shot 2] At 00:03.500, the camera cuts to a closer angle as <Subject 1> begins to climb. She places
+her hands on the dragon's spiked ridge and hoists herself up, her combat boots finding purchase on
+the textured scales. <Subject 2> remains steady, its large leathery wings beginning to unfurl slowly
+behind it, the membrane catching the wind. […]
+
+[Shot 3] At 00:06.500, the shot widens as <Subject 1> settles onto the dragon's back, gripping the
+spikes near the neck. <Subject 2> crouches its powerful legs, claws digging into the wet rock, then
+launches upward. […] The camera pulls back and tilts up, following them as they ascend rapidly into
+the swirling storm clouds, their forms becoming silhouettes against the dark, turbulent sky.
 ```
 
-Nobody typed `<Subject 1>`, `<Picture 1>`, `00:04.000`, `fully_preserved`, or the section names. The
-image was read by the vision model, the subject was defined from what it saw, and the retention
-contract was written to match what was attached.
+Nobody typed `<Subject 1>`, `<Picture 2>`, `00:03.500`, `fully_preserved`, or the section names. Two
+images went in, two subjects came out bound to the two labels the runtime will actually emit, each
+with its own retention contract, and both are cited in every shot they appear in. Those two reference
+sheets are in this repo, under `h3ir/golden/assets/`, so this run is reproducible.
 
-The R15 warnings are the interesting part. Shots 2 and 3 name the man but not his sweater, which is
+The R15 warnings are the interesting part. Shots 2 and 3 name the woman but not her jacket, which is
 the exact omission that lets wardrobe drift between cuts. A legality check cannot see that, so it is
 a named rule with a reason attached.
 
-Ref2VA briefs have six sections. Three of them are cut from the excerpt above: `summary`, which sits
-between the two shown at the top, and `overall_soundscape` and `non_diegetic_music` at the end. The
-base modes have three sections, which is why the first example is shorter. The format is not one
-shape, and you do not choose which one you get.
+Ref2VA briefs have six sections. Three are cut from the excerpt above: `summary`, which sits between
+the two shown at the top, and `overall_soundscape` and `non_diegetic_music` at the end. The base
+modes have three sections, which is why the first example is shorter. The format is not one shape,
+and you do not choose which one you get.
 
 ## Structure is compiled, prose is generated
 
@@ -186,14 +201,19 @@ wreck the other.
 $ h3ir eval
   t2va_battle          clean fix=0 mode=t2va   words= 126 (x0.38) shots=2 cuts=1 cam=3 restate=0.08 dup=0.04 E0/W1
   t2va_silent          clean fix=0 mode=t2va   words= 103 (x0.31) shots=1 cuts=0 cam=2 restate=0.00 dup=0.09 E0/W1
-  ref2va_two_subjects  clean fix=0 mode=ref2va words= 285 (x0.71) shots=3 cuts=2 cam=2 restate=0.09 dup=0.03 E0/W1
+  ref2va_two_subjects  clean fix=0 mode=ref2va words= 254 (x0.64) shots=3 cuts=2 cam=2 restate=0.12 dup=0.05 E0/W1
   … 3 more …
 
-means over 6 brief(s), 40.7s wall:
-  errors 0.0   fallback_rate 0.0   clean_rate 1.0   restatement 0.069   sound_overlap 0.054
+means over 6 brief(s), 35.7s wall:
+  errors           0.0
+  restatement      0.075
+  sound_overlap    0.061
+  fallback_rate    0.0
+  clean_rate       1.0
+  … 10 more …
 -- gate --
-  restatement         0.070 ->    0.069  (-0.001)  same
-  sound_overlap       0.051 ->    0.054  (+0.003)  same
+  restatement         0.070 ->    0.075  (+0.005)  same
+  sound_overlap       0.051 ->    0.061  (+0.010)  same
   …
 SHIP-ABLE
 ```
@@ -308,7 +328,7 @@ with nothing to download.
 
 ```console
 $ pytest -q
-357 passed in 0.82s
+359 passed in 0.86s
 ```
 
 No model, no GPU, no network.
