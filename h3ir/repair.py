@@ -332,8 +332,12 @@ def _fix_missing_definitions(text: str, definitions: tuple[str, ...],
     if added:
         body_fixed = body.rstrip() + "\n" + "\n".join(added) + "\n"
         text = text[:m.start(1)] + body_fixed + text[m.end(1):]
+        # The label list is built before the f-string, not inside it. A backslash in an f-string
+        # expression is a SyntaxError before Python 3.12, and this package declares >=3.10, so the
+        # inline version made the whole module unimportable on two of the three supported versions.
+        synthesised = ", ".join(re.match(r"<Subject \d+>", a).group(0) for a in added)
         res.repairs.append(f"synthesised {len(added)} missing subject definition(s) from the "
-                           f"asset cards: {', '.join(re.match(r'<Subject \d+>', a).group(0) for a in added)}")
+                           f"asset cards: {synthesised}")
     for n, t in renumbered:
         res.repairs.append(f"<Subject {n}> had no definition and no card; pointed it at "
                            f"<Subject {t}> rather than leaving a label that references nothing")
