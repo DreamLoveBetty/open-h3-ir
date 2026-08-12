@@ -296,8 +296,17 @@ class Backend:
             msgs[-1]["content"] = _append_text(msgs[-1]["content"], _schema_ask(schema))
         last: Exception | None = None
         for attempt in range(retries + 1):
+            # A retry has to ask a DIFFERENT question, and at temperature 0 with a fixed seed it
+            # cannot: the decode is deterministic, so re-sending identical messages returns the
+            # identical reply. Measured, not theorised -- three attempts produced three
+            # byte-identical 524-token replies in which the model echoed the schema instead of
+            # filling it, on a vision call whose only unusual feature was an appended caller note.
+            # Temperature demonstrably breaks that tie where the seed does not, because at
+            # temperature 0 the seed changes nothing. So attempt 0 keeps the caller's temperature,
+            # which keeps the common path reproducible and cacheable, and only the retries move.
+            temp = temperature if attempt == 0 else temperature + 0.4 * attempt
             reply = self.chat(msgs, thinking=thinking, response_format=rf,
-                              max_tokens=max_tokens, temperature=temperature, seed=seed,
+                              max_tokens=max_tokens, temperature=temp, seed=seed,
                               retries=1)
             try:
                 obj = json.loads(_extract_json(reply.content))
@@ -311,11 +320,29 @@ class Backend:
                 continue
             missing = [k for k in required if k not in obj]
             if missing:
-                last = BackendError(f"required key(s) absent despite strict schema: {missing}")
+                if _is_the_schema_itself(obj):
+                    last = BackendError(
+                        f"the model returned the schema document instead of an instance of it "
+                        f"(missing {missing}); retrying at a higher temperature")
+                else:
+                    how = ("strict schema" if use_grammar
+                           else "schema asked for in the prompt, not enforced by a grammar")
+                    last = BackendError(f"required key(s) absent, {how}: {missing}")
                 log.warning("%s", last)
                 continue
             return obj
         raise BackendError(f"structured call failed after {retries + 1} attempt(s): {last}")
+
+
+def _is_the_schema_itself(obj: dict[str, Any]) -> bool:
+    """True when the reply is the schema document rather than an instance of it.
+
+    A valid-JSON failure, which is why it survives parsing and shows up as absent keys. Seen on a
+    vision call where an appended caller note tipped a greedy decode into copying the schema back:
+    the object's keys were `title`, `type`, `properties`, `required`, `additionalProperties`.
+    Naming it turns a confusing "required key absent" into a message that says what happened.
+    """
+    return obj.get("type") == "object" and isinstance(obj.get("properties"), dict)
 
 
 def _schema_ask(schema: dict[str, Any]) -> str:
