@@ -228,7 +228,7 @@ a latent bug rather than the prompt.
 Needs Python 3.10 or newer and an OpenAI-compatible LLM endpoint with vision. Verified on 3.12.
 
 ```bash
-git clone <this repo> && cd open-h3-ir
+git clone https://github.com/Ruashots/open-h3-ir.git && cd open-h3-ir
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 
