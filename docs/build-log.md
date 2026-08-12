@@ -1702,9 +1702,8 @@ Five compiles of the same brief, five different seeds:
 
 One of them reconciled both in the retention line by itself, listing the subject's appearance and
 then closing with *"… are retained **and animated in a 1990s cel style**"*. So the writer reads §4.1
-correctly
-and puts the medium in the **style opening of `detailed_description`**, which is where the spec puts
-the target video's look. The channel was never the marker.
+correctly and puts the medium in the **style opening of `detailed_description`**, which is where the
+spec puts the target video's look. The channel was never the marker.
 
 `marker_for_plate` is therefore **deleted**, not narrowed — with it, the licence's whole involvement in
 retention markers, and the `licence` parameter that had been threaded through `build_subjects`,

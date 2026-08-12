@@ -90,60 +90,55 @@ the wiring is the only thing that can decide them correctly.
 
 ```console
 $ h3ir compile "the woman climbs onto the creature's back and they take off into the storm" \
-    --seconds 10 --image ref1.png:"the woman" --image ref2.png:"the creature"
+    --seconds 10 \
+    --image h3ir/golden/assets/ref1.png \
+    --image h3ir/golden/assets/ref2.png
 
-mode=ref2va  tokens=818  timings={'analyse_s': 0.0, 'mode_s': 1.56, 'draft_s': 0.16, 'compose_s': 10.85}
-  -> PASS (with warnings)   0 error(s), 3 warning(s), 2 info
-  [WARN] P2-too-short: detailed_description is 269 words; spec guidance 350-500, official example 336
+mode=ref2va  tokens=821  timings={'analyse_s': 12.32, 'mode_s': 1.24, 'draft_s': 0.15, 'compose_s': 10.44}
+  -> PASS (with warnings)   0 error(s), 1 warning(s), 2 info
   [WARN] R15-wardrobe-not-restated: [Shot 2] names the subject but not the garments (jacket, shirt,
          t-shirt); wardrobe drifts between shots when it is only stated once
-  [WARN] R15-wardrobe-not-restated: [Shot 3] names the subject but not the garments […]
   [INFO] P5b-camera-no-amplitude: a motion type appears but without the 'with <small|large> amplitude
          at <slow|fast> speed' idiom the spec defines
 
 subject_definitions:
 <Subject 1> is the woman in <Picture 1>, with short dark hair with shaved sides and a small top knot,
 dark complexion, black tactical jacket with shoulder straps and buckles, black t-shirt, black cargo
-trousers with side pockets, black lace-up combat boots, slender build.
-<Subject 2> is the dragon in <Picture 2>, with large reptilian creature, dark grey and black scales
+trousers, black lace-up combat boots, slender build.
+<Subject 2> is the black dragon in <Picture 2>, with large reptilian creature, dark charcoal scales
 with subtle blue iridescence, large leathery wings with visible membrane and bone structure, long
-tail with a row of spikes along the top, multiple horns protruding from the head and snout […]
+tail with dorsal spikes, multiple horns protruding from the head and snout […]
 
 retention_analysis:
-<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the woman's specific
-hairstyle, facial features, and tactical outfit (jacket, trousers, boots) are retained exactly as
-defined.
+<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the woman's tactical gear,
+hairstyle, and physical build are retained throughout the action.
 <Subject 2> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the dragon's scale texture,
-coloration, wing structure, horns, and claws are retained exactly as defined.
+horn structure, wing membrane, and color palette are retained as it moves.
 
 detailed_description:
-The target video is in a realistic 3D cinematic style, featuring high-fidelity textures, dramatic
-low-key lighting, and a desaturated color palette dominated by dark greys, blacks, and subtle blue
-iridescence.
-
-[Shot 1] The scene opens on a wet, rocky terrain under a heavy, dark storm. <Subject 2> stands low to
-the ground, its massive dark grey and black scales glistening with rain […] The camera is static,
-framing both subjects in a medium-wide shot to establish their scale difference.
-
-[Shot 2] At 00:03.500, the camera cuts to a closer angle as <Subject 1> begins to climb. She places
-her hands on the dragon's spiked ridge and hoists herself up, her combat boots finding purchase on
-the textured scales. <Subject 2> remains steady, its large leathery wings beginning to unfurl slowly
-behind it, the membrane catching the wind. […]
-
-[Shot 3] At 00:06.500, the shot widens as <Subject 1> settles onto the dragon's back, gripping the
-spikes near the neck. <Subject 2> crouches its powerful legs, claws digging into the wet rock, then
-launches upward. […] The camera pulls back and tilts up, following them as they ascend rapidly into
-the swirling storm clouds, their forms becoming silhouettes against the dark, turbulent sky.
+The target video is a cinematic, realistic 3D animation with high-contrast lighting, emphasizing the
+texture of wet scales and tactical fabric against a dark, stormy backdrop.
+[Shot 1] The scene opens with a low-angle medium shot of <Subject 2>, the massive black dragon,
+crouching on a wet, rocky surface amidst a heavy downpour. […] The camera tracks slightly to the
+right as <Subject 1> swings her leg over the dragon's back, settling into a seated position.
+[Shot 2] At 00:04.500, the shot cuts to a wider side profile view as <Subject 2> begins to move. The
+dragon's powerful hind legs push against the ground, kicking up spray and debris. The camera pulls
+back slowly with medium amplitude to capture the full extension of the dragon's wings as they
+unfurl, revealing the intricate membrane and bone structure. […]
+[Shot 3] At 00:07.500, the shot cuts to a dynamic low-angle view looking up as <Subject 2> launches
+into the air. The camera tilts up rapidly, following the dragon as it breaks the surface of the
+storm. […] The shot ends as they ascend higher into the clouds, becoming smaller in the frame.
 ```
 
-Nobody typed `<Subject 1>`, `<Picture 2>`, `00:03.500`, `fully_preserved`, or the section names. Two
-images went in, two subjects came out bound to the two labels the runtime will actually emit, each
-with its own retention contract, and both are cited in every shot they appear in. Those two reference
-sheets are in this repo, under `h3ir/golden/assets/`, so this run is reproducible.
+Nobody typed `<Subject 1>`, `<Picture 2>`, `00:04.500`, `fully_preserved`, or the section names. Two
+image paths went in, with no description of what was in them. Two subjects came out bound to the two
+labels the runtime will actually emit, each with its own retention contract, cited in every shot they
+appear in. The woman's jacket and the dragon's horn count were read off the pixels by the vision
+model. Both sheets are in this repo under `h3ir/golden/assets/`, so this run is reproducible.
 
-The R15 warnings are the interesting part. Shots 2 and 3 name the woman but not her jacket, which is
-the exact omission that lets wardrobe drift between cuts. A legality check cannot see that, so it is
-a named rule with a reason attached.
+The R15 warning is the interesting part. Shot 2 names the woman but not her jacket, which is the
+exact omission that lets wardrobe drift between cuts. A legality check cannot see that, so it is a
+named rule with a reason attached.
 
 Ref2VA briefs have six sections. Three are cut from the excerpt above: `summary`, which sits between
 the two shown at the top, and `overall_soundscape` and `non_diegetic_music` at the end. The base
@@ -335,5 +330,22 @@ No model, no GPU, no network.
 
 ## Licence
 
-Not yet chosen, which means this code is not yet licensed for reuse. If you want to use it, open an
-issue and ask.
+Apache 2.0. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for what belongs to whom. The Qwen2.5
+tokenizer vocabulary vendored under `h3ir/data/` is Apache 2.0 as well, so it adds nothing this
+licence does not already carry.
+
+**Apache 2.0 covers this compiler. It does not cover the model you point it at, and H3's own licence
+is more restrictive than you might assume.** Three terms from it that are worth knowing before you
+build on this, because none of them is guessable:
+
+- **H3 is not licensed for use in the European Union, the United Kingdom, the Republic of Korea or
+  the United States of America.** Those are its "Excluded Territories", and the grant is worldwide
+  except for them. MiniMax invites people there to contact them for a licence.
+- A commercial product or service using H3 **shall prominently display "MiniMax H3" in its user
+  interface** (section IV.2).
+- Commercial products earning **more than 20 million USD a year need separate written authorization**
+  from MiniMax first (section IV.1).
+
+Read the [MiniMax H3 Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)
+yourself rather than trusting this summary. Nothing in this repository is a MiniMax work: there is no
+model code, no weights, and no checkpoint here.

@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 is the floor for PEP 639, which is what `license = "Apache-2.0"` below needs. An older
+# setuptools does not understand the SPDX string form and fails the build rather than warning.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,6 +12,10 @@ version = "0.1.0"
 description = "An open implementation of MiniMax H3's closed Context-IR stage. One sentence in, a validated H3 video brief out, with the asset wiring it is true for."
 readme = "README.md"
 requires-python = ">=3.10"
+# SPDX expression, not the old `License :: OSI Approved ::` classifier. PEP 639 replaced that
+# classifier and setuptools rejects a project that declares both.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 keywords = ["minimax-h3", "minimax", "h3", "context-ir", "video-generation",
             "prompt-compiler", "comfyui", "local-llm"]
 classifiers = [
