@@ -1,18 +1,18 @@
 subject_definitions:
-<Subject 1> is the man in <Picture 1>, with short dark brown hair, full dark beard and mustache, dark eyebrows, light skin tone, navy blue crew-neck t-shirt, medium build, adult male.
+<Subject 1> is the woman in <Picture 1>, with black hair shaved at the sides and pulled into a short tight knot, a thin pale scar through her left eyebrow, amber-brown eyes, charcoal technical jacket with a high collar, lean build, adult female.
 <Picture 1> is the character reference sheet defining the appearance of <Subject 1>.
 
 summary:
 [reference generation] The target video is a 1990s cel animation showing <Subject 1> walking down a stone corridor lit by a wall torch. The video uses <Picture 1> to define the character's appearance and features a continuous tracking shot with a cut to a close-up.
 
 retention_analysis:
-<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - the man's short dark brown hair, full dark beard, navy blue crew-neck t-shirt, and medium build are retained throughout the animation.
-<Picture 1> ([Shot 1], [Shot 2] character design): fully_preserved - the visual design of the man is derived directly from the reference sheet.
+<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - the woman's shaved sides and short tight knot, the scar through her left eyebrow, the charcoal technical jacket, and her lean build are retained throughout the animation.
+<Picture 1> ([Shot 1], [Shot 2] character design): fully_preserved - the visual design of the woman is derived directly from the reference sheet.
 
 detailed_description:
 The target video is rendered in a 1990s cel animation style, featuring hand-drawn textures, distinct ink outlines, and a palette of deep shadows and warm highlights.
-[Shot 1] The scene opens in a dimly lit stone corridor. A single wall torch on the right flickers, casting a warm, orange glow that contrasts with the cool, blue-grey tones of the stone walls. <Subject 1>, the man with short dark brown hair, a full dark beard, and a navy blue crew-neck t-shirt, walks away from the camera down the center of the corridor. The camera performs a Tracking Shot, moving backward at a slow, steady speed to maintain a medium-full shot distance, keeping <Subject 1> centered in the frame. As he walks, his shoulders sway naturally, and his arms swing by his sides. The flickering torchlight creates a rhythmic strobe effect on his back and the surrounding stones.
-[Shot 2] At 00:04.000, the shot cuts to a close-up of <Subject 1> from the front-left angle. The camera is Static. <Subject 1> continues his forward motion, his expression neutral and focused. The torchlight from the previous shot now illuminates the right side of his face, highlighting the texture of his beard and the dark eyebrows, while the left side of his face remains in shadow. He blinks once, his eyes reflecting the warm light of the torch. He continues walking forward, his head bobbing slightly with his stride, until the video ends.
+[Shot 1] The scene opens in a dimly lit stone corridor. A single wall torch on the right flickers, casting a warm, orange glow that contrasts with the cool, blue-grey tones of the stone walls. <Subject 1>, the woman with black hair shaved at the sides and knotted short, a thin pale scar through her left eyebrow, and a charcoal technical jacket with a high collar, walks away from the camera down the center of the corridor. The camera performs a Tracking Shot, moving backward at a slow, steady speed to maintain a medium-full shot distance, keeping <Subject 1> centered in the frame. As she walks, her shoulders sway naturally, and her arms swing by her sides. The flickering torchlight creates a rhythmic strobe effect on her back and the surrounding stones.
+[Shot 2] At 00:04.000, the shot cuts to a close-up of <Subject 1> from the front-left angle. The camera is Static. <Subject 1> continues her forward motion, her expression neutral and focused. The torchlight from the previous shot now illuminates the right side of her face, highlighting the shaved side of her black hair and the thin pale scar through her left eyebrow, while the left side of her face remains in shadow, the high collar of the charcoal technical jacket dark against her jaw. She blinks once, her amber-brown eyes reflecting the warm light of the torch. She continues walking forward, her head bobbing slightly with her stride, until the video ends.
 
 overall_soundscape:
 The sound of steady footsteps on stone echoes in the corridor, accompanied by the soft crackle and hiss of the burning torch. A low, ambient wind hums faintly from the distance.

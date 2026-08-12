@@ -3,12 +3,15 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "h3ir"
+# The distribution is `open-h3-ir`; the import package and the command are both `h3ir`, which is
+# what you actually type. Stated in the README install block so nobody has to discover it.
+name = "open-h3-ir"
 version = "0.1.0"
-description = "Compile one plain sentence into a validated MiniMax H3 video brief, with the asset wiring it is true for."
+description = "An open implementation of MiniMax H3's closed Context-IR stage. One sentence in, a validated H3 video brief out, with the asset wiring it is true for."
 readme = "README.md"
 requires-python = ">=3.10"
-keywords = ["minimax-h3", "video-generation", "prompt-compiler", "comfyui", "local-llm"]
+keywords = ["minimax-h3", "minimax", "h3", "context-ir", "video-generation",
+            "prompt-compiler", "comfyui", "local-llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

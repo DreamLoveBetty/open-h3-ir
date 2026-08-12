@@ -1,14 +1,14 @@
-# Build log
+# OpenH3-IR build log
 
 A dated record of what the build found, in the order it found it, from the first end-to-end run
 onward. It is kept for one reason: it is the evidence that the rules in the validator are not
 arbitrary. Every section is a position that was measured, and several are positions this project
-held, tested, and reversed — including one rule that was deleted after an audit found it had no
+held, tested, and reversed, including one rule that was deleted after an audit found it had no
 source, and one metric that reported a plausible number about an artifact that had been thrown
 away.
 
 **This is a log, not documentation.** Its figures are true as of the date on the section and
-nowhere else — early sections cite counts (tests, controls) that have since grown. For what is
+nowhere else. Early sections cite counts (tests, controls) that have since grown. For what is
 true now, run the commands in the [README](../README.md); for the reasoning behind a rule, read
 [design.md](design.md).
 

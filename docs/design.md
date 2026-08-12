@@ -1,6 +1,6 @@
-# Design: why the compiler is built this way
+# Design: why OpenH3-IR is built this way
 
-This is the design reference for the compiler — what MiniMax H3's conditioning encoder actually
+This is the design reference for the compiler: what MiniMax H3's conditioning encoder actually
 sees, what a reference label costs, the contract between stages, and the grounding for every rule
 the validator enforces. It is the document to read before changing a rule, a prompt or a stage
 boundary.
@@ -13,7 +13,7 @@ Figures came from live measurement against a running endpoint, not from estimati
 Two things to know before you trust a sentence here. This document was written **before** the
 compiler was built, so where it says "will" the code has since decided; and where it disagrees
 with the code, **the code wins and this file is the bug**. What the build actually found, including
-the positions this document got wrong, is in [build-log.md](build-log.md) — five of its findings
+the positions this document got wrong, is in [build-log.md](build-log.md), where five findings
 reversed a decision made here.
 
 ## 0. Verdict

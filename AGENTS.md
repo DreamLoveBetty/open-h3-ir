@@ -1,10 +1,12 @@
-# Working on the compiler
+# Working on OpenH3-IR
 
 Read this before changing anything. It is the set of rules that are not preferences, a map of which
 file owns what, and an honest list of what is missing.
 
 If you are *calling* the service rather than changing it, you want
 [docs/calling-the-api.md](docs/calling-the-api.md) instead.
+
+The project is `open-h3-ir`; the import package and the command are both `h3ir`.
 
 The numbers to check your work against, all reproducible with no model and no GPU:
 `h3ir controls` is 20/20 in under a tenth of a second, and `pytest -q` is 357 passing.
@@ -16,7 +18,7 @@ asset wiring it is true for, out.
 
 - **Assume the compiler and the GPU are on different machines.** No path or URL is hardcoded
   outside `config.py`, and ComfyUI is always reached over HTTP, never through the filesystem. Keep
-  it that way — a filesystem shortcut works on a single box and fails silently everywhere else.
+  it that way. A filesystem shortcut works on a single box and fails silently everywhere else.
 - Reasoning and vision run on whatever `H3IR_LLM_URL` points at. Nothing calls MiniMax.
 - `h3ir doctor` tells you what is actually reachable before you debug anything else.
 
@@ -36,30 +38,30 @@ asset wiring it is true for, out.
 5. **Nothing ships on judgement.** See below.
 6. **The deterministic draft is the product floor, not a degraded mode.** `draft.py` builds a
    complete valid IR with no prose model. The LLM pass is additive. Any validator error, leaked
-   reasoning, or model outage falls back to the draft — the caller always gets something valid.
+   reasoning, or model outage falls back to the draft, so the caller always gets something valid.
    The draft failing its own validator is the one thing that raises, because it is deterministic
    and there would be nothing to fall back to. Do not turn this back into retry-until-valid.
 7. **Thinking is per call, not global.** ON for the beat sheet (planning: measured +5.3pp), OFF
    for extraction, classification and prose (precision: measured −8.5pp). This is contingent on
-   code owning every machine-checkable field — if you ever let the model emit a timecode, turn
+   code owning every machine-checkable field. If you ever let the model emit a timecode, turn
    thinking off for that call.
 8. **Never enable guided decoding without re-reading why it is off.** vLLM #39130 can skip grammar
    enforcement silently with a reasoning parser active; llama.cpp #20345 reports the converse on
    this model family. `H3IR_GUIDED_DECODING=1` exists for comparison, not for production.
 9. **The model is deaf. Never ask it about audio.** `analyse_audio` makes no model call. Audio
    facts are typed metadata plus a real transcript. An invented timbre is worse than none because
-   `<Audio N>` carries no content into the encoder — the IR text is its only channel.
+   `<Audio N>` carries no content into the encoder, so the IR text is its only channel.
 10. **Proportionality is part of the bar, and it is an explicit input.** "If I ask for simple, I want
     simple, if I say go crazy, I want crazy." `brief.creativity` is `restrained | balanced | bold`,
     default balanced, and it governs exactly one thing: whether the writer may add **content the
-    request never supplied** — a spoken line, a score, on-screen text. It does NOT mean "more shots"
+    request never supplied**: a spoken line, a score, on-screen text. It does NOT mean "more shots"
     or "more camera moves"; putting effort on this dial would be shot-count-as-a-rule one layer above
-    the validator, where nothing catches it. Never infer the setting from the request — that was
+    the validator, where nothing catches it. Never infer the setting from the request. That was
     considered and rejected, because it would be wrong often and the maintainer could not overrule it. An
     explicit prohibition in the request outranks every position: `bold` on "No dialogue" licenses no
     dialogue. See `creativity.py` and design doc section 19.
 11. **A rule asserts a decidable fact, never a preference.** The test: could a competent director
-    disagree with it? If they could, it is not a check — at any severity. Shot count is not a
+    disagree with it? If they could, it is not a check, at any severity. Shot count is not a
     defect. Prose quality is not a defect. Whether an edit is good is the maintainer's call and the
     validator has no access to it. Where a spec sentence constrains something discretionary, narrow
     the rule to its decidable residue and hold it at **WARN**, because **ERROR is what the fix loop
@@ -86,11 +88,11 @@ rather than the prompt. Assume your next confident improvement is the same.
 
 **Do not add a control exception to make a rule pass.** MiniMax's own published example is the
 control; if a rule fires on it, the rule is wrong. That is how the 350-word floor and the closed
-camera vocabulary became guidance rather than law — and later the shot-citation check, which
+camera vocabulary became guidance rather than law, and later the shot-citation check, which
 fired on their example because a persistent setting legitimately is not re-cited every shot.
 
 **A metric reads the artifact that SHIPS, never an intermediate.** In the write-first path `doc.plan`
-is the *deterministic draft's* plan — the model's prose never goes back into it — so anything reading
+is the *deterministic draft's* plan (the model's prose never goes back into it), so anything reading
 `plan.shots` is scoring an object that was thrown away, and it fails silently: the number is
 plausible, nothing raises. Three fields were caught doing it in one evening (`restatement` reporting
 1.00 on visibly different shots, `n_shots` reporting 4 against 0 timed cuts, and `_split_written`
@@ -98,22 +100,22 @@ dropping the whole description), plus a fourth in a script written *after* the o
 
 **Second half of the same rule: measure it in the CONFIGURATION that ships.** A harness knob whose
 default is anything other than production's turns every run into a truthful report about a pipeline
-nobody uses — `RunConfig.compose_prompt` defaulted to an explicit composer name, overrode the mode
+nobody uses. `RunConfig.compose_prompt` defaulted to an explicit composer name, overrode the mode
 selection, and reported `clean_rate` 0.167 where the real figure is 1.000. Harder to catch than the
 first half, because a wrong-configuration run is internally consistent.
 
 **And read the artifact back; never trust the code that wrote it.** Four faults found this way,
 including the provenance record that was written to say which pipeline produced a result and recorded
-neither — the field was on the dataclass and missing from the serialiser, and the writing code read
+neither. The field was on the dataclass and missing from the serialiser, and the writing code read
 perfectly.
 
 **So: "the number moved" is not evidence until you can name the artifact that produced it.** When you
-add a metric, name a second field it must agree with and check the pair — that is what caught all four,
+add a metric, name a second field it must agree with and check the pair. That is what caught all four,
 and no test caught any of them. `n_shots` vs `n_timed_cuts` must satisfy `shots = cuts + 1` because T4
 enforces it; `restatement` near 1.0 contradicts `shot_distinctness` near 1.0; `words = 0` contradicts
 `errors = 0` because S9 and T1 would both fire. Design doc §24.
 
-**Falsify every test you write. It is not ceremony — it is what distinguishes a test from a
+**Falsify every test you write. It is not ceremony. It is what distinguishes a test from a
 comment.** Break the code the test covers, on purpose, and watch it go red. Two tests passed a
 deliberate break in one evening, and the two failure modes are different, so know both:
 
@@ -128,13 +130,13 @@ deliberate break in one evening, and the two failure modes are different, so kno
 **A cache keyed on its inputs but not on the logic that transformed them will serve stale results
 across a code change and look correct.** That is what `ANALYZER_VERSION` is for, and it has now been
 needed three times (pose split, video frames, audio characterisation) plus once for frame fractions.
-**If a compiled brief is ever cached, the prompt version belongs in the key** — the compose prompts are
+**If a compiled brief is ever cached, the prompt version belongs in the key**, because the compose prompts are
 the transforming logic and they change more often than anything else here.
 
 **A passing control is not proof of correctness.** The rule L5 arrived here as a false positive:
 it flagged every standalone `<Picture N>` line, while the spec forbids them only when the label is
 not separately analysed. It passed the official control the whole time. When you write a rule, also
-write the input that must NOT trip it — `test_hardening.py` has four such cases for G2 alone,
+write the input that must NOT trip it. `test_hardening.py` has four such cases for G2 alone,
 because my first draft of that rule fired on "he gives an okay sign".
 
 ## Where things are
@@ -142,11 +144,11 @@ because my first draft of that rule fired on "he gives an okay sign".
 | file | what it owns |
 |---|---|
 | `config.py` | every host-specific value. Nothing else may hardcode one. |
-| `grid.py` | the 17k+5 frame grid and all duration maths. `effective_seconds` vs `nominal_seconds` is a real distinction — read the docstring. |
+| `grid.py` | the 17k+5 frame grid and all duration maths. `effective_seconds` vs `nominal_seconds` is a real distinction, so read the docstring. |
 | `tokens.py` | exact token counts using H3's own vocab (vendored under `h3ir/data/`). |
 | `models.py` | the contract. Every stage boundary is a dataclass here. |
 | `backend.py` | the LLM client and the three silent endpoint failures. |
-| `analyse.py` | AssetCards, cached on content hash. Audio needs a transcript — see below. |
+| `analyse.py` | AssetCards, cached on content hash. Audio needs a transcript, see below. |
 | `mode.py` | which of the five modes, and how it fails safe. |
 | `lora.py` | the registry, `howtouse.md` parsing, ingest-time trigger validation. |
 | `plan.py` | all structure. The four solved problems live here. |
@@ -167,19 +169,19 @@ because my first draft of that rule fired on "he gives an okay sign".
   the conditioning encoder learns what that audio is. Wire whisper before shipping audio refs.
 - **Video references now sample real frames**, at 10/50/90% of the clip, cached on content hash
   **and** on the fractions. `ffmpeg`/`ffprobe` are hard runtime dependencies of video references, not
-  conveniences — the analyser raises rather than producing a card. Audio still has no transcript
+  conveniences. The analyser raises rather than producing a card. Audio still has no transcript
   source wired in, so an attached audio reference is still described from the caller's note alone.
 - **`refine()` re-runs the whole compile.** The cache keys make a prose-only refinement cheap in
-  principle, but the fast path is not implemented — it re-analyses nothing (cards are cached) but
+  principle, but the fast path is not implemented. It re-analyses nothing (cards are cached) but
   does redo the beat sheet and all prose.
 - **The eval suite is six briefs.** Enough to catch the regressions we have seen; not a broad
   quality benchmark. Add briefs when a new failure mode appears, not preemptively. It is also the
   only thing that found the mode-split bug below, and it found it the first time it was ever run
-  end-to-end on the write-first path — five of six briefs were falling back and no single-brief test
+  end-to-end on the write-first path. Five of six briefs were falling back and no single-brief test
   could see it, because the one brief anybody had been testing by hand was the ref2va one.
 - **One prompt per mode, and check that when you add a stage.** `compose.v2.txt` carries the
   full-reference guide; `compose_base.v1.txt` carries the base guide. `compose_prompt=None` picks by
-  mode and that is the right default — passing an explicit name overrides the choice for BOTH modes,
+  mode and that is the right default. Passing an explicit name overrides the choice for BOTH modes,
   which is what you want for an A/B and never what you want in production.
 - **Thinking ON costs about 45 s on the planning call** versus ~5 s off. Whether it earns that is
   an open A/B, not a settled question; the eval loop is how to answer it.
@@ -190,7 +192,7 @@ because my first draft of that rule fired on "he gives an okay sign".
   was chosen; patching the graph is the graph owner's job. `stacks_with_turbo: unknown` in a
   `howtouse.md` is waiting on someone's measurement.
 - **`compose.v3.txt` is written but not the default.** It differs from v2 in exactly one paragraph:
-  the "decide the edit" instruction, which in v2 ends *"and it is the worst outcome available"* —
+  the "decide the edit" instruction, which in v2 ends *"and it is the worst outcome available"*:
   invented severity on a discretionary call, the same fault the validator audit removed from the
   rules. v3 states the spec's sentence instead. It is not the default because the arm5/arm6 pair
   (same pipeline, direct vs not) was generated against v2 and flipping the default mid-comparison
@@ -204,5 +206,5 @@ h3ir acceptance --image-a character.png --image-b creature.png --out acceptance/
 
 Writes five prompt files, a wiring manifest for each, and a README explaining what each outcome
 would mean. It does not submit anything. Arm D is the control that decides whether the labels
-bind or the position does — do not drop it, because without it a difference between arms A and B
+bind or the position does. Do not drop it, because without it a difference between arms A and B
 has two explanations.

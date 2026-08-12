@@ -1035,7 +1035,7 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
         if not (lo <= ctx.prompt_tokens <= hi):
             add("H3-token-band", "WARN",
                 f"prompt is {ctx.prompt_tokens} tokens, outside the {lo}-{hi} band "
-                "(published hosted IRs are 537-919) — distribution drift, not a cost problem")
+                "(published hosted IRs are 537-919); distribution drift, not a cost problem")
 
     # ---------------------------------------------------------------- loras
     for trig in ctx.lora_triggers:

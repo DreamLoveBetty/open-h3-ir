@@ -24,7 +24,8 @@ from h3ir.render import render_ir, render_retention, render_subject_definitions,
 from h3ir.validate import Context, validate
 
 POSE = ["fists clenched in a fighting stance", "looking toward the camera"]
-IDENTITY = ["short dark brown hair", "full dark beard", "navy blue t-shirt", "black wristwatch"]
+IDENTITY = ["black hair shaved at the sides", "a thin pale scar through the left eyebrow",
+            "charcoal technical jacket", "worn black boots"]
 
 
 def _character_card() -> AssetCard:
