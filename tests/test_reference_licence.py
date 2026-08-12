@@ -61,7 +61,7 @@ def _plan(role=Role.SUBJECT, cards=None, brief=None):
 
 def test_a_subject_plate_does_not_put_its_pose_in_the_definition():
     out = render_subject_definitions(_plan())
-    assert "short dark brown hair" in out, "identity must carry forward"
+    assert "black hair shaved at the sides" in out, "identity must carry forward"
     assert "fighting stance" not in out, "the plate's pose is not who the subject is"
     assert "toward the camera" not in out
 
@@ -564,7 +564,7 @@ def test_a_frame_anchor_is_exempt_from_a_transformation_marker():
 
     card = AssetCard(sha256="i1", kind=AssetKind.IMAGE, style="live-action photo",
                      subjects=[{"kind": "person", "descriptor": "the man",
-                                "attributes": ["navy t-shirt"]}])
+                                "attributes": ["charcoal technical jacket"]}])
     anchor = AssetRef(kind=AssetKind.IMAGE, role=Role.FRAME_ANCHOR_FIRST, sha256="i1", px=(700, 500))
     brief = Brief(intent="start from this frame and reimagine the whole thing as anime as he walks "
                          "away", seconds=8.0, assets=[anchor])
@@ -1023,9 +1023,9 @@ def _transformation_ctx(**kw):
 
 
 def _art(opening: str) -> str:
-    return ("subject_definitions:\n<Subject 1> is the man in <Picture 1>, with a dark beard.\n\n"
+    return ("subject_definitions:\n<Subject 1> is the man in <Picture 1>, with a shaved head.\n\n"
             "summary:\n[reference generation] The target video shows <Subject 1>.\n\n"
-            "retention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - the beard is "
+            "retention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - the shaved head is "
             "retained.\n\ndetailed_description:\n" + opening + "\n"
             "[Shot 1] <Subject 1> walks forward with a slow push in.\n\n"
             "overall_soundscape:\nWind.\n\nnon_diegetic_music:\nN/A\n")
@@ -1051,7 +1051,7 @@ def _real_brief_style():
     card = AssetCard(sha256="c", kind=AssetKind.IMAGE,
                      style="Digital illustration, semi-realistic character design.",
                      subjects=[{"kind": "person", "descriptor": "the man",
-                                "attributes": ["navy blue crew-neck t-shirt"]}])
+                                "attributes": ["charcoal technical jacket"]}])
     ref = AssetRef(kind=AssetKind.IMAGE, role=Role.SUBJECT, sha256="c", px=(700, 480))
     brief = Brief(intent="the man from the sheet walks down a stone corridor lit by a wall torch, "
                          "reimagined as a 1990s cel animation", seconds=8, assets=[ref])
@@ -1083,7 +1083,7 @@ def test_the_rule_IS_armed_when_the_transformation_crosses_a_known_bucket():
     from h3ir.compile import _transformed_from
     card = AssetCard(sha256="c", kind=AssetKind.IMAGE, style="photorealistic live-action",
                      subjects=[{"kind": "person", "descriptor": "the man",
-                                "attributes": ["navy t-shirt"]}])
+                                "attributes": ["charcoal technical jacket"]}])
     ref = AssetRef(kind=AssetKind.IMAGE, role=Role.SUBJECT, sha256="c", px=(700, 480))
     brief = Brief(intent="the man walks down the corridor, reimagined as claymation puppets",
                   seconds=8, assets=[ref])
@@ -1149,7 +1149,7 @@ def test_R23_stays_silent_on_a_real_ARMED_cross_bucket_transformation():
     card = AssetCard(sha256="c", kind=AssetKind.IMAGE,
                      style="Digital illustration, semi-realistic character design.",
                      subjects=[{"kind": "person", "descriptor": "the man",
-                                "attributes": ["navy blue crew-neck t-shirt"]}])
+                                "attributes": ["charcoal technical jacket"]}])
     ref = AssetRef(kind=AssetKind.IMAGE, role=Role.SUBJECT, sha256="c", px=(700, 480))
     brief = Brief(intent="the man from the sheet walks down a stone corridor lit by a wall torch, "
                          "reimagined as claymation puppets", seconds=8, assets=[ref])

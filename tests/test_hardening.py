@@ -453,8 +453,8 @@ def test_every_label_in_the_text_has_a_manifest_entry_behind_it():
         pytest.skip("golden asset missing")
     brief = Brief(intent="the man walks down the corridor", seconds=8.0,
                   assets=[AssetRef(kind=AssetKind.IMAGE, role=Role.SUBJECT,
-                                   sha256=sha256_file(p), path=str(p), note="the man",
-                                   px=(700, 500))])
+                                   sha256=sha256_file(p), path=str(p), note="the woman",
+                                   px=(733, 1100))])
     plan = deterministic_draft(brief, Mode.REF2VA, {})
     published = {m.label for m in plan.manifest}
     prompt = render_ir(plan, ProfileOptions(name="standard")).prompt

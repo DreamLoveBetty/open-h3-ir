@@ -57,18 +57,18 @@ def suite_briefs() -> dict[str, Brief]:
     }
     assets = get_config().paths.golden_dir / "assets"
     if (assets / "ref1.png").exists() and (assets / "ref2.png").exists():
-        # The owner's real case: two subjects named from two different images.
+        # Two subjects named from two different images.
         briefs["ref2va_two_subjects"] = Brief(
-            intent="the man in medieval armour rides the dragon into an epic battleground, "
+            intent="the woman in the technical jacket rides the dragon into an epic battleground, "
                    "cinematic hollywood scene with dramatic expressions and camera movements",
             seconds=5, aspect="16:9",
-            assets=[_asset("ref1.png", Role.SUBJECT, "the man", (700, 500)),
-                    _asset("ref2.png", Role.SUBJECT, "the dragon", (700, 700))])
+            assets=[_asset("ref1.png", Role.SUBJECT, "the woman", (733, 1100)),
+                    _asset("ref2.png", Role.SUBJECT, "the dragon", (1100, 733))])
         # anchor language on a single image -> should route to a base mode
         briefs["i2va_animate"] = Brief(
             intent="animate this photo: bring it to life with slow drifting motion",
             seconds=5, aspect="16:9",
-            assets=[_asset("ref1.png", Role.SUBJECT, "the subject", (700, 500))])
+            assets=[_asset("ref1.png", Role.SUBJECT, "the subject", (733, 1100))])
     return briefs
 
 
