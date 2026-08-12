@@ -237,13 +237,28 @@ class AssetAnalysisError(RuntimeError):
     would build a brief on it without noticing."""
 
 
+def _run_ff(argv: list[str], *, timeout: int = 30):
+    """Run an ffmpeg-family tool, and say so plainly when it is not installed.
+
+    `subprocess.run` raises `FileNotFoundError` when the binary is absent, which reaches the caller
+    as a bare OS error naming a path they never typed. A user who attaches a video without ffmpeg
+    installed deserves to be told that, not to debug a traceback -- and the same gap turned a CI
+    runner without ffmpeg into a confusing test failure rather than a clear one.
+    """
+    import subprocess
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as e:
+        raise AssetAnalysisError(
+            f"{argv[0]} is not installed, and video references need it. Install ffmpeg "
+            f"(it provides both ffmpeg and ffprobe) and try again.") from e
+
+
 def probe_seconds(path: str | Path) -> float:
     """Duration from the file itself, which is ground truth -- a caller's `seconds` is a claim."""
-    import subprocess
-    out = subprocess.run(
+    out = _run_ff(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True, timeout=30)
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)])
     if out.returncode != 0 or not out.stdout.strip():
         raise AssetAnalysisError(f"ffprobe could not read {path}: {out.stderr.strip()[:200]}")
     try:
@@ -259,7 +274,6 @@ def sample_frames(path: str | Path, sha256: str,
     Nothing produced frames before this: `analyse_video` accepted a frame list and every caller
     passed none, so it fell through to handing the model the video file as an image.
     """
-    import subprocess
 
     p = Path(path)
     if not p.exists():
@@ -278,10 +292,9 @@ def sample_frames(path: str | Path, sha256: str,
         dest = out_dir / f"f{i}.jpg"
         if not dest.exists():
             at = max(0.0, min(seconds * frac, max(0.0, seconds - 0.05)))
-            r = subprocess.run(
+            r = _run_ff(
                 ["ffmpeg", "-nostdin", "-y", "-ss", f"{at:.3f}", "-i", str(p),
-                 "-frames:v", "1", "-q:v", "3", str(dest)],
-                capture_output=True, text=True, timeout=120)
+                 "-frames:v", "1", "-q:v", "3", str(dest)], timeout=120)
             if r.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
                 log.warning("frame at %.2fs failed for %s: %s", at, p.name,
                             r.stderr.strip()[-200:])
