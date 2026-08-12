@@ -140,6 +140,10 @@ The R15 warning is the interesting part. Shot 2 names the woman but not her jack
 exact omission that lets wardrobe drift between cuts. A legality check cannot see that, so it is a
 named rule with a reason attached.
 
+You can tell it what a reference is instead of leaving it to the vision model, with
+`--image path.png:"the pilot"`. Worth doing when an image is ambiguous about which of several things
+in it you care about. It is not worth doing here, which is the point of the example.
+
 Ref2VA briefs have six sections. Three are cut from the excerpt above: `summary`, which sits between
 the two shown at the top, and `overall_soundscape` and `non_diegetic_music` at the end. The base
 modes have three sections, which is why the first example is shorter. The format is not one shape,
