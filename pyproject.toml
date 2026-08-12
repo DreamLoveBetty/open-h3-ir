@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "h3ir"
+version = "0.1.0"
+description = "Compile one plain sentence into a validated MiniMax H3 video brief, with the asset wiring it is true for."
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["minimax-h3", "video-generation", "prompt-compiler", "comfyui", "local-llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video",
+]
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic",
+  "httpx",
+  "tiktoken",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+h3ir = "h3ir.cli:main"
+
+[tool.setuptools]
+# Explicit, so the golden files and prompt templates cannot be silently left out of an install.
+packages = ["h3ir", "h3ir.evalloop"]
+
+[tool.setuptools.package-data]
+h3ir = [
+  "prompts/*.txt",
+  "golden/*.txt",
+  "golden/assets/*",
+  "data/qwen25_tokenizer/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

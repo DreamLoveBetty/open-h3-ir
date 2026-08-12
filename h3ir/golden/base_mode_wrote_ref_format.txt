@@ -1,0 +1,13 @@
+subject_definitions: N/A
+
+summary: [reference generation] The target video depicts a knight in battered plate armour riding a huge black dragon low over a burning battlefield in a cinematic style. The sequence follows a continuous flight path with a single cut to emphasize the knight's command and the dragon's maneuver.
+
+retention_analysis: N/A
+
+detailed_description: The target video uses a cinematic, high-contrast fantasy style with volumetric smoke, intense orange firelight, and deep shadow.
+[Shot 1] A low-angle tracking shot follows the knight in battered plate armour seated atop a huge black dragon as they glide just above the burning battlefield. The camera moves forward at a steady pace, keeping the dragon's leathery wings and the knight's scarred helmet centred in the frame. Embers drift upward past the lens, and the heat haze shimmers above the ruined structures below. The dragon's massive wings beat slowly, pushing against the thick smoke, while the knight's gloved hands grip the reins tightly. At 00:05.000, the shot cuts to a closer medium view as the dragon banks sharply to the right.
+[Shot 2] At 00:05.000, the camera pushes in slowly with small amplitude, tightening the frame on the knight's face and the dragon's scaled neck. The knight (S1) turns his head toward the advancing front line, his jaw tightening as he shouts, <d>[English] Hold the line!</d> The dragon responds by flaring its wings and diving slightly, its claws scraping against a burning wooden barricade below. Sparks cascade upward, catching on the knight's dented breastplate. The camera holds steady as the dragon levels out, carrying the knight forward into the thick smoke, and the shot ends on the dragon's powerful wingbeat silhouetted against the roaring flames at 00:10.125.
+
+overall_soundscape: Continuous low-frequency rumble of the dragon's wingbeats, the crackle and roar of the burning battlefield, and the metallic clink of the knight's battered plate armour against the saddle. Wind rushes past the camera throughout the sequence.
+
+non_diegetic_music: A sweeping orchestral score with heavy brass and low strings enters at the start, building in intensity as the dragon banks. The music swells during the knight's command, then drops to a sustained, tense chord as the dragon dives, leaving the final two seconds with only the ambient fire and wing sounds.

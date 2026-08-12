@@ -1,0 +1,321 @@
+"""The HTTP surface. The API is the product; the UI is one of its clients.
+
+The rule that keeps both callers honest: there is no quality-bearing field only a UI could
+set, and no path that skips the validator. A one-sentence brief from an agent and a fully
+specified brief from a UI enter the same pipeline at the same point.
+
+Three response layers, so nobody has to see "ref2va":
+  presentation  plain language for an end user. No mode names, no frame counts, no nodes.
+  plan          the creative decisions, reviewable and refinable.
+  ir            the full document, for whoever debugs or reproduces it.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+import uuid
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Literal
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from .analyse import sha256_file
+from .backend import Backend, BackendError, BackendUnavailable
+from .compile import compile_brief, refine
+from .config import get_config
+from .mode import needs_clarification
+from .models import AssetKind, AssetRef, Brief, DialogueLine, IRDocument, Mode, Role
+from .plan import ProfileOptions
+
+log = logging.getLogger("h3ir.service")
+
+app = FastAPI(title="h3ir", version="1",
+              description="Compiles a plain-language brief into a validated MiniMax H3 "
+                          "Context-IR plus the exact asset wiring it is true for.")
+
+_STORE: dict[str, dict[str, Any]] = {}
+_LOCK = threading.Lock()
+
+
+# --------------------------------------------------------------------------- wire models
+
+class AssetIn(BaseModel):
+    path: str | None = Field(None, description="Readable path on the service host")
+    url: str | None = None
+    note: str | None = Field(None, description="Free text hint, e.g. 'the man'. Never required.")
+    kind: Literal["image", "video", "audio"] = "image"
+    role: str | None = Field(None, description="Optional. Inferred when omitted.")
+    sizing: Literal["match", "max"] = "match"
+    seconds: float | None = None
+    frames: int | None = None
+    paired_video_path: str | None = None
+    provenance: dict[str, Any] | None = None
+
+
+class DialogueIn(BaseModel):
+    text: str
+    language: str = "English"
+    speaker: str | None = None
+    voiceover: bool = False
+
+
+class BriefIn(BaseModel):
+    """The minimum viable request is `intent`. Everything else has a good default."""
+
+    intent: str
+    assets: list[AssetIn] = []
+    seconds: float = 5.0
+    aspect: str = "16:9"
+    dialogue: list[DialogueIn] = []
+    onscreen_text: list[str] = []
+    shots: int | None = None
+    loras: list[dict[str, Any]] = []
+    silent: bool = False
+    constraints: list[str] = []
+    creativity: Literal["restrained", "balanced", "bold", "extreme"] = Field(
+        "balanced",
+        description="How much the writer may add beyond what the request states. "
+                    "restrained = the request and nothing else; balanced = the request, shaped, "
+                    "plus a score if the piece wants one; bold = may introduce a spoken line, a "
+                    "score, on-screen text or a beat the request never mentioned. An explicit "
+                    "prohibition in the request (\"no dialogue\") overrides every setting.")
+    effort: Literal["fast", "standard", "max"] = "standard"
+    seed: int | None = 7
+    transcripts: dict[str, str] = Field(
+        default_factory=dict,
+        description="sha256 -> transcript, for attached audio. This service NEVER transcribes: "
+                    "nothing here can hear, and a model asked about a waveform invents a plausible "
+                    "answer instead of abstaining. Run a real recogniser — Whisper, or any "
+                    "speech-to-text service — and pass the result. A transcript gives the "
+                    "WORDS only — "
+                    "timbre, delivery and tempo still have to be stated in the asset's note.")
+    answer: dict[str, str] | None = Field(
+        None, description="Optional answer to a previous clarification, e.g. "
+                          '{"anchor_or_reference": "opening_frame"}')
+
+
+class RefineIn(BaseModel):
+    change: str
+
+
+# --------------------------------------------------------------------------- conversion
+
+_ROLE_BY_NAME = {r.value: r for r in Role}
+
+
+def _to_brief(b: BriefIn) -> Brief:
+    assets: list[AssetRef] = []
+    for a in b.assets:
+        if not a.path:
+            raise HTTPException(422, detail={
+                "code": "asset-no-path",
+                "message": "each asset needs a `path` readable by the service; URL fetching is "
+                           "not enabled on this deployment"})
+        p = Path(a.path)
+        if not p.exists():
+            raise HTTPException(422, detail={"code": "asset-missing",
+                                             "message": f"no such file: {a.path}"})
+        role = _ROLE_BY_NAME.get(a.role or "", None)
+        if role is None:
+            role = {"image": Role.SUBJECT, "video": Role.EDIT_SOURCE,
+                    "audio": Role.BGM}[a.kind]
+        paired = None
+        if a.paired_video_path and Path(a.paired_video_path).exists():
+            paired = sha256_file(a.paired_video_path)
+        assets.append(AssetRef(kind=AssetKind(a.kind), role=role, sha256=sha256_file(p),
+                               path=str(p), note=a.note, sizing=a.sizing, seconds=a.seconds,
+                               frames=a.frames, provenance=a.provenance,
+                               paired_video_sha256=paired))
+
+    # An answered clarification becomes an explicit role, which is exactly how it would have
+    # arrived had the caller known: the answer is data, not a special code path.
+    if b.answer and b.answer.get("anchor_or_reference") == "opening_frame" and assets:
+        assets[0].role = Role.FRAME_ANCHOR_FIRST
+
+    return Brief(intent=b.intent, assets=assets, seconds=b.seconds, aspect=b.aspect,
+                 dialogue=[DialogueLine(text=d.text, language=d.language,
+                                        speaker_hint=d.speaker, voiceover=d.voiceover)
+                           for d in b.dialogue],
+                 onscreen_text=list(b.onscreen_text), shots=b.shots, loras=list(b.loras),
+                 silent=b.silent, constraints=list(b.constraints), effort=b.effort,
+                 creativity=b.creativity)
+
+
+def _plan_layer(doc: IRDocument) -> dict[str, Any]:
+    """The creative decisions in plain language. No labels, no markers, no field names."""
+    return {
+        # The request is not judgeable without the ask beside it. A caller — or the person reading
+        # over their shoulder — cannot tell whether a brief matched a plain request or overshot it
+        # while looking only at the brief.
+        "asked_for": doc.provenance.get("request"),
+        "creativity": doc.provenance.get("creativity"),
+        "style": doc.plan.style_phrase,
+        "shots": [{"n": s.n,
+                   "from": round(s.start_ms / 1000, 2), "to": round(s.end_ms / 1000, 2),
+                   "what_happens": s.beat,
+                   "camera": (f"{s.camera.type}"
+                              + (f", {s.camera.amplitude} amplitude" if s.camera and s.camera.amplitude else "")
+                              + (f", {s.camera.speed}" if s.camera and s.camera.speed else ""))
+                   if s.camera else "held",
+                   "says": [d.text for d in s.dialogue],
+                   "sound": s.sync_sound}
+                  for s in doc.plan.shots],
+        "background_sound": doc.plan.ambient_sound,
+        "music": doc.plan.music,
+        "people_who_speak": [{"as": s.sid, "is": s.descriptor or s.subject} for s in doc.plan.speakers],
+        "references": [{"label": m.label, "role": m.role.value, "kind": m.kind.value}
+                       for m in doc.plan.manifest],
+    }
+
+
+def _ir_layer(doc: IRDocument) -> dict[str, Any]:
+    return {
+        "ir_version": doc.ir_version, "profile": doc.profile, "mode": doc.mode.value,
+        "prompt": doc.prompt, "prompt_tokens": doc.prompt_tokens,
+        "sections": doc.sections,
+        "target": {"nominal_seconds": doc.plan.target.nominal_seconds,
+                   "frames": doc.plan.target.frames,
+                   "effective_seconds": round(doc.plan.target.effective_seconds, 3),
+                   "canvas": list(doc.plan.target.canvas)},
+        "manifest": [asdict(m) for m in doc.plan.manifest],
+        "mode_decision": asdict(doc.plan.mode_decision) if doc.plan.mode_decision else None,
+        "loras": [asdict(l) for l in doc.plan.loras],
+        "render_hash": doc.render_hash(),
+        "provenance": doc.provenance,
+        "diagnostics": [{"rule": f.rule, "severity": f.severity, "message": f.msg}
+                        for f in doc.findings],
+    }
+
+
+def _envelope(brief_id: str, doc: IRDocument, brief: Brief) -> dict[str, Any]:
+    clar = doc.provenance.get("clarification")
+    return {
+        "id": brief_id,
+        "status": ("needs_input" if clar else ("degraded" if doc.fell_back else "ready")),
+        "source": doc.source,
+        "fallback_reason": doc.fallback_reason,
+        "question": clar,
+        "default_if_unanswered": (clar or {}).get("default_if_unanswered"),
+        "presentation": doc.presentation(),
+        "plan": _plan_layer(doc),
+        "ir": _ir_layer(doc),
+    }
+
+
+def _remember(brief_id: str, brief: Brief, doc: IRDocument) -> None:
+    with _LOCK:
+        _STORE[brief_id] = {"brief": brief, "doc": doc, "at": time.time(),
+                            "versions": _STORE.get(brief_id, {}).get("versions", 0) + 1}
+
+
+# --------------------------------------------------------------------------- endpoints
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    with Backend(get_config()) as b:
+        return {"ok": True, "llm": b.health(), "profile": get_config().profile}
+
+
+@app.get("/v1/loras")
+def list_loras() -> dict[str, Any]:
+    """Everything an agent needs to choose a style. Deliberately no trigger strings: the
+    compiler owns those, for the same reason it owns <Picture 1>."""
+    from .lora import load_registry
+    records, findings, revision = load_registry()
+    return {"revision": revision,
+            "loras": [r.public() for r in records.values()],
+            "problems": [{"rule": f.rule, "severity": f.severity, "message": f.msg}
+                         for f in findings]}
+
+
+@app.get("/v1/capabilities")
+def capabilities() -> dict[str, Any]:
+    from .grid import legal_frames
+    return {
+        # Durations must be frame-ALIGNED (n % 17 == 5 at 24 fps). The band below is where the
+        # model was trained; longer renders work, they just take longer, so it is reported as
+        # guidance rather than as a limit.
+        "durations_seconds": sorted({round(n / 24, 3) for n in legal_frames()}),
+        "trained_band_seconds": [round(124 / 24, 3), round(362 / 24, 3)],
+        "longer_durations": "supported if frame-aligned; slower, not rejected",
+        "canvas": "any multiple of 32; 768 short edge is the default, larger renders fine",
+        "aspects": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "max_assets": {"images": 9, "videos": 3, "audios": 3, "total_files": 12},
+        "dialogue_languages": ["Arabic", "Chinese", "English", "French", "German", "Italian",
+                               "Japanese", "Korean", "Portuguese", "Russian", "Spanish"],
+        "output": {"short_edge": 768, "fps": 24, "audio": "32 kHz stereo"},
+        "note": "2K output needs MiniMax's closed regeneration stage; local output is 768p.",
+    }
+
+
+@app.post("/v1/briefs")
+def create_brief(body: BriefIn) -> JSONResponse:
+    brief = _to_brief(body)
+    opts = ProfileOptions(name=get_config().profile)
+    try:
+        doc = compile_brief(brief, opts=opts, seed=body.seed,
+                            thinking_prose=(body.effort == "max"),
+                            transcripts=dict(body.transcripts))
+    except BackendUnavailable as e:
+        raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
+    except BackendError as e:
+        raise HTTPException(502, detail={"code": "llm-error", "message": str(e)}) from e
+
+    brief_id = uuid.uuid4().hex[:16]
+    _remember(brief_id, brief, doc)
+    env = _envelope(brief_id, doc, brief)
+    if not doc.ok:
+        # Contradictions and internal invariants are separated: a caller can act on the first
+        # and should never see the second, so an internal failure is reported as ours.
+        caller_facing = [f for f in doc.errors if f.rule.split("-")[0] in
+                         ("T6", "T7", "M5", "M6", "M7", "L3", "X10", "X11", "X12", "X13", "X15")]
+        env["errors"] = [{"rule": f.rule, "message": f.msg} for f in doc.errors]
+        env["status"] = "invalid"
+        return JSONResponse(status_code=422 if caller_facing else 500, content=env)
+    return JSONResponse(status_code=201, content=env)
+
+
+@app.get("/v1/briefs/{brief_id}")
+def get_brief(brief_id: str) -> dict[str, Any]:
+    rec = _STORE.get(brief_id)
+    if not rec:
+        raise HTTPException(404, detail={"code": "unknown-brief", "message": brief_id})
+    return _envelope(brief_id, rec["doc"], rec["brief"])
+
+
+@app.patch("/v1/briefs/{brief_id}")
+def refine_brief(brief_id: str, body: RefineIn) -> JSONResponse:
+    rec = _STORE.get(brief_id)
+    if not rec:
+        raise HTTPException(404, detail={"code": "unknown-brief", "message": brief_id})
+    try:
+        doc, amended, changed = refine(rec["brief"], body.change,
+                                       opts=ProfileOptions(name=get_config().profile))
+    except BackendUnavailable as e:
+        raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
+    except BackendError as e:
+        raise HTTPException(502, detail={"code": "llm-error", "message": str(e)}) from e
+    _remember(brief_id, amended, doc)
+    env = _envelope(brief_id, doc, amended)
+    env["changed"] = changed
+    env["version"] = _STORE[brief_id]["versions"]
+    return JSONResponse(status_code=200, content=env)
+
+
+@app.get("/v1/briefs/{brief_id}/prompt")
+def get_prompt(brief_id: str) -> dict[str, Any]:
+    """The one field the renderer needs, for a caller that already has its own wiring."""
+    rec = _STORE.get(brief_id)
+    if not rec:
+        raise HTTPException(404, detail={"code": "unknown-brief", "message": brief_id})
+    doc: IRDocument = rec["doc"]
+    return {"prompt": doc.prompt, "mode": doc.mode.value,
+            "wiring": [{"label": m.label, "wiring": m.wiring, "sha256": m.sha256,
+                        "sizing": m.sizing} for m in doc.plan.manifest],
+            "frames": doc.plan.target.frames, "canvas": list(doc.plan.target.canvas),
+            "render_hash": doc.render_hash()}

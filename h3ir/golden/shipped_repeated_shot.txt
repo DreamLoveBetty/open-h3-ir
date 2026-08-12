@@ -1,0 +1,21 @@
+subject_definitions:
+<Subject 1> is the man in <Picture 1>, with short dark brown hair, full dark beard and mustache, athletic build, navy blue short-sleeved t-shirt, dark blue denim jeans.
+<Subject 2> is the interior stone corridor in <Picture 2>, with the wall torch, the stone wall of rough-hewn rectangular blocks, the vines.
+
+summary:
+[reference generation] The video depicts <Subject 1> walking forward through a stone corridor toward the camera. <Subject 2> provides the atmospheric environment.
+
+retention_analysis:
+<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - the short dark brown hair, full dark beard and mustache, athletic build are retained.
+<Subject 2> (appears in [Shot 1], [Shot 2]): fully_preserved - the wall torch, the stone wall, the vines are retained.
+
+detailed_description:
+The target video is in digital illustration style with semi-realistic character design.
+[Shot 1] Rhythmic footsteps echo on stone as <Subject 1> walks forward down a narrow corridor. His short dark brown hair and full dark beard are sharply defined. The camera pushes in with small amplitude at slow speed. A mounted wall torch on the right features a bright yellow and orange flame. The flickering torchlight casts moving shadows across the irregular rectangular blocks of the stone wall as he moves steadily toward the foreground.
+[Shot 2] At 00:04.000, <Subject 1> strides forward down the stone corridor, his athletic build moving with purpose. His short dark brown hair and full dark beard and mustache frame a face illuminated by the warm, flickering light from the torch mounted on the wall. The camera pushes in with small amplitude at slow speed. The man closes the distance to the camera as the light washes over his face and upper body.
+
+overall_soundscape:
+Low ambient hum of a stone corridor. Faint wind echoing through the passage.
+
+non_diegetic_music:
+N/A

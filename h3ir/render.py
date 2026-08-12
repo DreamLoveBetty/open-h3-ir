@@ -1,0 +1,422 @@
+"""Stage D (second half): the deterministic renderer.
+
+No model is called here. Given a Plan whose prose slots are filled, this produces the
+exact prompt string, and re-rendering the same Plan must produce byte-identical output.
+
+Placeholder substitution is the mechanism that keeps the model away from anything that
+must be exact. The prose stage is asked to emit `{{CAM}}` and `{{D1}}` tokens; this module
+replaces them with canonical camera phrasing and with the user's dialogue markup. So the
+user's words never pass through the model, and the camera vocabulary is a template
+decision rather than something we hope the model remembers.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from .grid import ms_to_timestamp
+from .models import AssetKind, DialogueLine, Mode, Plan, Role, SpeakerPlan
+from .plan import ProfileOptions, audio_relations
+from .textnorm import sentences
+
+CAM_TOKEN = "{{CAM}}"
+DLG_TOKEN = re.compile(r"\{\{D(\d+)\}\}")
+
+
+@dataclass
+class RenderResult:
+    prompt: str
+    sections: dict[str, str]
+    notes: list[str]
+    # The per-shot text as it actually shipped, after placeholder substitution and repairs. Checks
+    # that ask "does this shot name its subject" must read THIS, not the pre-render draft.
+    shot_bodies: dict[int, str] = field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------- pieces
+
+def instruction_line(plan: Plan, opts: ProfileOptions) -> str:
+    """Verbatim from the spec, including the em dash and the per-mode bracket convention.
+
+    The spec is inconsistent here -- fl2va uses bare `Picture 1` / `Shot 1` while i2va and
+    l2va bracket them. That inconsistency is preserved deliberately rather than tidied.
+    """
+    s_ss = plan.target.s_ss(opts.s_ss_policy)
+    last_shot = plan.shots[-1].n if plan.shots else 1
+    if plan.mode is Mode.I2VA:
+        return ("For the target video, at 0.00 seconds into the target video, "
+                "<Picture 1> (from [Shot 1]) is fully referenced.")
+    if plan.mode is Mode.FL2VA:
+        return ("How the reference pictures align with the target video — Picture 1 (from Shot 1) "
+                "aligns with the 0.00-second mark of the target video; Picture 2 "
+                f"(from Shot {last_shot}) aligns with the {s_ss}-second mark of the target video.")
+    if plan.mode is Mode.L2VA:
+        return ("How the reference pictures align with the target video — <Picture 1> "
+                f"(from [Shot {last_shot}]) aligns with the {s_ss}-second mark of the target video.")
+    return ""
+
+
+def render_subject_definitions(plan: Plan) -> str:
+    """Templated, which is why a redundant standalone <Picture N> source line cannot occur."""
+    lines: list[str] = []
+    for s in plan.subjects:
+        src = ", ".join(s.sources)
+        # IDENTITY only. A plate's stance, gesture and expression are properties of that
+        # photograph, and the request owns what the subject does -- unless the plate IS a frame
+        # of the video, in which case its pose is the video's pose and carries forward.
+        facts = list(s.attributes)
+        if s.pose_licensed and s.pose:
+            facts += list(s.pose)
+        attrs = ", ".join(facts)
+        if attrs:
+            lines.append(f"{s.label} is {s.descriptor} in {src}, with {attrs}.")
+        else:
+            lines.append(f"{s.label} is {s.descriptor} in {src}.")
+    for m in plan.manifest:
+        if m.kind is AssetKind.VIDEO and m.role is Role.EDIT_SOURCE:
+            lines.append(f"{m.label} is the source video for the target video edit.")
+        elif m.kind is AssetKind.VIDEO and m.role is Role.CONTINUATION_SOURCE:
+            lines.append(f"{m.label} is the source video the target video continues from.")
+    for m in plan.manifest:
+        if m.kind is not AssetKind.AUDIO:
+            continue
+        sid = next((sp.sid for sp in plan.speakers if sp.voice_ref == m.label), None)
+        subj = next((sp.subject for sp in plan.speakers if sp.voice_ref == m.label), None)
+        # The caller's characterisation goes HERE, in the definition, because H3's tokenizer emits
+        # only "<Audio j>: " and never the signal -- so this text is the sole channel by which the
+        # conditioning encoder learns what the audio is. "containing a spoken vocal layer" told it
+        # nothing at all.
+        said = m.characterisation
+        detail = f" — {said}" if said else ""
+        if m.role is Role.VOICE_TIMBRE and sid:
+            who = f"{subj} {sid}" if subj else f"the speaker {sid}"
+            lines.append(f"{m.label} is the voice-timbre reference for {who}, "
+                         f"containing a spoken vocal layer{detail}.")
+        elif m.role is Role.BGM:
+            paired = f" of {m.paired_with}" if m.paired_with else ""
+            lines.append(f"{m.label} is the synchronized audio track{paired}, "
+                         f"providing the background music{detail}.")
+        else:
+            lines.append(f"{m.label} is a sound-texture reference for the target "
+                         f"video{detail}.")
+    return "\n".join(lines)
+
+
+def render_retention(plan: Plan) -> str:
+    lines: list[str] = []
+    for s in plan.subjects:
+        shots = ", ".join(f"[Shot {n}]" for n in s.appears_in)
+        note = s.retention_note
+        if s.retention == "attribute_transfer":
+            # The intent is stated in the brief rather than carried privately, which is the point
+            # of using the spec's own marker: the model is told a transfer is intended instead of
+            # being left to infer a contradiction between the plate and the style line.
+            note = (f"{note}, while the rendering style is replaced with "
+                    f"{plan.style_phrase or 'the requested style'}")
+        lines.append(f"{s.label} (appears in {shots}): {s.retention} - {note}.")
+    for m in plan.manifest:
+        if m.kind is AssetKind.VIDEO:
+            if m.role is Role.EDIT_SOURCE:
+                lines.append(f"{m.label} (source video editing): fully_preserved - the original "
+                             "framing, lighting and setting are maintained while the edit is applied.")
+            elif m.role is Role.CONTINUATION_SOURCE:
+                lines.append(f"{m.label} (continuation source): partially_preserved - the setting "
+                             "and subject continue from its final state.")
+        elif m.kind is AssetKind.IMAGE and m.role is Role.FRAME_ANCHOR_FIRST:
+            lines.append(f"{m.label} ([Shot 1] first frame): fully_preserved - the composition, "
+                         "subject placement and lighting of the opening frame are held.")
+        elif m.kind is AssetKind.IMAGE and m.role is Role.FRAME_ANCHOR_LAST:
+            lines.append(f"{m.label} ([Shot {plan.shots[-1].n}] last frame): fully_preserved - "
+                         "the final composition and subject placement are reached.")
+    for label, marker, note in audio_relations(plan):
+        lines.append(f"{label}: {marker} - {note}.")
+    return "\n".join(lines)
+
+
+def style_sentence(phrase: str) -> str:
+    """Ref2VA form: one sentence on its own line before [Shot 1]. Built from the same phrase
+    the base modes splice inline, so the two modes cannot drift apart."""
+    p = (phrase or "").strip().rstrip(".")
+    if not p:
+        return ""
+    head, _, rest = p.partition(",")
+    head = head.strip()
+    head = head[0].lower() + head[1:] if head else head
+    # The medium the model names often already ends in "style" ("anime style"), and appending
+    # ours produced "in anime style style". Drop the duplicate rather than the word.
+    head = re.sub(r"\s+styles?$", "", head, flags=re.I)
+    rest = rest.strip().rstrip(",")
+    if not rest:
+        return f"The target video is in {head} style."
+    # "with" needs a noun phrase after it. A remainder that is only treatment adjectives produced
+    # "in anime style with cinematic." -- third grammar bug in this one sentence, so the join is
+    # now chosen from the remainder's shape rather than fixed.
+    from .style import TREATMENT_TERMS
+    items = [x.strip() for x in rest.split(",") if x.strip()]
+    # "with" needs a noun phrase directly after it. If the remainder opens with an adjective, a
+    # comma is both correct and better reading, whatever follows.
+    first_is_adjectival = bool(items) and items[0].lower() in TREATMENT_TERMS
+    joiner = ", " if first_is_adjectival else " with "
+    return f"The target video is in {head} style{joiner}{', '.join(items)}."
+
+
+def style_prefix(phrase: str) -> str:
+    """Base-mode form: the comma-separated style list the spec's own examples open with
+    ("[Shot 1] Live-action, cinematic, a medium-wide shot frames ...")."""
+    return (phrase or "").strip().rstrip(".,")
+
+
+def render_summary(plan: Plan) -> str:
+    """The [task type] prefix is templated from roles; only the sentence after it is prose.
+
+    A prose stage that could write the prefix could invent a relationship the pack does not
+    contain ('video editing' with no source video), so it never gets the chance.
+    """
+    prefix = "[" + " + ".join(plan.task_types) + "]"
+    body = (plan.summary or "").strip()
+    if body.startswith("["):                      # strip a prefix the model added anyway
+        body = body.split("]", 1)[-1].strip()
+    if not body:
+        subs = ", ".join(s.label for s in plan.subjects) or "the described scene"
+        body = f"The target video shows {subs}."
+    edit = next((m.label for m in plan.manifest if m.role is Role.EDIT_SOURCE), None)
+    if edit:
+        required = f"The target video is an edited version of {edit}."
+        if not body.startswith(required):
+            body = f"{required} {body}"
+    return f"{prefix} {body}"
+
+
+def dialogue_markup(line: DialogueLine, speaker: SpeakerPlan | None) -> str:
+    """The user's words, byte-for-byte, inside the spec's markup."""
+    sid = speaker.sid if speaker else "(S1)"
+    subj = f"{speaker.subject} " if speaker and speaker.subject else ""
+    desc = ""
+    if speaker and speaker.descriptor:
+        desc = f"{speaker.descriptor} "
+    if speaker and speaker.voice_ref:
+        voice = f", using the voice timbre referenced from {speaker.voice_ref},"
+    else:
+        voice = ""
+    body = f"<d>[{line.language}] {line.text}</d>"
+    if line.voiceover:
+        return (f"{desc}{subj}{sid} says in an off-screen voiceover: {body} "
+                "while their lips remain completely closed.")
+    return f"{desc}{subj}{sid}{voice} says: {body}"
+
+
+def _fill_shot_body(shot, plan: Plan, opts: ProfileOptions, notes: list[str]) -> str:
+    """Pure: the shot is never mutated. Re-rendering the same plan must be byte-identical, so the
+    rendered bodies travel out in RenderResult.shot_bodies for downstream checks to read."""
+    body = (shot.body or "").strip()
+    cam = shot.camera.phrase(opts.camera_style) if shot.camera else ""
+
+    # Trimmed BEFORE any substitution. Running it afterwards deleted the canonical camera
+    # sentence the template had just guaranteed, because the model had placed {{CAM}} late in a
+    # long body and the tail went with the trim. Cutting while the placeholders are still tokens
+    # means a lost {{CAM}} falls into the "token missing, appended" path and self-heals.
+    # The template will ADD words after this point -- the canonical camera sentence and each
+    # dialogue line -- so the ceiling budgets for them. Otherwise the final body exceeds the
+    # number the trim was enforcing, which is the same "the budget does not mean anything" problem
+    # in a smaller coat.
+    added = (len(cam.split()) if cam else 0) + sum(
+        len(d.text.split()) + 8 for d in shot.dialogue)
+    ceiling = max(int(shot.word_target * 0.9), int(shot.word_target * 1.5) - added)
+    words = body.split()
+    if len(words) > ceiling:
+        sentences = re.split(r"(?<=[.!?])\s+", body)
+        kept, n = [], 0
+        for sent in sentences:
+            c = len(sent.split())
+            if kept and n + c > ceiling:
+                break
+            kept.append(sent)
+            n += c
+        if kept and n >= shot.word_target * 0.6:
+            notes.append(f"shot {shot.n}: trimmed {len(words) - n} words over the "
+                         f"{ceiling}-word ceiling at a sentence boundary")
+            body = " ".join(kept)
+
+
+    if CAM_TOKEN in body:
+        body = body.replace(CAM_TOKEN, cam + "." if cam and not cam.endswith(".") else cam)
+    elif cam:
+        # The prose stage dropped the token. Append rather than lose the camera move, and say so.
+        notes.append(f"shot {shot.n}: camera token missing from prose, appended")
+        body = body.rstrip()
+        if body and not body.endswith((".", "!", "?")):
+            body += "."
+        body = f"{body} {cam}." if body else f"{cam}."
+
+    # The prose stage is told to write nothing about camera movement, because the template owns
+    # it. When it does anyway, the shot ends up with the canonical sentence AND a paraphrase of
+    # it. Remove the paraphrase rather than shipping both: camera is a template decision, and a
+    # second opinion about it is exactly what the placeholder exists to prevent.
+    if cam:
+        body, dropped = _strip_extra_camera_prose(body, cam)
+        if dropped:
+            notes.append(f"shot {shot.n}: removed {dropped} redundant camera sentence(s) "
+                         "the prose stage added alongside the template's")
+
+    # The label is the ONLY binding between this prose and the attached image. When the prose
+    # stage describes a planned subject but omits its label, the shot silently stops referencing
+    # the reference. That is structural, not stylistic, so the template repairs it rather than
+    # reporting it: attach the label to the first mention of the subject's own descriptor.
+    # REF2VA only. <Subject N> means something because subject_definitions defines it, and base
+    # modes have no such section -- attaching one there creates a label that names nothing. This
+    # is the third place that rule has had to be applied; it belongs to the label, not to a stage.
+    for subj in (plan.subjects if plan.mode is Mode.REF2VA else []):
+        if subj.label not in shot.subjects or subj.label in body:
+            continue
+        head = re.sub(r"^(?:a|an|the)\s+", "", subj.descriptor.strip(), flags=re.I)
+        if not head:
+            continue
+        m = re.search(rf"\b((?:A|An|The|a|an|the)\s+)?{re.escape(head)}\b", body)
+        if m:
+            body = (body[:m.start()] + f"{subj.label}, {m.group(0).strip()}" + body[m.end():])
+            notes.append(f"shot {shot.n}: attached {subj.label} to its first mention "
+                         f"({head!r}); the prose described it without the label")
+
+    used: set[int] = set()
+    def _sub(m: re.Match) -> str:
+        i = int(m.group(1))
+        used.add(i)
+        if 1 <= i <= len(shot.dialogue):
+            line = shot.dialogue[i - 1]
+            sp = next((s for s in plan.speakers
+                       if (line.speaker_hint or "") == (s.descriptor or "")), None) \
+                or (plan.speakers[0] if plan.speakers else None)
+            return dialogue_markup(line, sp)
+        return ""
+
+    body = DLG_TOKEN.sub(_sub, body)
+    missing = [i for i in range(1, len(shot.dialogue) + 1) if i not in used]
+    for i in missing:
+        notes.append(f"shot {shot.n}: dialogue token {{{{D{i}}}}} missing from prose, appended")
+        line = shot.dialogue[i - 1]
+        sp = plan.speakers[0] if plan.speakers else None
+        body = body.rstrip()
+        if body and not body.endswith((".", "!", "?")):
+            body += "."
+        body = f"{body} {dialogue_markup(line, sp)}".strip()
+
+    body = re.sub(r"\s+", " ", body).strip()
+    body = re.sub(r"\.\s*\.+", ".", body)          # substitution can abut an existing stop
+    body = re.sub(r"\s+([.,;:!?])", r"\1", body)
+    if body and not body.endswith((".", "!", "?", '"', ">")):
+        body += "."
+    return body
+
+
+def render_description(plan: Plan, opts: ProfileOptions, notes: list[str],
+                       rendered: dict[int, str] | None = None) -> str:
+    """Ref2VA puts shots on their own lines after a style sentence; base modes run inline
+    with the style inside [Shot 1]. Both verified against MiniMax's published artifacts."""
+    parts: list[str] = []
+    for shot in plan.shots:
+        body = _fill_shot_body(shot, plan, opts, notes)
+        if rendered is not None:
+            rendered[shot.n] = body
+        if shot.n == 1:
+            prefix = style_prefix(plan.style_phrase) if plan.mode.is_base else ""
+            if prefix and body:
+                parts.append(f"[Shot 1] {prefix}, {body[0].lower() + body[1:]}")
+            elif prefix:
+                parts.append(f"[Shot 1] {prefix}.")
+            else:
+                parts.append(f"[Shot 1] {body}")
+        else:
+            parts.append(f"[Shot {shot.n}] At {ms_to_timestamp(shot.start_ms)}, "
+                         f"{_continue_case(body)}")
+
+    if plan.mode is Mode.REF2VA:
+        opening = style_sentence(plan.style_phrase)
+        return "\n".join(([opening] if opening else []) + parts)
+    return " ".join(parts)
+
+
+CAMERA_SENTENCE = re.compile(r"(?:^|(?<=[.!?])\s*)The camera\b[^.!?]*[.!?]")
+
+
+def _strip_extra_camera_prose(body: str, canonical: str) -> tuple[str, int]:
+    keep = canonical.rstrip(".")
+    dropped = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal dropped
+        if keep and keep in m.group(0):
+            return m.group(0)
+        dropped += 1
+        return " "
+
+    out = CAMERA_SENTENCE.sub(repl, body)
+    # The prose stage sometimes treats {{CAM}} as the SUBJECT of its sentence and carries on
+    # through it ("{{CAM}} pushes steadily forward, closing the distance"). After substitution
+    # that leaves a lowercase fragment stranded behind a full stop, which no camera-sentence
+    # pattern matches because it does not start with "The camera".
+    anchor = keep + "."
+    idx = out.find(anchor)
+    if idx >= 0:
+        tail = out[idx + len(anchor):]
+        m = re.match(r"\s+([a-z][^.!?]*[.!?])", tail)
+        if m and re.match(r"(?:pushes|pulls|zooms|pans|trucks|tilts|rises|lowers|arcs|tracks|"
+                          r"holds|shakes|rolls|moves|glides|drifts|closes)\b", m.group(1)):
+            out = out[:idx + len(anchor)] + tail[m.end():]
+            dropped += 1
+    return re.sub(r"\s{2,}", " ", out).strip(), dropped
+
+
+DETERMINERS = {"A", "An", "The"}
+
+
+def _continue_case(body: str) -> str:
+    """After 'At MM:SS.mmm,' the sentence continues, so the first word is lower-case -- as it is
+    in every published example. Only lowered when provably safe: a determiner, or a word that
+    already appears in lower case elsewhere in the same body (so proper nouns are left alone)."""
+    if not body:
+        return body
+    first = re.match(r"[\w'-]+", body)
+    if not first:
+        return body
+    w = first.group(0)
+    if not w[:1].isupper():
+        return body
+    if w in DETERMINERS or re.search(rf"(?<![.!?]\s)\b{re.escape(w.lower())}\b", body[len(w):]):
+        return body[0].lower() + body[1:]
+    return body
+
+
+def render_ir(plan: Plan, opts: ProfileOptions | None = None) -> RenderResult:
+    opts = opts or ProfileOptions()
+    notes: list[str] = []
+    rendered: dict[int, str] = {}
+    sep = opts.field_separator
+
+    desc = render_description(plan, opts, notes, rendered)
+    soundscape = sentences(plan.ambient_sound) or "N/A"
+    music = plan.music.strip() or "N/A"
+
+    if plan.mode is Mode.REF2VA:
+        sections = {
+            "subject_definitions": render_subject_definitions(plan),
+            "summary": render_summary(plan),
+            "retention_analysis": render_retention(plan),
+            "detailed_description": desc,
+            "overall_soundscape": soundscape,
+            "non_diegetic_music": music,
+        }
+        # Ref2VA: section name on its own line, content following.
+        prompt = sep.join(f"{k}:\n{v}" for k, v in sections.items())
+    else:
+        sections = {
+            "integrated_multimodal_description": desc,
+            "overall_soundscape": soundscape,
+            "non_diegetic_music": music,
+        }
+        # Base modes: field name and content on the same line.
+        body = sep.join(f"{k}: {v}" for k, v in sections.items())
+        instr = instruction_line(plan, opts)
+        prompt = f"{instr}\n\n{body}" if instr else body
+
+    return RenderResult(prompt=prompt.strip() + "\n", sections=sections, notes=notes,
+                        shot_bodies=rendered)
