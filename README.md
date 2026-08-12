@@ -176,8 +176,8 @@ $ h3ir controls
 ```
 
 MiniMax's own published example must validate with zero findings, and fourteen mutants of it, each
-carrying exactly one defect, must each trip a named rule. There are more than eighty named rules.
-This gate runs in 0.08 seconds and needs no model.
+carrying exactly one defect, must each trip a named rule. There are eighty-four named rules. This
+gate runs in under a tenth of a second and needs no model.
 
 Legality is not quality, so there is a scored suite as well. A prompt change can improve one and
 wreck the other.
