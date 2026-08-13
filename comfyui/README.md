@@ -1,116 +1,144 @@
-# OpenH3-IR nodes for ComfyUI
+# OpenH3-IR for ComfyUI
 
-Type one sentence on the canvas and render it with MiniMax H3, without leaving ComfyUI to run a CLI
-and paste a brief back into a text box.
+Type one sentence. Get a MiniMax H3 job that is ready to sample.
 
-The node calls a running OpenH3-IR service, gets back the structured document H3 actually wants, and
-outputs it along with the canvas size and a frame count that is already legal. You wire four links
-and the graph you already have keeps working.
+One node writes the brief H3 actually wants, picks the right weights for the job, loads the encoder
+and both VAEs, and hands out the model, the conditioning and the latent. There is no text box to
+paste into, no resolution picker, no frame-count arithmetic and no row of loaders.
 
 ## What you need
 
-Two things, and neither of them is a new Python dependency.
-
 An OpenH3-IR service. Start it from the repo with `h3ir serve`, which listens on port 8420. It needs
-`H3IR_LLM_URL` pointing at your own OpenAI-compatible endpoint, and it needs no GPU of its own. The
-main [README](../README.md) covers that setup.
+`H3IR_LLM_URL` pointing at your own OpenAI-compatible endpoint, and no GPU of its own. The main
+[README](../README.md) covers it.
 
-A ComfyUI with the MiniMax H3 nodes, which ship with ComfyUI itself as
-`MiniMaxH3ReferenceToVideo` and `MiniMaxH3ImageToVideo`.
+A ComfyUI with the MiniMax H3 nodes, which ship with ComfyUI itself, and H3's model files.
 
 ## Install
 
-Copy or link this one directory into ComfyUI's `custom_nodes`, then restart ComfyUI.
+Copy or link this one directory into `custom_nodes`, then restart ComfyUI.
 
 ```bash
 git clone https://github.com/ruashots/open-h3-ir.git
 cp -r open-h3-ir/comfyui /path/to/ComfyUI/custom_nodes/openh3ir
 ```
 
-On Windows, a junction avoids the copy so a `git pull` updates the nodes too:
+On Windows a junction means a `git pull` updates the node too:
 
 ```
 mklink /J "C:\ComfyUI\custom_nodes\openh3ir" "C:\path\to\open-h3-ir\comfyui"
 ```
 
-The nodes appear under `OpenH3-IR`. They add no packages to ComfyUI's Python: the node speaks HTTP to
-the service using nothing but the standard library, so the compiler's dependencies can never collide
-with ComfyUI's, and the service is free to run on another machine.
+It adds nothing to ComfyUI's Python. The node speaks HTTP to the service with the standard library
+only, so the compiler's dependencies can never break your install and the service can live on
+another machine.
 
-## Wiring it up
+## The socket you plug into is the job
 
-Take any working H3 graph. Wherever a text box is feeding the H3 node's `prompt`, put
-**OpenH3-IR Compile** there instead, and connect four things:
+This is the part worth reading, because it is the difference between a good render and a puzzling one.
 
-| From the node | To the H3 node |
+A picture in **opening_frame** is the first frame of the video. A picture in **reference_1** is
+something the shot should contain. Those are two different jobs, they use two different sets of H3
+weights, and they produce two different briefs. So the socket you choose is the answer, and the node
+tells the compiler rather than letting it guess.
+
+That matters because guessing can be wrong quietly. Attach one picture with no role and the compiler
+may decide it is your opening frame while your graph feeds it as a reference. The brief then describes
+a first frame that H3 is never given, the render comes out wrong, and nothing on screen says why. Here
+the wiring cannot disagree with the brief, and if the service still reports a different job than the
+sockets describe, the node says so in its report and in the console.
+
+| Socket | What it means |
 | --- | --- |
-| `prompt` | `prompt` |
-| `width` | `width` |
-| `height` | `height` |
-| `length` | `length` |
+| `opening_frame` | the first frame of the video |
+| `closing_frame` | the last frame |
+| `reference_1` to `reference_4` | things the shot should contain, numbered in order |
+| `video_to_edit` | footage this is a change to |
+| `video_to_continue` | footage this carries on from |
+| `music` | a score to reuse or match |
+| `sound_effect` | an effect to reuse or match |
+| `voice_to_match` | a voice whose timbre to match |
 
-Reference images go into `image_1`, `image_2` and so on, in the order you want them numbered. The
-first connected socket becomes `<Picture 1>`, which is how a subject in the brief gets bound to a
-plate. Feed the same images to the H3 node's own `ref_images` as usual: the compiler reads them to
-write about them, and H3 conditions on them to render.
+Frame sockets and reference sockets are different jobs, so filling both is refused before anything
+runs rather than after a model call.
 
-One thing is manual. The H3 node's `ref_image_size` is a dropdown, and ComfyUI cannot drive a dropdown
-from a text socket, so the node reports the sizing it used on its `ref_image_size` output and you set
-the H3 node to match. The `report` output, viewed through **OpenH3-IR Show Text**, tells you that
-along with the mode it inferred and which image became which picture.
+`picture_notes` takes one short line per connected picture, in order: the man, the car, the room. It
+is never required and it is often what makes the right subject get described. `sound_notes` does the
+same for sounds. `spoken_words` is what the voice clip says, and it has to be typed or run through a
+real recogniser, because nothing in this chain can hear and a model asked about a waveform invents a
+plausible answer.
 
-### Why wire `length` rather than type a duration
+## Wiring the graph
 
-H3 only renders lengths on a 17k+5 frame grid. There are fifteen legal lengths between 5.167 and
-15.083 seconds, and exactly one of them is a whole number of seconds. Ask for 10 seconds and you get
-10.125, which matters the first time you cut to a beat. Wiring `length` means the number the model
-gets and the number the brief was written against are the same number.
+Five sockets out, and no loaders anywhere.
 
-## Reference images and the two views of one disk
+| Out | Into |
+| --- | --- |
+| `model` | your Turbo LoRA, sigma shift, then the guider and scheduler |
+| `positive` | the guider's conditioning |
+| `latent` | the sampler's latent |
+| `vae` | VAE Decode |
+| `audio_vae` | VAE Decode Audio |
 
-The service reads reference images from a filesystem path, so it has to be able to open the file the
-node writes. When ComfyUI and the service share one view of the disk, this is automatic and you can
-ignore the rest of this section.
+`prompt` is the brief if you want to read or keep it, and `report` is what happened in plain words.
+Feed `report` into **OpenH3-IR Show Text** to see it on the canvas: the job it ran, the real length,
+which picture became which, and every model file it loaded.
 
-When they do not, the path is the problem rather than the file. ComfyUI on Windows writes to
-`C:\ComfyUI\temp\ref.png`, and a service in WSL or a container is looking at those same bytes through
-`/mnt/c/ComfyUI/temp/ref.png`. Both are right and neither program can work out the other's spelling,
-so you state it once: put ComfyUI's spelling of a shared folder in `comfy_path_prefix` and the
-service's spelling of the same folder in `service_path_prefix`.
+What stays on your canvas is what you actually tune: the Turbo LoRA, the sigma shift, the step count,
+the sampler, the decode and the save.
 
-If the service runs on a genuinely different machine it cannot open ComfyUI's files at all. Text-only
-prompts still work; reference images do not. The node says so rather than failing obscurely.
+## Length lives in one place
+
+There is one `seconds` field. H3 only renders on a 17k+5 frame grid, so it is snapped once and that
+one number is used for both the brief and the latent. Ask for 10 seconds and you get 10.125, which
+matters the first time you cut to a beat. Exactly one whole second exists in the trained range and it
+is 8.0. A second duration control somewhere else in the graph is how you render eight seconds of a ten
+second script, so there isn't one.
+
+## Reference files and the two views of one disk
+
+The service reads attachments from a filesystem path, so it has to be able to open the file the node
+writes. When ComfyUI and the service share one view of the disk this is automatic.
+
+When they do not, the path is the problem rather than the file. ComfyUI on Windows writes
+`C:\ComfyUI\temp\ref.png`, and a service in WSL or a container sees those same bytes at
+`/mnt/c/ComfyUI/temp/ref.png`. Both are right and neither can work out the other's spelling, so state
+it once: `comfy_path_prefix` is ComfyUI's spelling of a shared folder, `service_path_prefix` is the
+service's spelling of the same folder.
+
+If the service is on a genuinely different machine it cannot open ComfyUI's files at all. Text-only
+prompts still work, attachments do not, and the node says so instead of failing obscurely.
 
 ## The example graph
 
-`example/openh3ir_ref2va.api.json` is the exact graph used to verify this node, byte for byte as
-submitted. It compiles a sentence, renders 8 seconds at 1344x768 with two reference plates through the
-H3 Turbo path, and writes an mp4 with H3's own audio.
+`example/openh3ir_ref2va.api.json` is the graph used to verify this, byte for byte as submitted. It
+renders 8 seconds at 1344x768 from two reference plates and writes an mp4 with H3's own audio. Sixteen
+nodes, where the same render used to take twenty seven.
 
-It is in ComfyUI's API format, which is what the `/prompt` endpoint accepts, because that is the
-format that was actually executed. A canvas workflow assembled by hand and never run can display
-settings it never used, so there is not one here yet. Loading this graph, saving it from the canvas
-and committing that file is the small step still outstanding.
+It is in ComfyUI's API format, which is what the `/prompt` endpoint accepts, because that is the format
+that actually ran. A canvas workflow assembled by hand and never executed can display settings it
+never used, so there is not one here yet.
 
-## What these nodes do not do
+## What it does not do
 
-They do not render. No sampler, no graph submission, no GPU. The compile node produces values that
-flow into the H3 nodes you already have.
+It does not sample and it does not save. It produces the model, conditioning and latent; the sampler
+you already trust does the rest.
 
-They do not transcribe audio. Nothing in the pipeline can hear, and a model asked about a waveform
-invents a plausible answer rather than admitting it cannot listen.
+It cannot hear. Sounds are described from what you type plus their metadata.
 
-They expose four reference sockets. H3 accepts up to nine, and the service will take nine, so this is
-a limit of the node rather than of the model. Four covers the reference work people actually do and
-keeps the node readable on a canvas.
+It exposes four picture sockets, two video and three sound. H3 takes nine pictures and three of each
+of the others, so the picture limit is the node's rather than the model's.
 
 ## When something goes wrong
 
-Every failure is raised with a sentence saying what happened and what to do next, so read the toast.
-The common ones are the service not running, which names the command that starts one; the language
-model endpoint being down, which is distinguished from the service being down; and a reference the
-service cannot read, which points at the two path fields above.
+Read the toast. Every failure names what happened and the next thing to do: the service not running
+names the command that starts one, a dead language model endpoint is distinguished from a dead
+service, and an unreadable attachment points at the two path fields.
 
-Re-queueing an unchanged graph does not spend another model call. The compiler is seeded, so the same
-inputs give the same brief, and the node caches on a hash of its inputs including the pixels of every
-connected image. Change the seed to get a different take on the same sentence.
+Re-queueing an unchanged graph costs nothing. The compiler is seeded, so the same inputs give the same
+brief, and the node caches on a hash of its inputs including the pixels and samples of everything
+connected. Change `seed` for a different take on the same sentence. It is not the sampler's seed.
+
+Occasionally a brief comes back as a fallback rather than a written one, when the writer could not
+satisfy the validator in two passes. The report says so plainly instead of passing it off as written.
+Re-queue with a different `seed`.

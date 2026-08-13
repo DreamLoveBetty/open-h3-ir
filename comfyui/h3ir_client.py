@@ -90,9 +90,14 @@ def _decode(body: str) -> Any:
 
 
 def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, effort: str,
-                  seed: int, silent: bool, shots: int, asset_paths: list[str],
-                  notes: list[str], sizing: str) -> dict[str, Any]:
-    """Turn the node's widgets into the service's BriefIn.
+                  seed: int, silent: bool, shots: int, assets: list[dict[str, Any]],
+                  transcripts: dict[str, str]) -> dict[str, Any]:
+    """Turn the node's state into the service's BriefIn.
+
+    Assets arrive already shaped, with their role named, because the node knows the role from the
+    socket the user plugged into. Nothing here infers a role: an inferred role can disagree with how
+    the graph is wired, and a graph that disagrees with its own brief renders something plausible
+    and wrong.
 
     `shots` of 0 means "the compiler decides", which is the service's own default when the field is
     absent, so 0 is dropped rather than sent as a shot count of zero.
@@ -104,17 +109,9 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
             "in one ordinary sentence, for example: she walks out onto the wet gantry in the rain "
             "and stops when she sees the city below.")
 
-    assets = []
-    for i, p in enumerate(asset_paths):
-        asset: dict[str, Any] = {"path": p, "kind": "image", "sizing": sizing}
-        note = notes[i].strip() if i < len(notes) and notes[i].strip() else ""
-        if note:
-            asset["note"] = note
-        assets.append(asset)
-
     payload: dict[str, Any] = {
         "intent": intent,
-        "assets": assets,
+        "assets": list(assets),
         "seconds": float(seconds),
         "aspect": aspect,
         "creativity": creativity,
@@ -124,7 +121,95 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
     }
     if int(shots) > 0:
         payload["shots"] = int(shots)
+    if transcripts:
+        payload["transcripts"] = dict(transcripts)
     return payload
+
+
+# Sockets, in the order their contents get numbered, and the role each one means. The role is named
+# here rather than inferred by the service, because an inferred role can disagree with how the graph
+# is wired and nothing would say so.
+PICTURE_SOCKETS = ("reference_1", "reference_2", "reference_3", "reference_4")
+VIDEO_SOCKETS = ("video_to_edit", "video_to_continue")
+SOUND_SOCKETS = ("music", "sound_effect", "voice_to_match")
+ROLE_BY_SOCKET = {
+    "opening_frame": "frame_anchor_first",
+    "closing_frame": "frame_anchor_last",
+    "reference_1": "subject", "reference_2": "subject",
+    "reference_3": "subject", "reference_4": "subject",
+    "video_to_edit": "edit_source",
+    "video_to_continue": "continuation_source",
+    "music": "bgm",
+    "sound_effect": "sfx",
+    "voice_to_match": "voice_timbre",
+}
+
+
+def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]], picture_notes: list[str],
+                sound_notes: list[str], sizing: str, from_prefix: str,
+                to_prefix: str) -> list[dict[str, Any]]:
+    """Describe every attached file for the service, in the order it should be numbered.
+
+    `written` is already on disk: a list of (socket, kind, path, extra). Notes are matched by
+    position within their own kind, so the second line of picture_notes describes the second picture
+    and is not thrown off by a video sitting between them.
+    """
+    assets: list[dict[str, Any]] = []
+    pic_i = snd_i = 0
+    for socket, kind, path, extra in written:
+        if socket not in ROLE_BY_SOCKET:
+            raise ServiceError(f"internal: no role recorded for socket {socket!r}")
+        a: dict[str, Any] = {"path": translate_path(path, from_prefix, to_prefix),
+                             "kind": kind, "role": ROLE_BY_SOCKET[socket]}
+        note = ""
+        if kind == "image":
+            a["sizing"] = sizing
+            note = picture_notes[pic_i] if pic_i < len(picture_notes) else ""
+            pic_i += 1
+        elif kind == "audio":
+            note = sound_notes[snd_i] if snd_i < len(sound_notes) else ""
+            snd_i += 1
+        if note.strip():
+            a["note"] = note.strip()
+        a.update(extra)
+        assets.append(a)
+    return assets
+
+
+def expected_mode(has_opening: bool, has_closing: bool, n_references: int,
+                  n_videos: int) -> str:
+    """Which H3 task the wiring describes, decided by the sockets rather than by prose.
+
+    The user plugged a picture into `opening_frame` or into `reference_1`, and those are different
+    jobs with different model weights behind them. Reading the answer off the sockets means the
+    graph and the brief cannot disagree, which is the failure this replaced: the compiler deciding
+    an image was an opening frame while the graph fed it as a reference, with nothing to say so.
+    """
+    if has_opening and has_closing:
+        return "fl2va"
+    if has_closing:
+        return "l2va"
+    if has_opening:
+        return "i2va"
+    if n_references or n_videos:
+        return "ref2va"
+    return "t2va"
+
+
+def check_mode(declared: str, reported: str) -> str | None:
+    """Compare what the graph asked for with what the service says it wrote.
+
+    Returns a sentence when they disagree, or None. The service can still reach a different
+    conclusion, and when it does the render is about to be wrong in a way no error would otherwise
+    reveal.
+    """
+    if declared == reported:
+        return None
+    return (f"the graph is wired for a {declared} job, but the service wrote a {reported} brief. "
+            "The brief and the wiring disagree, so the render would come out wrong in a way that "
+            "looks like a model problem. Check which sockets you filled: a picture in "
+            "opening_frame is the first frame of the video, and a picture in reference_1 is "
+            "something the shot should contain.")
 
 
 def translate_path(path: str, from_prefix: str, to_prefix: str) -> str:

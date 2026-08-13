@@ -232,19 +232,23 @@ Routes and request shapes: [`docs/calling-the-api.md`](docs/calling-the-api.md).
 
 ## Or stay in ComfyUI
 
-If you already render H3 in ComfyUI, there are nodes for it in
-[`comfyui/`](comfyui/README.md). Copy that one folder into `custom_nodes`, restart, and put
-**OpenH3-IR Compile** where the text box feeding the H3 node's `prompt` used to be.
+If you already render H3 in ComfyUI, there is a node for it in [`comfyui/`](comfyui/README.md). Copy
+that one folder into `custom_nodes`, restart, and it replaces the text box, the resolution picker, the
+frame-count arithmetic, the model and VAE and encoder loaders, and the H3 conditioning node. One node
+in, model and conditioning and latent out. The same render that took twenty seven nodes takes sixteen.
 
-Four links and your existing graph keeps working: `prompt`, `width`, `height` and `length` all come
-out of the node and go straight into `MiniMaxH3ReferenceToVideo` or `MiniMaxH3ImageToVideo`. Wiring
-`length` is the one worth doing even if you type your own prompts, because it is what stops the model
-quietly rounding your duration. Reference images go into numbered sockets, in the order you want them
-to become `<Picture 1>` and `<Picture 2>`.
+The socket you plug a picture into is the job. `opening_frame` means it is the first frame of the
+video; `reference_1` means it is something the shot should contain. Those use different H3 weights, and
+the node picks between them for you. It also means the brief and the graph cannot disagree, which they
+could before: left to guess, the compiler can decide your picture is an opening frame while the graph
+feeds it as a reference, and the render comes out wrong with nothing on screen to say why.
 
-The nodes add no packages to ComfyUI's Python. They speak HTTP to `h3ir serve` with nothing but the
-standard library, so the compiler can never break a ComfyUI install and the service can sit on
-another machine.
+There is one duration field, because H3's frame grid has to be snapped once and used for both the
+brief and the latent. Sounds and video attach through their own sockets too, each naming what it is:
+`music`, `sound_effect`, `voice_to_match`, `video_to_edit`, `video_to_continue`.
+
+The node adds no packages to ComfyUI's Python. It speaks HTTP to `h3ir serve` with the standard
+library, so the compiler can never break a ComfyUI install and the service can sit on another machine.
 
 ## What it will not do
 
