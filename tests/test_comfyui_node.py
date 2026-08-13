@@ -472,6 +472,94 @@ def test_a_contradictory_request_lists_the_rules_that_fired(monkeypatch):
     assert "T6-duration" in msg and "asked for silence and a score" in msg
 
 
+def test_a_file_that_opened_and_could_not_be_decoded_is_not_a_path_problem(monkeypatch):
+    """The service resolved it, opened it and could not use it. A different spelling would fail the
+    same way, so this must not enter the path-retry loop, and the analyser's own sentence, which
+    already names the file and what is wrong with it, has to survive."""
+    _fake(monkeypatch, (422, {"detail": {
+        "code": "asset-unreadable",
+        "message": "clip.mp4 is declared kind: video but its bytes are a PNG."}}))
+    with pytest.raises(C.ServiceError) as e:
+        C.compile_brief("http://x", {"intent": "a"})
+    msg = str(e.value)
+    assert "declared kind: video but its bytes are a PNG" in msg, "pass the analyser's words through"
+    assert "a different path would fail the same way" in msg
+    assert C.retranslate(e.value) is False, "THE control: retrying this is three waits for one answer"
+
+
+def test_a_missing_ffmpeg_is_not_reported_as_a_dead_language_model(monkeypatch):
+    """Both are 503. Reading the status alone and printing the LLM message would send someone to fix
+    an endpoint that is working, which is the wrong-message failure this pack exists to avoid."""
+    _fake(monkeypatch, (503, {"detail": {
+        "code": "analysis-tool-missing",
+        "message": "ffprobe is not installed, and video references need it. Install ffmpeg."}}))
+    with pytest.raises(C.ServiceError) as e:
+        C.compile_brief("http://x", {"intent": "a"})
+    msg = str(e.value)
+    assert "Install ffmpeg" in msg, "the analyser already says what to install"
+    assert "H3IR_LLM_URL" not in msg, "do not blame a language model for a missing binary"
+    assert "not about your graph" in msg
+    assert "text-only prompt still works" in msg, "say what does work"
+
+
+def test_more_references_than_h3_has_sockets_for_names_the_ceilings(monkeypatch):
+    """Refused rather than truncated: ten pictures used to compile to `ready` with a manifest
+    publishing <Picture 10> and wiring ref_image_10, a socket that does not exist. Which reference
+    matters is the user's call."""
+    _fake(monkeypatch, (422, {"detail": {
+        "code": "over-capacity", "message": "10 images attached; H3 has 9 image sockets."}}))
+    with pytest.raises(C.ServiceError) as e:
+        C.compile_brief("http://x", {"intent": "a"})
+    msg = str(e.value)
+    assert "10 images attached" in msg
+    assert "nine pictures, three clips and three standalone sounds" in msg
+    assert "Nothing was silently dropped" in msg
+
+
+def _service_failures() -> set[tuple[int, str]]:
+    """Every (status, code) pair `h3ir/service.py` can raise, read out of the service's own source.
+
+    Read rather than listed, so adding a failure over there and no branch over here fails this test
+    instead of shipping a caller that shrugs at something it could have explained.
+    """
+    import pathlib
+    import re
+
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    src = (repo / "h3ir" / "service.py").read_text()
+    found = set(re.findall(r'HTTPException\((\d+),\s*detail=\{\s*\n?\s*"code": "([a-z-]+)"', src))
+    found |= set(re.findall(r'HTTPException\((\d+), detail=\{"code": "([a-z-]+)"', src))
+    # `except BriefRefused` re-raises the exception's OWN code, so the literal is in compile.py and
+    # a scan of service.py alone would miss every one of them. That blind spot is the reason this
+    # helper reads two files: `over-capacity` was invisible to the first version of it.
+    refusals = re.findall(r'super\(\)\.__init__\("([a-z-]+)"', (repo / "h3ir" / "compile.py").read_text())
+    assert refusals, "BriefRefused subclasses stopped declaring literal codes; this scan is now blind"
+    return found | {("422", code) for code in refusals}
+
+
+@pytest.mark.parametrize("status,code", sorted(
+    (int(s), c) for s, c in _service_failures()
+    # Raised before any request this node makes, or about a brief id it never invents: the node's
+    # roles come from a fixed map, it never PATCHes, and it never asks for a brief it was not given.
+    if c not in {"unknown-brief", "change-empty", "unknown-role"}))
+def test_every_failure_the_service_can_send_gets_a_specific_message(status, code, monkeypatch):
+    """A falsification control on the node's error UI as a whole.
+
+    Two ways to fail it, and both have happened in this pack: saying nothing useful, and saying
+    something confidently wrong. `analysis-tool-missing` shares its 503 with an LLM outage and used
+    to be reported as one, which sent people to fix an endpoint that was working.
+    """
+    _fake(monkeypatch, (status, {"detail": {"code": code, "message": "SERVICE SAID THIS"}}))
+    with pytest.raises(C.ServiceError) as e:
+        C.compile_brief("http://x", {"intent": "a"})
+    msg = str(e.value)
+    assert "the service rejected the request" not in msg, \
+        f"{code} reaches the generic branch and the user is told nothing about it"
+    assert "SERVICE SAID THIS" in msg, f"{code} discards the message the service wrote"
+    if code != "llm-unavailable":
+        assert "H3IR_LLM_URL" not in msg, f"{code} is blamed on the language model endpoint"
+
+
 def test_a_dead_llm_endpoint_is_not_reported_as_the_nodes_fault(monkeypatch):
     _fake(monkeypatch, (503, {"detail": {"code": "llm-unavailable", "message": "connect refused"}}))
     with pytest.raises(C.ServiceError) as e:
@@ -709,12 +797,20 @@ def test_an_override_replaces_the_guesses_rather_than_joining_them():
     assert C.path_candidates(r"C:\X", "   ") != ["   "], "blank is not an override"
 
 
-def test_only_an_unreadable_attachment_is_worth_another_spelling():
+def test_only_an_unfindable_attachment_is_worth_another_spelling():
     """Retrying anything else would hide a real problem behind repeated attempts, and retrying a
     dead model endpoint three times is three times the wait for the same answer."""
-    assert C.retranslate(C.ServiceError("nope", C.ASSET_UNREADABLE)) is True
+    assert C.retranslate(C.ServiceError("nope", C.PATH_MAY_BE_WRONG)) is True
     assert C.retranslate(C.ServiceError("llm is down")) is False
     assert C.retranslate(ValueError("something else")) is False
+
+
+def test_the_retry_marker_is_not_named_after_the_one_failure_it_must_not_retry():
+    """The service's own code for a file it opened and could not decode is `asset-unreadable`. If the
+    retry marker carried that string, the next person to wire the service's code straight into
+    `retranslate` would earn three attempts at a corrupt clip for the same answer."""
+    assert C.PATH_MAY_BE_WRONG != "asset-unreadable"
+    assert C.retranslate(C.ServiceError("corrupt", "asset-unreadable")) is False
 
 
 def test_the_asset_failure_actually_carries_that_code(monkeypatch):

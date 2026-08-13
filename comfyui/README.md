@@ -218,9 +218,17 @@ template input, so this is reachable if that changes.
 
 ## When something goes wrong
 
-Read the toast. Every failure names what happened and the next thing to do: the service not running
-names the command that starts one and the node that points somewhere else, a dead language model
-endpoint is distinguished from a dead service, and an unreadable attachment lists the paths it tried.
+Read the toast. Every failure names what happened and the next thing to do, and the failures that
+look alike are told apart rather than lumped together:
+
+| what happened | what you get |
+| --- | --- |
+| no service running | the command that starts one, and the node to put another address on |
+| service up, your language model down | said as such, so you do not go looking at the graph |
+| the attachment could not be found | the paths it tried, and the field that takes an answer |
+| the attachment opened and could not be used | the analyser's own words about the file, and no retry, because a different path would fail the same way |
+| the service host has no ffmpeg | named as the service machine's problem, not your graph's, and it does not blame your language model even though both are a 503 |
+| more references than H3 has sockets | which ceilings, and nothing dropped for you |
 
 Re-queueing an unchanged graph costs nothing. The compiler is seeded, so the same inputs give the same
 brief, and the node caches on a hash of its inputs including the pixels and samples of everything

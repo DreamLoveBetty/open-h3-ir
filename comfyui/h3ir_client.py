@@ -92,16 +92,22 @@ class ServiceError(RuntimeError):
         self.code = code
 
 
-ASSET_UNREADABLE = "asset-unreadable"
+# The marker for the one failure another spelling of the path could fix: the service could not
+# RESOLVE the file. Deliberately not called `asset-unreadable`, which is the service's own code for
+# a file it resolved, opened and could not decode. That one is not retryable, and a name that
+# suggested otherwise would earn somebody three times the wait for the same answer.
+PATH_MAY_BE_WRONG = "path-may-be-wrong"
 
 
 def retranslate(error: Exception) -> bool:
-    """True when the failure was the service being unable to open an attachment.
+    """True when the failure was the service being unable to find an attachment.
 
     That is the only failure a different spelling of the path could fix, so it is the only one worth
-    retrying. Retrying anything else would hide a real problem behind repeated attempts.
+    retrying. Retrying anything else would hide a real problem behind repeated attempts: a corrupt
+    clip is corrupt under every spelling, and a machine with no ffmpeg still has none on the third
+    attempt.
     """
-    return getattr(error, "code", "") == ASSET_UNREADABLE
+    return getattr(error, "code", "") == PATH_MAY_BE_WRONG
 
 
 def path_candidates(comfy_root: str, override: str = "") -> list[str]:
@@ -538,6 +544,17 @@ def _detail(body: Any) -> dict[str, Any]:
     return d if isinstance(d, dict) else {}
 
 
+def _sentence(text: str) -> str:
+    """Somebody else's message, closed off so the next sentence does not run into it.
+
+    The service's messages are written for a person and most of them end in a full stop, but not all,
+    and `...reports it in its own terms rather than yours That is about the file` is the sort of seam
+    that makes a careful message read like a generated one.
+    """
+    text = str(text).strip()
+    return text if not text or text[-1] in ".!?:" else text + "."
+
+
 def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.0) -> dict[str, Any]:
     """POST the brief, then fetch the render fields. Returns the /prompt body plus the brief id.
 
@@ -557,7 +574,22 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
                 "spelling the service can open, for example /mnt/c/ComfyUI-Production where "
                 "ComfyUI itself says C:\\ComfyUI-Production. If the service runs on another machine "
                 "entirely it cannot open ComfyUI's files at all, and only text-only prompts will "
-                "work.", ASSET_UNREADABLE)
+                "work.", PATH_MAY_BE_WRONG)
+        if code == "asset-unreadable":
+            # The file was found and opened, and could not be used. A different spelling of the path
+            # cannot help, so this must NOT carry the retry marker. The analyser writes these for a
+            # person to read and already names the file and what is wrong with it, so it is passed
+            # through whole and only the socket-side action is added.
+            raise ServiceError(
+                f"the service opened your attachment and could not use it: "
+                f"{_sentence(det.get('message', code))} That is about the file rather than about the wiring: a "
+                "different path would fail the same way. Check what the socket is fed from, and that "
+                "a clip goes to a Footage node and a sound to a Sound node.")
+        if code == "over-capacity":
+            raise ServiceError(
+                f"more references than H3 has sockets for: {_sentence(det.get('message', code))} Nothing "
+                "was silently dropped, because which reference matters is your call. Unplug what you can "
+                "spare: H3 takes nine pictures, three clips and three standalone sounds.")
         problems = body.get("errors") if isinstance(body, dict) else None
         if problems:
             lines = "\n  ".join(f"{p.get('rule')}: {p.get('message')}" for p in problems)
@@ -566,9 +598,20 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
         raise ServiceError(f"the service rejected the request: {det.get('message') or body}")
 
     if status == 503:
+        det = _detail(body)
+        if det.get("code") == "analysis-tool-missing":
+            # A missing binary is the service host's problem and shares the 503 shape with an LLM
+            # outage. Reading the shape alone and printing the LLM message would send someone to fix
+            # an endpoint that is working, which is the wrong-message failure this pack exists to
+            # avoid. The analyser already names the tool and how to install it, so it is passed
+            # through and only the location is added.
+            raise ServiceError(
+                f"the OpenH3-IR service at {server} cannot read your attachment because a tool it "
+                f"needs is not installed where it runs: {_sentence(det.get('message', ''))} This is about the "
+                "machine running the service, not about your graph. A text-only prompt still works.")
         raise ServiceError(
             f"the OpenH3-IR service at {server} is running, but the language model endpoint it "
-            f"writes with is not answering: {_detail(body).get('message', '')}. That endpoint is "
+            f"writes with is not answering: {det.get('message', '')}. That endpoint is "
             "yours, set as H3IR_LLM_URL where the service runs. Bring it up and queue again.")
 
     if status == 502:
