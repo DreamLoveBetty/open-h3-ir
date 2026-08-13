@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from .analyse import AssetAnalysisError, ToolMissing, sha256_file
 from .backend import Backend, BackendError, BackendUnavailable
-from .compile import OverCapacity, compile_brief, refine
+from .compile import BriefRefused, compile_brief, refine
 from .config import get_config
 from .mode import needs_clarification
 from .models import AssetKind, AssetRef, Brief, DialogueLine, IRDocument, Mode, Role
@@ -298,10 +298,11 @@ def create_brief(body: BriefIn) -> JSONResponse:
         doc = compile_brief(brief, opts=opts, seed=body.seed,
                             thinking_prose=(body.effort == "max"),
                             transcripts=dict(body.transcripts))
-    except OverCapacity as e:
-        # The refusal design.md 12 committed to and nothing implemented. 422 rather than a silently
-        # truncated manifest: which reference matters is the caller's call, not ours.
-        raise HTTPException(422, detail={"code": "over-capacity", "message": str(e)}) from e
+    except BriefRefused as e:
+        # Every refusal this layer makes about the request itself, with the code it carries. The
+        # capacity one is design.md 12's, and 422 rather than a silently truncated manifest: which
+        # reference matters is the caller's call, not ours.
+        raise HTTPException(422, detail={"code": e.code, "message": str(e)}) from e
     except BackendUnavailable as e:
         raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
     except BackendError as e:
@@ -344,11 +345,19 @@ def refine_brief(brief_id: str, body: RefineIn) -> JSONResponse:
     rec = _STORE.get(brief_id)
     if not rec:
         raise HTTPException(404, detail={"code": "unknown-brief", "message": brief_id})
+    if not body.change.strip():
+        # An empty change used to return 200, report `changed: []`, bump the version and burn a full
+        # recompile: a model call, a re-analysis and a new document, to apply nothing. Say so
+        # instead, before spending any of it.
+        raise HTTPException(422, detail={
+            "code": "change-empty",
+            "message": "`change` is empty, so there is nothing to apply. Say what to change in "
+                       "plain language, for example 'make it 8 seconds' or 'lose the dialogue'."})
     try:
         doc, amended, changed = refine(rec["brief"], body.change,
                                        opts=ProfileOptions(name=get_config().profile))
-    except OverCapacity as e:
-        raise HTTPException(422, detail={"code": "over-capacity", "message": str(e)}) from e
+    except BriefRefused as e:
+        raise HTTPException(422, detail={"code": e.code, "message": str(e)}) from e
     except BackendUnavailable as e:
         raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
     except BackendError as e:

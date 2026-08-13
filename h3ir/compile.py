@@ -25,6 +25,7 @@ from .config import get_config
 from . import creativity
 from .creativity import Scope
 from .draft import deterministic_draft
+from .grid import canvas_for_aspect
 from .lora import resolve_loras
 from .mode import infer_mode, needs_clarification
 from .models import AssetCard, AssetKind, Brief, Finding, IRDocument, Mode, Role
@@ -49,7 +50,20 @@ class CompilerInvariantError(RuntimeError):
     """The deterministic path produced something invalid. Ours to fix, never shipped."""
 
 
-class OverCapacity(ValueError):
+class BriefRefused(ValueError):
+    """A request this layer will not compile, carrying the code the API reports it as.
+
+    One class for every caller-fixable refusal, so the HTTP surface needs one handler and the CLI
+    and the node get the same message. `code` is part of the public error vocabulary, like the
+    validator's rule ids.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class OverCapacity(BriefRefused):
     """More references than the runtime has sockets for. The caller's to fix, so it says what to drop.
 
     design.md 12: "Refusals, not guesses, for over-capacity requests ... The layer returns a clear,
@@ -57,6 +71,40 @@ class OverCapacity(ValueError):
     worst available outcome." Nothing enforced it: ten images compiled to `ready` with a manifest
     publishing `<Picture 10>` and wiring `ref_image_10`, a socket that does not exist.
     """
+
+    def __init__(self, message: str) -> None:
+        super().__init__("over-capacity", message)
+
+
+def check_request(brief: Brief) -> None:
+    """The three fields a caller can make meaningless, checked where every caller passes.
+
+    None of these was checked. `intent: ""` compiled a full brief about nothing; `seconds: 0.0`
+    returned a 5-frame, 0.208-second render; and an aspect that is not a ratio at all reached
+    `grid.canvas_for_aspect`, where the unpack raised ValueError and the caller got a 500.
+
+    What is deliberately NOT refused: an unusual ratio. `/v1/capabilities` lists six aspects and
+    the runtime takes any canvas that is a multiple of 32, so `7:5` is a legal request and refusing
+    it would be the published-limit mistake again -- a declared list read as a ceiling.
+    """
+    if not brief.intent.strip():
+        raise BriefRefused(
+            "intent-empty",
+            "`intent` is the one field with no default: say what the video should show, in one "
+            "sentence. Attachments describe what things look like, not what happens.")
+    if brief.seconds <= 0:
+        raise BriefRefused(
+            "duration-invalid",
+            f"`seconds` is {brief.seconds}, and a video needs a positive length. H3's shortest "
+            "render is 5 frames, about 0.21s; ask for a real duration and it is snapped up onto "
+            "the frame grid from there.")
+    try:
+        canvas_for_aspect(brief.aspect)
+    except (ValueError, ZeroDivisionError, IndexError) as e:
+        raise BriefRefused(
+            "aspect-invalid",
+            f"`aspect` {brief.aspect!r} is not a ratio. Write it as W:H (16:9, 9:16, 1:1) or as "
+            "WxH pixels; any canvas that is a multiple of 32 renders.") from e
 
 
 def check_capacity(brief: Brief) -> None:
@@ -128,6 +176,7 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
     try:
         # Before the backend and before analysis: a request with more references than the runtime
         # can wire cannot be improved by looking at them, and analysis is the expensive stage.
+        check_request(brief)
         check_capacity(brief)
         # What the files themselves say, before anything reads a guess instead: pixel dimensions
         # (the row cost and the aspect check are computed from them) and a declared kind that does
@@ -353,7 +402,11 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                         f"{rule} survived a correction pass unchanged — the message may be "
                         "unclear or the rule may be wrong"))
 
-                findings = list(lora_findings) + list(fixed.findings) + found
+                # wiring_findings explicitly, because this path never calls `_assess`: without it a
+                # written brief shipped with no word about an uncharacterised audio reference, a
+                # truncated source clip or a duration that moved.
+                findings = (list(lora_findings) + wiring_findings(draft_plan, brief)
+                            + list(fixed.findings) + found)
                 if errors:
                     reason = (f"the written brief still failed after {rounds} correction pass(es): "
                               + "; ".join(f.rule for f in errors[:4]))
@@ -647,6 +700,75 @@ def _wardrobe_terms(plan, licence=None) -> tuple[str, ...]:
     return tuple(out[:4])
 
 
+def wiring_findings(plan, brief: Brief) -> list[Finding]:
+    """Findings about the REQUEST and the wiring, true of whichever text ships.
+
+    Kept apart from `_assess` because `_assess` reads the rendered draft, and the written path never
+    calls it: it builds its finding list from `lora_findings` plus the text validator. So everything
+    `_assess` added on its own used to vanish the moment the model's brief won -- including
+    X15-audio-uncharacterised, which is how a `ready` written brief could ship an audio reference
+    nothing describes and say nothing about it. These three are facts about what was attached and
+    what was asked for, so both paths get them.
+    """
+    findings: list[Finding] = []
+
+    # Nothing in this system can hear, so an audio reference whose ROLE claims a sonic property and
+    # whose text describes none is a reference carrying no information at all -- H3's tokenizer emits
+    # `"<Audio j>: "` and never the signal. A transcript does not close this: it supplies the words,
+    # not the timbre, the delivery or the tempo. Only the caller can say what it sounds like, so this
+    # names what to supply rather than guessing.
+    for m in plan.manifest:
+        if m.kind is not AssetKind.AUDIO or m.characterisation:
+            continue
+        want = {Role.VOICE_TIMBRE: "the voice — \"his own voice, calm and low\"",
+                Role.BGM: "the music — instrumentation and tempo",
+                Role.SFX: "the sound"}.get(m.role)
+        if want:
+            findings.append(Finding(
+                "X15-audio-uncharacterised", "WARN",
+                f"{m.label} is wired as {m.role.value} but nothing describes {want}. Nothing here "
+                "can hear, and the IR text is the only channel the encoder has for that audio, so "
+                "an uncharacterised reference contributes nothing. Supply it as the asset's note."))
+
+    # A duration the caller asked for and is not getting. Every legal length sits on the 17k+5 grid,
+    # so almost every request is snapped and the envelope reports both numbers -- but `seconds: 1.0`
+    # becoming 1.625s is a 62% change that only ever showed up as an INFO about the trained band.
+    # Reported above 5% and silent below it, because the small snap is inherent to the grid and
+    # saying it every time would bury the case that surprises somebody.
+    asked, real = plan.target.nominal_seconds, plan.target.effective_seconds
+    if asked > 0 and abs(real - asked) / asked > 0.05:
+        legal = [n / 24 for n in (plan.target.frames - 17, plan.target.frames,
+                                  plan.target.frames + 17) if n >= 5]
+        findings.append(Finding(
+            "X19-duration-snapped", "WARN",
+            f"you asked for {asked:.3f}s and the render is {real:.3f}s ({plan.target.frames} "
+            f"frames): H3's lengths sit on a 17k+5 frame grid at 24 fps, so a request off the grid "
+            f"is snapped up to the next legal one. Nearby legal durations: "
+            + ", ".join(f"{s:.3f}s" for s in legal)
+            + ". Every cut time in this brief is inside the real duration, not the requested one."))
+
+    # A reference video longer than the target is TRUNCATED by the runtime, not summarised:
+    # `execute` does `frames[:frame_count]` and then walks back to the 17k+5 grid. So the brief can
+    # be written about the whole clip while only its opening conditions the render, and nothing said
+    # so. WARN: the caller fixes it by lengthening the target or trimming the clip, and which of
+    # those they want is theirs.
+    for m in plan.manifest:
+        if m.kind is not AssetKind.VIDEO:
+            continue
+        n = m.frames if m.frames else (int(m.seconds * 24) if m.seconds else None)
+        if n is None or n <= plan.target.frames:
+            continue
+        findings.append(Finding(
+            "X17-reference-video-truncated", "WARN",
+            f"{m.label} is {n} frames ({n / 24:.2f}s) and the target is {plan.target.frames} "
+            f"frames ({plan.target.effective_seconds:.2f}s). The runtime truncates a reference "
+            f"video to the target's length, so only the first {plan.target.effective_seconds:.2f}s "
+            "of it reaches the model and the rest of the brief is written about footage the render "
+            "never sees. Lengthen the target, or trim the clip so the part you mean is the part "
+            "that arrives."))
+    return findings
+
+
 def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
             lora_findings: list[Finding], sheet_flags=(),
             licence=None, style=None) -> tuple[Any, list[Finding], int]:
@@ -684,44 +806,7 @@ def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
         transformed_from=_transformed_from(style, licence),
         scope=_scope(brief, plan),
     )
-    # Nothing in this system can hear, so an audio reference whose ROLE claims a sonic property and
-    # whose text describes none is a reference carrying no information at all -- H3's tokenizer emits
-    # `"<Audio j>: "` and never the signal. A transcript does not close this: it supplies the words,
-    # not the timbre, the delivery or the tempo. Only the caller can say what it sounds like, so this
-    # names what to supply rather than guessing.
-    for m in plan.manifest:
-        if m.kind is not AssetKind.AUDIO or m.characterisation:
-            continue
-        want = {Role.VOICE_TIMBRE: "the voice — \"his own voice, calm and low\"",
-                Role.BGM: "the music — instrumentation and tempo",
-                Role.SFX: "the sound"}.get(m.role)
-        if want:
-            findings.append(Finding(
-                "X15-audio-uncharacterised", "WARN",
-                f"{m.label} is wired as {m.role.value} but nothing describes {want}. Nothing here "
-                "can hear, and the IR text is the only channel the encoder has for that audio, so "
-                "an uncharacterised reference contributes nothing. Supply it as the asset's note."))
-
-    # A reference video longer than the target is TRUNCATED by the runtime, not summarised:
-    # `execute` does `frames[:frame_count]` and then walks back to the 17k+5 grid. So the brief can
-    # be written about the whole clip while only its opening conditions the render, and nothing said
-    # so. WARN: the caller fixes it by lengthening the target or trimming the clip, and which of
-    # those they want is theirs.
-    for m in plan.manifest:
-        if m.kind is not AssetKind.VIDEO:
-            continue
-        n = m.frames if m.frames else (int(m.seconds * 24) if m.seconds else None)
-        if n is None or n <= plan.target.frames:
-            continue
-        findings.append(Finding(
-            "X17-reference-video-truncated", "WARN",
-            f"{m.label} is {n} frames ({n / 24:.2f}s) and the target is {plan.target.frames} "
-            f"frames ({plan.target.effective_seconds:.2f}s). The runtime truncates a reference "
-            f"video to the target's length, so only the first {plan.target.effective_seconds:.2f}s "
-            "of it reaches the model and the rest of the brief is written about footage the render "
-            "never sees. Lengthen the target, or trim the clip so the part you mean is the part "
-            "that arrives."))
-
+    findings += wiring_findings(plan, brief)
     findings += validate(result.prompt, ctx)
     for note in result.notes:
         # INFO, not WARN. Each of these reports a repair that SUCCEEDED -- a missing label
