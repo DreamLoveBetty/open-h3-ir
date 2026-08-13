@@ -195,7 +195,7 @@ def test_the_ask_forbids_the_prose_claim_too_and_not_only_the_prefix():
     """Dropping the task type while still writing "the original audio is preserved" would satisfy
     every rule and keep the false promise, so the ask names the sentence as well as the prefix."""
     fact = audio_task_facts(("<Video 1>",), ("video editing",))
-    assert "do not write that the original audio is preserved, reused or carried over" in fact
+    assert "Do not write that the original audio is preserved, reused or carried over" in fact
 
 
 def test_with_audio_attached_the_ask_names_the_relationship_the_roles_declare():

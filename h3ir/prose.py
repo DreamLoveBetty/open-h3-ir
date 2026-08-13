@@ -184,8 +184,8 @@ def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...]) -> st
         return ("No <Audio N> is attached, so the task-type prefix may NOT contain `audio reuse` "
                 "or `audio reference`: both claim a relationship to an attached audio signal and "
                 "there is none. If the request implies the source video's own sound, note that a "
-                "video's soundtrack is a separately wired input and none is wired here — this "
-                "render GENERATES the target video's audio. So do not write that the original "
+                "video's soundtrack is a separately wired input and none is wired here, so this "
+                "render GENERATES the target video's audio. Do not write that the original "
                 "audio is preserved, reused or carried over anywhere in the brief; decide what the "
                 "video should sound like and put it in overall_soundscape.")
     declared = [t for t in task_types if t.startswith("audio ")]
@@ -228,7 +228,7 @@ def base_mode_label_facts(subjects: list[SubjectPlan], labels: tuple[str, ...],
         "\n\nThese are the only labels this request has. This format has NO subject_definitions "
         "section, so `<Subject N>` does not exist in it and writing one is a defect rather than a "
         "style choice: name people, objects and places in plain prose, the same way every time they "
-        "appear. Cite each picture above by its label in the shot it belongs to — an attached "
+        "appear. Cite each picture above by its label in the shot it belongs to: an attached "
         "picture the brief never names is still wired into the render and still costs rows on every "
         "sampling step.")
 
@@ -249,9 +249,10 @@ def reference_picture_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
     if any(role.startswith("frame_anchor") for _, role in picture_roles):
         return ""
     return ("None of the pictures here is a frame of the target video. This checkpoint takes them "
-            "as content references — what they show is redrawn into the scene the request asks for "
-            "— and it has no exact-frame mechanism, so never write that a picture `is the first "
-            "frame of` or `is the last frame of` a shot and never claim `keyframe completion`: both "
+            "as content references, meaning what they show is redrawn into the scene the request "
+            "asks for, and it has no exact-frame mechanism. So never write that a picture `is the "
+            "first frame of` or `is the last frame of` a shot, and never claim `keyframe "
+            "completion`: both "
             "promise an exactness this render cannot deliver. Cite the picture inside the definition "
             "of what it shows, or as the composition, storyboard or style anchor it is.")
 
