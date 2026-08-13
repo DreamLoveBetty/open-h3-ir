@@ -230,6 +230,22 @@ Under-specification never fails. `{"intent":"make a video of my dog"}` and nothi
 `201` with a complete, zero-error brief: five seconds, widescreen, two shots, all picked for you.
 Routes and request shapes: [`docs/calling-the-api.md`](docs/calling-the-api.md).
 
+## Or stay in ComfyUI
+
+If you already render H3 in ComfyUI, there are nodes for it in
+[`comfyui/`](comfyui/README.md). Copy that one folder into `custom_nodes`, restart, and put
+**OpenH3-IR Compile** where the text box feeding the H3 node's `prompt` used to be.
+
+Four links and your existing graph keeps working: `prompt`, `width`, `height` and `length` all come
+out of the node and go straight into `MiniMaxH3ReferenceToVideo` or `MiniMaxH3ImageToVideo`. Wiring
+`length` is the one worth doing even if you type your own prompts, because it is what stops the model
+quietly rounding your duration. Reference images go into numbered sockets, in the order you want them
+to become `<Picture 1>` and `<Picture 2>`.
+
+The nodes add no packages to ComfyUI's Python. They speak HTTP to `h3ir serve` with nothing but the
+standard library, so the compiler can never break a ComfyUI install and the service can sit on
+another machine.
+
 ## What it will not do
 
 - **It does not render.** No sampler, no graph submission, no GPU. It reports which H3 nodes ComfyUI
