@@ -167,6 +167,19 @@ because my first draft of that rule fired on "he gives an okay sign".
 
 ## Known gaps, honestly
 
+- **The committed sample media cannot be rebuilt.** The two comparisons in `docs/media/` were
+  produced by hand. Deferred on purpose, to be done only when the compiler improves enough to be
+  worth re-shooting the samples, and only if it is. The risk being accepted is that the clips
+  silently become evidence of an older version while the front page still claims a difference.
+
+  The recipe survives without a script, which is why deferring is safe: both compiled briefs ship
+  beside the clips, both reference plates ship, the dial command is in the README, and the seed and
+  render settings are in the commit that added them.
+
+  If it is ever written it cannot live in CI, because it needs ComfyUI with H3 loaded and a live
+  endpoint. And it would not reproduce the same clips: renders are not identical across model or
+  driver versions, so the check is whether the claim still holds, not whether the pixels match.
+
 - **The style-LoRA registry is read but not usable end to end. `--lora` crashes, both ways.** TODO,
   deliberately deferred: proving this out needs the application that consumes it to exist first, so
   it can be tested against real weights and a real render rather than against a placeholder.
