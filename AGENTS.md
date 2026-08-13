@@ -1,15 +1,20 @@
 # Working on OpenH3-IR
 
-Read this before changing anything. It is the set of rules that are not preferences, a map of which
-file owns what, and an honest list of what is missing.
+**This document is for changing the compiler.** Read it before changing anything. It is the set of
+rules that are not preferences, a map of which file owns what, and an honest list of what is missing.
+There is no install path here, on purpose.
 
-If you are *calling* the service rather than changing it, you want
-[docs/calling-the-api.md](docs/calling-the-api.md) instead.
+Two neighbours, if one of them is the job instead:
+
+- **Installing it and making it run:** [HANDOFF.md](HANDOFF.md).
+- **Calling the service from an application:** [docs/calling-the-api.md](docs/calling-the-api.md).
 
 The project is `open-h3-ir`; the import package and the command are both `h3ir`.
 
-The numbers to check your work against, all reproducible with no model and no GPU:
-`h3ir controls` is 20/20 in under a tenth of a second, and `pytest -q` is 357 passing.
+The checks to hold your work against, both reproducible with no model and no GPU: `h3ir controls` is
+20/20 in under a tenth of a second, and `pytest -q` is green. The control count is a gate and should
+only move when you deliberately add or remove a control. The test count is not pinned here, because it
+moves every time anyone adds a test and a stale number reads as a regression.
 
 ## What this is and where it runs
 

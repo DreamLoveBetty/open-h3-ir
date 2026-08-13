@@ -42,36 +42,41 @@ half is committed beside it:
 
 *"the car rolls into the showroom and stops under the lights."* Run twice, changing one flag.
 
-`restrained` keeps the whole showroom in a steady wide and cuts once. `extreme` opens on an extreme
-wide, cuts to a fast push-in on the front wheel, lands on a locked hero shot, and scores the whole
-thing. Two shots became three, and the camera stopped being polite.
+`restrained` stays on the car and keeps its hands still: one slow low-angle track, one cut at six
+seconds to a held medium shot, no music, and the room never really revealed. `extreme` turns the same
+sentence into a car commercial. It opens wide on the empty showroom, cuts at three and a half seconds
+to a close-up panning along the front wheel, finishes on a low-angle push-in, and puts a score under
+all of it. Two shots became three, and the camera stopped being polite.
 
-```bash
-h3ir compile "the car rolls into the showroom and stops under the lights" --creativity extreme
-```
-
-Four positions: `restrained`, `balanced` (the default), `bold`, `extreme`. What changes is how much
-the writer may introduce that you never asked for, and an explicit "no dialogue" at `extreme` still
-means no dialogue.
-
-**Watch it with sound:** [dial-restrained-vs-extreme.mp4](docs/media/dial-restrained-vs-extreme.mp4).
-Both briefs are committed, so you can read exactly what the flag did:
-[restrained](docs/media/dial-restrained.brief.txt) and
-[extreme](docs/media/dial-extreme.brief.txt). Both reference images are committed too, so you can
-run the whole thing yourself:
+Both reference plates are committed, so this runs as written:
 
 ```bash
 h3ir compile "the car rolls into the showroom and stops under the lights" \
-  --image docs/media/plate-car.jpg:"the car" \
-  --image docs/media/plate-showroom.jpg:"the empty showroom floor it drives across" \
+  --image docs/media/plate-car.jpg \
+  --image docs/media/plate-showroom.jpg \
   --seconds 10 --creativity extreme
 ```
+
+Swap `extreme` for `restrained` and you get the left half. Four positions in all: `restrained`,
+`balanced` (the default), `bold`, `extreme`. What changes is how much the writer may introduce that
+you never asked for, and an explicit "no dialogue" at `extreme` still means no dialogue.
+
+**Watch it with sound:** [dial-restrained-vs-extreme.mp4](docs/media/dial-restrained-vs-extreme.mp4).
+Both briefs are committed too, so you can read exactly what the flag did:
+[restrained](docs/media/dial-restrained.brief.txt) and
+[extreme](docs/media/dial-extreme.brief.txt).
 
 ## Install
 
 Python 3.10 or newer, and an OpenAI-compatible LLM endpoint with vision. vLLM, llama.cpp's server,
-LM Studio and Ollama all speak it. Nothing here calls MiniMax, and nothing here needs a GPU of its
-own.
+LM Studio and Ollama all speak that API. Nothing here calls MiniMax, and the compiler itself wants no
+GPU: the endpoint is where the weights live.
+
+Every brief on this page was written by Qwen3.6 27B, 4-bit, served by vLLM at 262K context on two RTX
+3090s, and H3 rendered the videos from those briefs. That is what the project is proven against, and
+it is the bar to size your own box against: a 27B-class local model with a vision tower is enough.
+`h3ir eval` is there to measure what a different endpoint does to brief quality rather than guess at
+it.
 
 ```bash
 git clone https://github.com/Ruashots/open-h3-ir.git
@@ -91,8 +96,12 @@ model it serves, its context length, whether ComfyUI is reachable and which H3 n
 tokenizer self-test. Two commands need nothing running at all if you want to poke at it before
 configuring anything: `h3ir controls` and `h3ir budget --seconds 10`.
 
-Every setting, with the reason for each default, is in [`.env.example`](.env.example). This is
-version 0.1.0 and it still moves, so pin a commit if you build on it.
+Every setting, with the reason for each default, is in [`.env.example`](.env.example).
+
+One thing worth saying plainly: I am building this because I need it for another application I am
+making, which is why it is shaped the way it is. It does what that application needs, correctly,
+rather than being a general framework for writing prompts. Expect a few changes as I go, and pin a
+commit if you build on it.
 
 ## Your first brief
 
@@ -186,8 +195,8 @@ thing that can decide them correctly. You never pick one, and no screen built on
 
 Attach two images and two subjects come back, bound to the labels the runtime will actually emit, each
 one carrying its own retention contract and cited in every shot it appears in. If an image is
-ambiguous about which of several things in it you care about, say so with
-`--image path.png:"the pilot"` instead of leaving it to the vision model.
+ambiguous about which of several things in it you care about, `--image path.png:"the pilot"` passes
+that straight to the vision model as a hint about what it is looking at.
 
 ## Drive it over HTTP
 
@@ -254,10 +263,11 @@ No model, no GPU, no network.
 
 | file | what it is for |
 |---|---|
-| [`docs/calling-the-api.md`](docs/calling-the-api.md) | driving the service: what it guarantees, what it only attempts, what comes back |
+| [`HANDOFF.md`](HANDOFF.md) | **installing it and making it run**, step by step, with a check on every step. Written so you can hand the path to an agent and walk away |
+| [`AGENTS.md`](AGENTS.md) | **changing the compiler**: the rules that are not preferences, which file owns what, the known gaps |
+| [`docs/calling-the-api.md`](docs/calling-the-api.md) | driving the service from an application: what it guarantees, what it only attempts, what comes back |
 | [`docs/design.md`](docs/design.md) | why every rule exists: what the encoder sees, the cost model, the contract between stages |
 | [`docs/build-log.md`](docs/build-log.md) | a dated record of what the build measured, including the positions it reversed |
-| [`AGENTS.md`](AGENTS.md) | working on the compiler itself: the rules that are not preferences, and the known gaps |
 | [`loras/handpainted-anim-v2/`](loras/handpainted-anim-v2/) | a worked example of the style-LoRA registry format (the weights there are a labelled placeholder) |
 
 ## Licence
