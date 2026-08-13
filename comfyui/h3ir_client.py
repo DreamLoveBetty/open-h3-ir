@@ -1,9 +1,9 @@
 """Talking to an OpenH3-IR service, with no ComfyUI and no third-party packages involved.
 
 Everything in this module is a pure function or a thin call over the standard library, so the whole
-integration can be tested without ComfyUI, without torch, and without a running server. The node in
-`nodes.py` owns the parts that can only exist inside ComfyUI: tensors, temp directories, and the
-schema the canvas draws.
+integration can be tested without ComfyUI, without torch, and without a running server. The nodes in
+`nodes.py` own the parts that can only exist inside ComfyUI: tensors, temp directories, model
+loaders, and the schema the canvas draws.
 
 Two deliberate choices worth knowing about before changing anything here.
 
@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import socket
+import textwrap
 import urllib.error
 import urllib.request
 from typing import Any
@@ -36,6 +37,47 @@ EFFORT = ("fast", "standard", "max")
 # before any server has been contacted.
 ASPECTS = ("16:9", "21:9", "4:3", "1:1", "3:4", "9:16")
 SIZING = ("match", "max")
+WEIGHT_DTYPES = ("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
+
+FPS = 24
+# h3ir/shots.py MAX_SHOTS. The compiler clamps to this, so offering more would promise a cut count
+# the engine drops without saying so.
+MAX_SHOTS = 4
+SHOTS = ("auto", *(str(i) for i in range(1, MAX_SHOTS + 1)))
+# h3ir/grid.py TRAINED_MIN_FRAMES / TRAINED_MAX_FRAMES. Outside this band a render still happens;
+# the report says so rather than the surface forbidding it.
+TRAINED_MIN_FRAMES = 124
+TRAINED_MAX_FRAMES = 362
+# H3's own ceilings, from GET /v1/capabilities: nine pictures, three clips, three standalone sounds.
+MAX_PICTURES = 9
+MAX_CLIPS = 3
+
+# Autogrow socket labels. `TemplateNames` is what makes these one-based and readable, and the point
+# of "picture 1" is that the brief says <Picture 1>: the canvas and the brief speak the same words,
+# so the notes rule below needs no explaining.
+PICTURE_NAMES = tuple(f"picture {i}" for i in range(1, MAX_PICTURES + 1))
+CLIP_NAMES = tuple(f"clip {i}" for i in range(1, MAX_CLIPS + 1))
+
+# The first option of every model combo on the Setup node, and its default. It exists so that adding
+# a Setup node to change one field does not pin five filenames into a workflow someone else will
+# open, and so that a machine with no H3 weights cannot pre-select a plausible file from the wrong
+# family: that loads, and then the render is wrong for a reason nobody can see.
+AUTO = "(found automatically)"
+
+# What a clip is for, in the user's words, and the role each one means. Three different jobs in the
+# brief, so the wrong one renders something plausible and wrong.
+FOOTAGE_JOBS = {
+    "copy what is in it": "subject",
+    "edit it": "edit_source",
+    "carry on from it": "continuation_source",
+}
+
+# Which loader owns a file, decided by its extension because that is the one fact the file itself
+# carries. Names as ComfyUI shows them, so the report names something the user can find.
+LOADER_NATIVE_UNET = "UNETLoader"
+LOADER_GGUF_UNET = "Unet Loader (GGUF)"
+LOADER_NATIVE_CLIP = "CLIPLoader"
+LOADER_GGUF_CLIP = "CLIPLoader (GGUF)"
 
 
 class ServiceError(RuntimeError):
@@ -116,13 +158,14 @@ def _request(server: str, path: str, *, payload: dict[str, Any] | None = None,
         raise ServiceError(
             f"the OpenH3-IR service at {server} did not answer within {timeout:.0f}s. Writing a "
             "brief is one call to a language model, so it takes as long as that model takes. Raise "
-            "the node's timeout_s, or point it at a faster endpoint.") from e
+            "the timeout on an OpenH3-IR Setup node, or point it at a faster endpoint.") from e
     except urllib.error.URLError as e:
         raise ServiceError(
             f"cannot reach an OpenH3-IR service at {server} ({e.reason}). Start one from the repo "
-            f"with: h3ir serve --port {DEFAULT_PORT}. If it runs on another machine, set this "
-            "node's server field to that address, and remember the service needs H3IR_LLM_URL "
-            "pointing at your own OpenAI-compatible endpoint.") from e
+            f"with: h3ir serve --port {DEFAULT_PORT}. If it runs on another machine or another "
+            "port, add an OpenH3-IR Setup node and put that address in its service field. The "
+            "service also needs H3IR_LLM_URL pointing at your own OpenAI-compatible endpoint.") \
+            from e
 
 
 def _decode(body: str) -> Any:
@@ -132,8 +175,34 @@ def _decode(body: str) -> Any:
         return body
 
 
+def shot_count(shots: Any) -> int:
+    """The `shots` widget as a number, with `auto` meaning 0: let the compiler decide.
+
+    A combo of `auto` and 1..4 rather than an integer with a magic 0, because a magic value
+    explained in its own label is the label doing the code's job. Integers still parse, so a
+    workflow saved against the older surface keeps working.
+    """
+    if shots is None:
+        return 0
+    text = str(shots).strip().lower()
+    if text in ("", "auto", "0"):
+        return 0
+    try:
+        n = int(text)
+    except ValueError:
+        raise ServiceError(
+            f"shots is {shots!r}, which is neither auto nor a number of shots. Pick auto, or 1 to "
+            f"{MAX_SHOTS}.") from None
+    if not 1 <= n <= MAX_SHOTS:
+        raise ServiceError(
+            f"{n} shots was asked for and the compiler's ceiling is {MAX_SHOTS}, so the extra cuts "
+            "would be dropped without saying so. Pick auto, or 1 to "
+            f"{MAX_SHOTS}.")
+    return n
+
+
 def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, effort: str,
-                  seed: int, silent: bool, shots: int, assets: list[dict[str, Any]],
+                  seed: int, silent: bool, shots: Any, assets: list[dict[str, Any]],
                   transcripts: dict[str, str]) -> dict[str, Any]:
     """Turn the node's state into the service's BriefIn.
 
@@ -142,8 +211,8 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
     the graph is wired, and a graph that disagrees with its own brief renders something plausible
     and wrong.
 
-    `shots` of 0 means "the compiler decides", which is the service's own default when the field is
-    absent, so 0 is dropped rather than sent as a shot count of zero.
+    `auto` shots means "the compiler decides", which is the service's own default when the field is
+    absent, so the key is dropped rather than sent as a shot count of zero.
     """
     intent = (intent or "").strip()
     if not intent:
@@ -162,78 +231,108 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
         "seed": int(seed),
         "silent": bool(silent),
     }
-    if int(shots) > 0:
-        payload["shots"] = int(shots)
+    n = shot_count(shots)
+    if n > 0:
+        payload["shots"] = n
     if transcripts:
         payload["transcripts"] = dict(transcripts)
     return payload
 
 
-# Sockets, in the order their contents get numbered, and the role each one means. The role is named
-# here rather than inferred by the service, because an inferred role can disagree with how the graph
-# is wired and nothing would say so.
-PICTURE_SOCKETS = tuple(f"reference_{i}" for i in range(1, 10))
-VIDEO_SOCKETS = ("video_to_edit", "video_to_continue")
-SOUND_SOCKETS = ("music", "sound_effect", "voice_to_match")
+# Sockets whose role is a fact about the socket itself. Footage carries its own role instead,
+# because a clip's job is chosen on the Footage node and no socket name could say it.
+FRAME_SOCKETS = ("first frame", "last frame")
+SOUND_SOCKETS = ("music", "sound effect", "voice to match")
 ROLE_BY_SOCKET = {
-    "opening_frame": "frame_anchor_first",
-    "closing_frame": "frame_anchor_last",
-    **{f"reference_{i}": "subject" for i in range(1, 10)},
-    "video_to_edit": "edit_source",
-    "video_to_continue": "continuation_source",
+    "first frame": "frame_anchor_first",
+    "last frame": "frame_anchor_last",
+    **{name: "subject" for name in PICTURE_NAMES},
     "music": "bgm",
-    "sound_effect": "sfx",
-    "voice_to_match": "voice_timbre",
+    "sound effect": "sfx",
+    "voice to match": "voice_timbre",
 }
 
 
+def ordered(grown: dict[str, Any] | None, names: tuple[str, ...]) -> list[tuple[str, Any]]:
+    """An autogrow group's filled sockets, in socket order rather than dict order.
+
+    The order decides which picture becomes <Picture 1>, so it is read off the declared names and
+    never off whatever order the prompt happened to serialise.
+    """
+    d = grown or {}
+    unknown = [k for k in d if k not in names]
+    if unknown:
+        raise ServiceError(f"internal: unexpected grown socket(s) {unknown!r}; expected {names!r}")
+    return [(n, d[n]) for n in names if d.get(n) is not None]
+
+
 def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]], picture_notes: list[str],
-                sound_notes: list[str], sizing: str, from_prefix: str,
-                to_prefix: str) -> list[dict[str, Any]]:
+                sizing: str, from_prefix: str, to_prefix: str) -> list[dict[str, Any]]:
     """Describe every attached file for the service, in the order it should be numbered.
 
-    `written` is already on disk: a list of (socket, kind, path, extra). Notes are matched by
-    position within their own kind, so the second line of picture_notes describes the second picture
-    and is not thrown off by a video sitting between them.
+    `written` is already on disk: a list of (socket, kind, path, extra). `extra` carries anything the
+    socket knows and this function cannot: a role for footage, a note that arrived beside its own
+    socket, the soundtrack's paired video, a duration.
+
+    Picture notes are the one thing still bound by position, because the frontend cannot grow a note
+    alongside each picture socket. They bind to the `picture N` sockets only: line one describes
+    picture 1. The frame anchors are deliberately outside that count, which is why they are not
+    called "picture" on the canvas.
     """
     assets: list[dict[str, Any]] = []
-    pic_i = snd_i = 0
-    for socket, kind, path, extra in written:
-        if socket not in ROLE_BY_SOCKET:
-            raise ServiceError(f"internal: no role recorded for socket {socket!r}")
+    pic_i = 0
+    for socket_name, kind, path, extra in written:
+        role = extra.get("role") or ROLE_BY_SOCKET.get(socket_name)
+        if not role:
+            raise ServiceError(f"internal: no role recorded for socket {socket_name!r}")
         a: dict[str, Any] = {"path": translate_path(path, from_prefix, to_prefix),
-                             "kind": kind, "role": ROLE_BY_SOCKET[socket]}
-        note = ""
+                             "kind": kind, "role": role}
         if kind == "image":
             a["sizing"] = sizing
-            note = picture_notes[pic_i] if pic_i < len(picture_notes) else ""
+        note = str(extra.get("note") or "")
+        if socket_name in PICTURE_NAMES:
+            if not note and pic_i < len(picture_notes):
+                note = picture_notes[pic_i]
             pic_i += 1
-        elif kind == "audio":
-            note = sound_notes[snd_i] if snd_i < len(sound_notes) else ""
-            snd_i += 1
         if note.strip():
             a["note"] = note.strip()
-        a.update(extra)
+        for key in ("seconds", "frames"):
+            if extra.get(key) is not None:
+                a[key] = extra[key]
+        # The pointer from a soundtrack back to its own clip is a path like any other, so it needs
+        # the same translation. Sent untranslated it named a file the service could not open, the
+        # service quietly stopped treating the pair as a pair, and the soundtrack was numbered as a
+        # standalone <Audio 1> while H3 received it as ref_video_audio_1. Two different labels for
+        # one file, and only the report said so.
+        if extra.get("paired_video_path"):
+            a["paired_video_path"] = translate_path(extra["paired_video_path"], from_prefix,
+                                                    to_prefix)
         assets.append(a)
     return assets
 
 
-def expected_mode(has_opening: bool, has_closing: bool, n_references: int,
-                  n_videos: int) -> str:
+def expected_mode(has_first: bool, has_last: bool, n_pictures: int, n_clips: int,
+                  n_sounds: int = 0) -> str:
     """Which H3 task the wiring describes, decided by the sockets rather than by prose.
 
-    The user plugged a picture into `opening_frame` or into `reference_1`, and those are different
-    jobs with different model weights behind them. Reading the answer off the sockets means the
-    graph and the brief cannot disagree, which is the failure this replaced: the compiler deciding
-    an image was an opening frame while the graph fed it as a reference, with nothing to say so.
+    The user plugged a picture into `first frame` or into `picture 1`, and those are different jobs
+    with different model weights behind them. Reading the answer off the sockets means the graph and
+    the brief cannot disagree, which is the failure this replaced: the compiler deciding an image was
+    an opening frame while the graph fed it as a reference, with nothing to say so.
+
+    A sound counts as a reference. FOUND BY RENDERING: it did not, so a graph with only a music clip
+    attached declared t2va while the service correctly wrote ref2va, and the node then printed a
+    warning saying the render would come out wrong. It would not have. The service's own rule is
+    explicit that an attached video or audio forces ref2va, because H3's frame checkpoint cannot
+    accept either, and a warning that fires on a correct graph teaches people to ignore warnings.
     """
-    if has_opening and has_closing:
+    if has_first and has_last:
         return "fl2va"
-    if has_closing:
+    if has_last:
         return "l2va"
-    if has_opening:
+    if has_first:
         return "i2va"
-    if n_references or n_videos:
+    if n_pictures or n_clips or n_sounds:
         return "ref2va"
     return "t2va"
 
@@ -249,9 +348,9 @@ def check_mode(declared: str, reported: str) -> str | None:
         return None
     return (f"the graph is wired for a {declared} job, but the service wrote a {reported} brief. "
             "The brief and the wiring disagree, so the render would come out wrong in a way that "
-            "looks like a model problem. Check which sockets you filled: a picture in "
-            "opening_frame is the first frame of the video, and a picture in reference_1 is "
-            "something the shot should contain.")
+            "looks like a model problem. Check which sockets you filled: a picture in first frame "
+            "is the first frame of the video, and a picture in picture 1 is something the shot "
+            "should contain.")
 
 
 def translate_path(path: str, from_prefix: str, to_prefix: str) -> str:
@@ -274,6 +373,166 @@ def translate_path(path: str, from_prefix: str, to_prefix: str) -> str:
     return to_prefix.rstrip("/") + norm[len(src):]
 
 
+# --------------------------------------------------------------------------- the machine's files
+
+def merge_model_options(native: list[str], gguf: list[str]) -> list[str]:
+    """One combo listing both builds of the same folder, sorted so a checkpoint's variants land
+    next to each other.
+
+    `unet_gguf` and `clip_gguf` are not different places: ComfyUI-GGUF registers them over the very
+    same directories with a `.gguf` extension filter, so the GGUF build of a checkpoint sits beside
+    the safetensors build and the only thing that tells them apart is the extension. Merging the two
+    views is therefore one control describing one fact, and every state of it is valid.
+
+    The GGUF half comes from that pack's own registered list and is never globbed off the disk. A
+    file listed with no loader behind it is the plausible-and-wrong option this pack exists to
+    prevent, so an install without the pack is offered nothing.
+    """
+    seen: dict[str, str] = {}
+    for name in list(native) + list(gguf):
+        seen.setdefault(name.lower(), name)
+    return sorted(seen.values(), key=lambda s: (s.lower(), s))
+
+
+def is_gguf(name: str) -> bool:
+    """The file is the toggle. A boolean beside a filename would be a second source of truth for
+    one fact, with two of its four states wrong and nothing on the canvas to resolve them."""
+    return name.strip().lower().endswith(".gguf")
+
+
+def unet_loader_for(name: str) -> str:
+    return LOADER_GGUF_UNET if is_gguf(name) else LOADER_NATIVE_UNET
+
+
+def clip_loader_for(name: str) -> str:
+    return LOADER_GGUF_CLIP if is_gguf(name) else LOADER_NATIVE_CLIP
+
+
+def resolve_model(options: list[str], patterns: tuple[tuple[str, ...], ...], *, what: str,
+                  looks_like: str) -> tuple[str, str]:
+    """Find H3's file by name, and say which build was passed over.
+
+    Returns (chosen, gguf_alternative). Patterns are tried in order, family first, because "video"
+    alone once matched an LTX VAE on a box that also had H3's, and a plausible file from the wrong
+    family is worse than none: it loads, and then the render is wrong for a reason nobody can see.
+
+    Safetensors wins, because it is the native path and needs no third-party pack; a GGUF build of
+    the same family is returned so the report can say it was there and how to pick it. The two
+    searches are separate on purpose: a quantised build is named for its quantisation, so
+    `minimax_h3_ref2va_Q4_K_M.gguf` matches the family pattern but never the precise one the
+    safetensors build matched, and searching them together would hide it. Nothing matching at all
+    raises, rather than falling back to the first file in the list.
+    """
+    def first(want_gguf: bool) -> str:
+        for needles in patterns:
+            for o in options:
+                if is_gguf(o) is want_gguf and all(n in o.lower() for n in needles):
+                    return o
+        return ""
+
+    native, gguf = first(False), first(True)
+    if native:
+        return native, gguf
+    if gguf:
+        return gguf, ""
+    raise ServiceError(
+        f"no {what} was found in this install. Nothing in the list looks like {looks_like}, so "
+        "there is nothing to load and guessing would render something wrong for a reason you "
+        f"could not see. Put H3's {what} in the right models folder, or pick the file yourself on "
+        "an OpenH3-IR Setup node."
+        + (f" The list held: {', '.join(options[:12])}." if options else " The list was empty."))
+
+
+REFERENCE_PATTERNS = (("ref2va", "int8"), ("ref2va",))
+FRAMES_PATTERNS = (("fl2va", "int8"), ("fl2va",))
+ENCODER_PATTERNS = (("qwen3vl", "minimax"), ("minimax",))
+VIDEO_VAE_PATTERNS = (("minimax", "video"), ("h3", "video"))
+AUDIO_VAE_PATTERNS = (("minimax", "audio"), ("h3", "audio"))
+
+
+# --------------------------------------------------------------------------- the bundles
+
+def setup_defaults() -> dict[str, Any]:
+    """What the compile node assumes with no Setup node in the graph.
+
+    Every model is left to auto-resolution on purpose: a workflow with no Setup node pins no
+    filenames, so it runs on a stranger's disk. A pinned filename is a workflow that fails on
+    someone else's install.
+    """
+    return {"server": DEFAULT_SERVER, "reference_model": AUTO, "frames_model": AUTO,
+            "text_encoder": AUTO, "video_vae": AUTO, "audio_vae": AUTO,
+            "weight_dtype": "default", "timeout_s": 600, "service_sees_comfy_at": ""}
+
+
+def setup_bundle(*, server: str, reference_model: str, frames_model: str, text_encoder: str,
+                 video_vae: str, audio_vae: str, weight_dtype: str, timeout_s: int,
+                 service_sees_comfy_at: str) -> dict[str, Any]:
+    """One socket carrying the nine facts that describe a machine rather than a shot."""
+    address = (server or "").strip()
+    if not address:
+        raise ServiceError(
+            "the service field is empty. Put the address the OpenH3-IR service listens on, for "
+            f"example {DEFAULT_SERVER}, or delete this node to use that address.")
+    if not address.startswith(("http://", "https://")):
+        raise ServiceError(
+            f"the service address {address!r} has no scheme, so nothing can be requested from it. "
+            f"Write it in full, for example {DEFAULT_SERVER}.")
+    if weight_dtype not in WEIGHT_DTYPES:
+        raise ServiceError(f"weight precision {weight_dtype!r} is not one of {WEIGHT_DTYPES}.")
+    return {"server": address.rstrip("/"), "reference_model": reference_model,
+            "frames_model": frames_model, "text_encoder": text_encoder, "video_vae": video_vae,
+            "audio_vae": audio_vae, "weight_dtype": weight_dtype, "timeout_s": int(timeout_s),
+            "service_sees_comfy_at": (service_sees_comfy_at or "").strip()}
+
+
+def footage_bundle(frames: Any, its_sound: Any, job: str) -> dict[str, Any]:
+    """A clip is three facts that have to travel together: the frames, their soundtrack, and what
+    the clip is for. An autogrow item holds exactly one input, which is why this is its own node."""
+    if job not in FOOTAGE_JOBS:
+        raise ServiceError(f"{job!r} is not one of {tuple(FOOTAGE_JOBS)}.")
+    if frames is None:
+        raise ServiceError(
+            "this Footage node has no frames. Connect the IMAGE output of Load Video (Upload), or "
+            "any loader that hands out frames.")
+    return {"frames": frames, "its_sound": its_sound, "job": job, "role": FOOTAGE_JOBS[job]}
+
+
+def sound_bundle(*, music: Any, music_note: str, effect: Any, effect_note: str, voice: Any,
+                 voice_note: str, voice_words: str) -> dict[str, Any]:
+    """Three sounds, each with its own note, and the transcript of the voice clip.
+
+    Each note sits with its own socket, which is what kills matching lines by position across three
+    differently named roles: skip one socket and every line after it described the wrong sound.
+
+    A transcript with no clip to transcribe is refused here rather than dropped, which is the whole
+    argument for this node existing: the check has a natural home beside the socket it is about.
+    """
+    words = (voice_words or "").strip()
+    if words and voice is None:
+        raise ServiceError(
+            "there are words typed for the voice clip, but no voice is connected, so they describe "
+            "nothing and would be silently dropped. This field is a transcript of an attached "
+            "recording, not dialogue for your video: lines you want spoken go in the sentence on "
+            "the compile node.")
+    out: dict[str, Any] = {"voice_words": words}
+    for key, clip, note in (("music", music, music_note), ("effect", effect, effect_note),
+                            ("voice", voice, voice_note)):
+        out[key] = clip
+        out[f"{key}_note"] = (note or "").strip()
+    if music is None and effect is None and voice is None:
+        raise ServiceError(
+            "this Sound node has nothing connected. Connect a music, sound effect or voice clip, "
+            "or delete the node: an empty one changes nothing about the brief.")
+    return out
+
+
+# The Sound node's three sockets, in the order their contents get numbered, with the canvas name
+# each one shows and the note field that describes it.
+SOUND_PARTS = (("music", "music", "music_note"),
+               ("effect", "sound effect", "effect_note"),
+               ("voice", "voice to match", "voice_note"))
+
+
 def _detail(body: Any) -> dict[str, Any]:
     d = body.get("detail") if isinstance(body, dict) else None
     return d if isinstance(d, dict) else {}
@@ -293,11 +552,12 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
         if code in ("asset-no-path", "asset-missing"):
             raise ServiceError(
                 f"the service could not read an attachment: {det.get('message', code)}. "
-                "ComfyUI and the service are looking at the same file through different paths. "
-                "Fill in this node's comfy_path_prefix and service_path_prefix so the path can be "
-                "translated, for example C:\\ComfyUI-Production and /mnt/c/ComfyUI-Production. If "
-                "the service runs on another machine entirely it cannot open ComfyUI's files at "
-                "all, and only text-only prompts will work.", ASSET_UNREADABLE)
+                "ComfyUI and the service are looking at the same file through different paths. Add "
+                "an OpenH3-IR Setup node and fill in 'ComfyUI as the service sees it' with the "
+                "spelling the service can open, for example /mnt/c/ComfyUI-Production where "
+                "ComfyUI itself says C:\\ComfyUI-Production. If the service runs on another machine "
+                "entirely it cannot open ComfyUI's files at all, and only text-only prompts will "
+                "work.", ASSET_UNREADABLE)
         problems = body.get("errors") if isinstance(body, dict) else None
         if problems:
             lines = "\n  ".join(f"{p.get('rule')}: {p.get('message')}" for p in problems)
@@ -375,34 +635,132 @@ def render_fields(prompt_body: dict[str, Any]) -> tuple[str, int, int, int, str]
     return prompt, width, height, int(frames), sizing
 
 
-def report(prompt_body: dict[str, Any], *, server: str, sizing_conflict: bool) -> str:
+# --------------------------------------------------------------------------- the report
+
+# Every report line is `label` in a 15 character column and then the fact, so the facts line up in
+# whatever monospace box the user reads them in.
+_COL = 15
+
+
+def line(label: str, text: str) -> str:
+    """One report line, wrapped with its continuations under the fact rather than under the label."""
+    return textwrap.fill(text, width=94, initial_indent=label.ljust(_COL),
+                         subsequent_indent=" " * _COL)
+
+
+def length_notes(asked_seconds: float, frames: int) -> list[str]:
+    """What the length really came out as, and whether it left H3's trained band.
+
+    Neither is a warning. A long render is a choice, not a fault, and `note` is the register this
+    report already uses for choices. Both are here because the surface deliberately allows lengths
+    the model was never trained on, and a surface that allows something has to say what it did.
+    """
+    out: list[str] = []
+    asked_frames = max(5, round(float(asked_seconds) * FPS))
+    if asked_frames != frames:
+        out.append(line("asked for", f"{float(asked_seconds):.1f}s, snapped up onto the frame grid"))
+    real = frames / FPS
+    if frames > TRAINED_MAX_FRAMES:
+        out.append(line("note", f"{real:.3f}s is past H3's trained band, which ends at "
+                                f"{TRAINED_MAX_FRAMES} frames, "
+                                f"{TRAINED_MAX_FRAMES / FPS:.3f}s. It still renders, it is "
+                                "untested, and it costs VRAM and time in proportion."))
+    elif frames < TRAINED_MIN_FRAMES:
+        out.append(line("note", f"{real:.3f}s is below H3's trained band, which starts at "
+                                f"{TRAINED_MIN_FRAMES} frames, "
+                                f"{TRAINED_MIN_FRAMES / FPS:.3f}s. It still renders, and it is "
+                                "untested."))
+    return out
+
+
+def gguf_alternative_note(what: str, filename: str) -> str:
+    """Said at the only moment it matters, so no control had to exist for the user to learn the
+    choice is there."""
+    return line("note", f"a GGUF build of the {what} is also installed ({filename}). Pick it on an "
+                        "OpenH3-IR Setup node to use it.")
+
+
+def precision_ignored_note() -> str:
+    return line("note", "weight precision does not apply to a GGUF checkpoint, which carries its "
+                        "own quantisation, so it was ignored.")
+
+
+def bindings_by_content(written: list[tuple[str, str, str, dict[str, Any]]],
+                        sha_of: Any) -> dict[str, list[str]]:
+    """socket names per file hash, in the order the sockets were numbered.
+
+    A list rather than one name, because two sockets can legitimately carry the same file and the
+    files are content-addressed, so they are the same file. FOUND BY RENDERING: keyed by hash alone,
+    the second socket overwrote the first and one of the two labels printed as `?`. Both are real and
+    both get their label, assigned in the order the service numbered them.
+    """
+    out: dict[str, list[str]] = {}
+    for socket_name, _kind, path, _extra in written:
+        out.setdefault(sha_of(path), []).append(socket_name)
+    return out
+
+
+def report(prompt_body: dict[str, Any], *, server: str, sizing_conflict: bool,
+           asked_seconds: float | None = None,
+           bindings: dict[str, list[str]] | None = None) -> str:
     """A short human-readable account of what came back, for a preview node or the console.
 
     It exists because the interesting facts are the ones a user cannot see in a STRING socket: which
-    mode was inferred, whether the length they asked for was moved, and which image became which
+    mode was inferred, whether the length they asked for was moved, and which socket became which
     picture label.
+
+    `bindings` maps a file's sha256 to the sockets it was plugged into. The service hashes the same
+    bytes, so the attachment block below is the service's own manifest with the user's own socket
+    names put back on it: the two sides speak the same words, and a label landing on the wrong
+    socket becomes visible instead of becoming a render nobody can explain.
     """
     frames = prompt_body.get("frames") or 0
     canvas = prompt_body.get("canvas") or [0, 0]
     lines = [
-        f"mode           {prompt_body.get('mode', '?')}",
-        f"length         {frames} frames, {frames / 24:.3f}s at 24 fps",
-        f"canvas         {canvas[0]}x{canvas[1]}",
-        f"render hash    {str(prompt_body.get('render_hash', ''))[:16]}",
-        f"brief id       {prompt_body.get('brief_id', '')}   on {server}",
+        line("mode", str(prompt_body.get("mode", "?"))),
+        line("length", f"{frames} frames, {frames / FPS:.3f}s at {FPS} fps"),
     ]
+    if asked_seconds is not None:
+        lines.extend(length_notes(asked_seconds, frames))
+    lines.extend([
+        line("canvas", f"{canvas[0]}x{canvas[1]}"),
+        line("render hash", str(prompt_body.get("render_hash", ""))[:16]),
+        line("brief id", f"{prompt_body.get('brief_id', '')}   on {server}"),
+    ])
+
     wiring = prompt_body.get("wiring") or []
+    # One socket name is accepted as well as a list of them, because a bare string is iterable and
+    # `list("music")` is five sockets called m, u, s, i and c.
+    by_sha = {sha: ([names] if isinstance(names, str) else list(names))
+              for sha, names in (bindings or {}).items()}
     if wiring:
-        lines.append("references")
+        lines.append("attachments")
         for w in wiring:
-            lines.append(f"  {w.get('label')}  {w.get('wiring')}  sizing={w.get('sizing')}  "
-                         f"sha256={str(w.get('sha256', ''))[:12]}")
+            sha = str(w.get("sha256", ""))
+            waiting = by_sha.get(sha) or []
+            socket_name = waiting.pop(0) if waiting else "?"
+            parts = [f"  {socket_name:<14} ->  {w.get('label')}", str(w.get("wiring"))]
+            if w.get("retention"):
+                parts.append(str(w["retention"]))
+            # Only where it means something. A sound has no pixel area to fit, and the service's own
+            # default lands "match" on every entry, so printing it for audio is noise that reads as a
+            # setting somebody chose.
+            if w.get("sizing") and w.get("kind", "image") == "image":
+                parts.append(f"sizing={w['sizing']}")
+            parts.append(f"sha256={sha[:12]}")
+            lines.append("  ".join(parts))
+    for names in by_sha.values():
+        for socket_name in names:
+            lines.append(line("note", f"the brief does not mention what you plugged into "
+                                      f"{socket_name}, so it reached the service and was left out. "
+                                      "Nothing in the render will refer to it."))
     if sizing_conflict:
-        lines.append("note           the references do not all want the same sizing. The H3 node "
-                     "has one ref_image_size for all of them, so pick per the list above.")
+        lines.append(line("note", "the references do not all want the same sizing. The H3 node has "
+                                  "one ref_image_size for all of them, so pick per the list "
+                                  "above."))
     if prompt_body.get("degraded"):
-        lines.append(f"note           the brief is a fallback, not a written one: "
-                     f"{prompt_body.get('fallback_reason')}")
+        lines.append(line("note", "the brief is a fallback, not a written one: "
+                                  f"{prompt_body.get('fallback_reason')}"))
     return "\n".join(lines)
 
 

@@ -1,24 +1,35 @@
-"""One node that turns a sentence into a ready-to-sample MiniMax H3 job.
+"""One node that turns a sentence into a ready-to-sample MiniMax H3 job, and three that hold the
+things which are not about this shot.
 
-It replaces the text box, the resolution picker, the frame-count arithmetic, the model, encoder and
-VAE loaders, and the H3 conditioning node. Out comes the model, the conditioning, the latent and both
-VAEs, which is everything the rest of the graph needs.
+The compile node replaces the text box, the resolution picker, the frame-count arithmetic, the
+model, encoder and VAE loaders, and the H3 conditioning node. Out comes the model, the conditioning,
+the latent and both VAEs, which is everything the rest of the graph needs.
 
-Four ideas hold it together.
+Five ideas hold it together.
 
 The socket you plug into is the job. A picture in the first-frame socket IS the opening frame of the
-video. A picture in a reference socket is something the shot should contain. Those are different tasks
-with different H3 checkpoints behind them, so reading the answer off the sockets means the brief and
-the graph cannot disagree. Nothing is inferred and there are no role dropdowns to get wrong.
+video. A picture in `picture 1` is something the shot should contain. Those are different tasks with
+different H3 checkpoints behind them, so reading the answer off the sockets means the brief and the
+graph cannot disagree. Nothing is inferred and there are no role dropdowns to get wrong.
 
-Length lives in one place. One seconds field, snapped once to H3's frame grid, used for both the brief
-and the latent. Two dials that both claim to set the duration is how eight seconds of a ten second
-script gets rendered.
+Length lives in one place. One seconds field, used for both the brief and the latent. Two dials that
+both claim to set the duration is how eight seconds of a ten second script gets rendered.
 
-The reference list grows as it is filled, so an idle node shows one socket rather than nine.
+The lists grow as they are filled, and they are labelled `picture 1` and `clip 1`, one-based and in
+the brief's own words, so a note that says "line one describes picture 1" needs no further
+explaining.
 
-What people actually tune stays on the canvas: LoRAs, sigma shift, steps, sampler, decode, save. Only
-the plumbing nobody chooses between got swallowed.
+Nothing that is not shot-scoped stays on the node. A machine's address, its model files, its VRAM
+and its split-install path are one optional Setup socket. A clip is frames plus a soundtrack plus
+what it is for, which is one optional Footage node per clip. Three sounds with three notes and a
+transcript are one optional Sound node. With none of them in the graph the compile node is a
+sentence and five widgets, and the five H3 files resolve by name on whatever disk the workflow lands
+on, so a workflow shared with a stranger runs.
+
+The file is the format. A `.gguf` checkpoint or encoder loads through ComfyUI-GGUF's loader and a
+`.safetensors` one loads natively, decided per file from the extension, with no toggle anywhere. A
+boolean beside a filename would be two controls describing one fact, and two of its four states
+would be wrong with nothing on the canvas to resolve them.
 
 This uses ComfyUI's current node schema, the same one the stock H3 nodes use, so any ComfyUI that can
 render H3 can load this. Heavy imports stay inside the functions that need them: an exception while
@@ -26,29 +37,30 @@ ComfyUI imports a custom node takes the whole pack off the menu with a traceback
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import tempfile
 from typing import Any
 
 from comfy_api.latest import ComfyExtension, io
 
-from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER, EFFORT, SIZING, SOUND_SOCKETS,
-                          VIDEO_SOCKETS, ServiceError, build_payload, check_mode, compile_brief,
-                          expected_mode, inputs_fingerprint, path_candidates, plan_assets,
-                          render_fields, report, retranslate)
+from .media import digest, sha256_file, write_footage, write_picture, write_sound
+from .h3ir_client import (ASPECTS, AUDIO_VAE_PATTERNS, AUTO, CLIP_NAMES, CREATIVITY, DEFAULT_SERVER,
+                          EFFORT, ENCODER_PATTERNS, FOOTAGE_JOBS, FPS, FRAMES_PATTERNS,
+                          PICTURE_NAMES, REFERENCE_PATTERNS, SHOTS, SIZING, SOUND_PARTS,
+                          VIDEO_VAE_PATTERNS, WEIGHT_DTYPES, ServiceError, bindings_by_content,
+                          build_payload, check_mode, clip_loader_for, compile_brief, expected_mode,
+                          footage_bundle,
+                          gguf_alternative_note, inputs_fingerprint, is_gguf, length_notes, line,
+                          merge_model_options, ordered, path_candidates, plan_assets,
+                          precision_ignored_note, render_fields, report, resolve_model, retranslate,
+                          setup_bundle, setup_defaults, sound_bundle, unet_loader_for)
 
-FPS = 24
-# H3 takes nine reference pictures. The list grows one socket at a time, so the node stays small until
-# the work needs the room.
-MAX_REFERENCES = 9
-
-
-def frames_for(seconds: float) -> int:
-    """H3's grid: 17k+5 at 24 fps. Computed here as well as server-side so one number feeds both the
-    brief and the latent."""
-    n = max(5, round(float(seconds) * FPS))
-    return n + (5 - (n % 17)) % 17
+# One socket carrying nine facts about a machine, one carrying a clip's three, one carrying the
+# sounds. Custom io types, so a plain IMAGE cannot be dropped into a socket that needs a bundle and
+# the refusal happens on the canvas rather than after a queue.
+Setup = io.Custom("H3IR_SETUP")
+Footage = io.Custom("H3IR_FOOTAGE")
+Sound = io.Custom("H3IR_SOUND")
 
 
 def _temp_dir() -> str:
@@ -72,137 +84,31 @@ def _comfy_root() -> str:
         return ""
 
 
-def _model_choices(kind: str) -> list[str]:
+def _files(kind: str) -> list[str]:
     """Whatever this install actually has, so the dropdowns are real rather than a guess about
-    someone's disk."""
+    someone's disk.
+
+    An unregistered key comes back empty rather than raising, which is how the GGUF lists behave on
+    an install without ComfyUI-GGUF: nothing is offered, so nothing can be selected that has no
+    loader behind it.
+    """
     try:
         import folder_paths
         return list(folder_paths.get_filename_list(kind))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - an absent folder key is a fact, not a failure
         return []
 
 
-def _default_like(options: list[str], *candidates: tuple[str, ...]) -> str:
-    """Pre-select a sensible file, trying each set of needles in order.
+def _model_options(native_kind: str, gguf_kind: str = "") -> list[str]:
+    """A model combo: the sentinel, then both builds of the same folder merged.
 
-    Ordered rather than combined because "video" alone matched an LTX VAE on a box that also had
-    H3's, and a plausible default from the wrong family is worse than none: it loads, and then the
-    render is wrong for a reason nobody can see. Family first, loose match only as a fallback.
+    The GGUF half comes only from ComfyUI-GGUF's own registered list. It is never globbed off the
+    disk, because a file offered with no loader behind it is exactly the plausible-and-wrong option
+    this pack exists to prevent.
     """
-    for needles in candidates:
-        for o in options:
-            low = o.lower()
-            if all(n in low for n in needles):
-                return o
-    return options[0] if options else ""
-
-
-def _to_uint8_rgb(image: Any, socket: str) -> Any:
-    """One image tensor to HxWx3 uint8, refusing anything ambiguous. A socket carrying several
-    pictures is an error rather than a silent choice of the first, because the order decides which
-    subject binds to which picture."""
-    import numpy as np
-
-    arr = image.detach().cpu().numpy() if hasattr(image, "detach") else np.asarray(image)
-    if arr.ndim == 4:
-        if arr.shape[0] != 1:
-            raise ServiceError(
-                f"{socket} carries {arr.shape[0]} pictures in one batch, and this socket holds one. "
-                "Connect each picture to its own socket, in the order you want them numbered, so "
-                "nothing gets resized to match anything else.")
-        arr = arr[0]
-    if arr.ndim != 3:
-        raise ServiceError(f"{socket} is not a picture (array shape {arr.shape}).")
-    arr = np.clip(arr, 0.0, 1.0)
-    arr = (arr * 255.0 + 0.5).astype(np.uint8)
-    if arr.shape[2] == 4:
-        arr = arr[:, :, :3]
-    if arr.shape[2] != 3:
-        raise ServiceError(f"{socket} has {arr.shape[2]} channels, which is not an RGB picture.")
-    return arr
-
-
-def _write_picture(image: Any, socket: str) -> str:
-    """Write one picture as a PNG named by its content, so an unchanged picture keeps its path and
-    the service's own hash of the file stays stable."""
-    from PIL import Image
-
-    arr = _to_uint8_rgb(image, socket)
-    digest = hashlib.sha256(arr.tobytes()).hexdigest()[:16]
-    path = os.path.join(_temp_dir(), f"openh3ir_{socket}_{digest}.png")
-    if not os.path.exists(path):
-        Image.fromarray(arr, "RGB").save(path, format="PNG")
-    return path
-
-
-def _write_sound(audio: Any, socket: str) -> tuple[str, float]:
-    """Write a ComfyUI AUDIO as a 16-bit wav using the standard library, so no install is asked for
-    an encoder it might not have."""
-    import wave
-
-    import numpy as np
-
-    wf = audio.get("waveform") if isinstance(audio, dict) else None
-    sr = int((audio or {}).get("sample_rate") or 0) if isinstance(audio, dict) else 0
-    if wf is None or not sr:
-        raise ServiceError(f"{socket} is not a sound this node can read (no waveform or no rate).")
-    arr = wf.detach().cpu().numpy() if hasattr(wf, "detach") else np.asarray(wf)
-    while arr.ndim > 2:
-        arr = arr[0]
-    if arr.ndim == 1:
-        arr = arr[None, :]
-    channels, samples = arr.shape
-    pcm = (np.clip(arr.T, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
-    digest = hashlib.sha256(pcm).hexdigest()[:16]
-    path = os.path.join(_temp_dir(), f"openh3ir_{socket}_{digest}.wav")
-    if not os.path.exists(path):
-        with wave.open(path, "wb") as w:
-            w.setnchannels(channels)
-            w.setsampwidth(2)
-            w.setframerate(sr)
-            w.writeframes(pcm)
-    return path, samples / float(sr)
-
-
-def _write_video(video: Any, socket: str) -> tuple[str, float, int, Any]:
-    """Write a ComfyUI VIDEO to a real file and hand back its frames, both taken from the video
-    object, so the service and H3 are looking at the same footage."""
-    digest = hashlib.sha256(f"{socket}:{id(video)}".encode()).hexdigest()[:16]
-    path = os.path.join(_temp_dir(), f"openh3ir_{socket}_{digest}.mp4")
-    try:
-        video.save_to(path)
-        comp = video.get_components()
-        duration = float(video.get_duration())
-        frames = int(video.get_frame_count())
-    except Exception as e:  # noqa: BLE001 - an unreadable video must say so, not half-work
-        raise ServiceError(
-            f"{socket} could not be written out for the service to read ({type(e).__name__}: {e}). "
-            "Feed it from a Load Video node.") from e
-    return path, duration, frames, getattr(comp, "images", None)
-
-
-def _digest(obj: Any) -> str:
-    """Content hash of a picture or a sound, so a re-queue reacts to what actually changed."""
-    if obj is None:
-        return "none"
-    try:
-        import numpy as np
-        if isinstance(obj, dict):
-            obj = obj.get("waveform")
-        if obj is None:
-            return "none"
-        arr = obj.detach().cpu().numpy() if hasattr(obj, "detach") else np.asarray(obj)
-        return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
-    except Exception:  # noqa: BLE001 - a hash we cannot take must not break the graph
-        return "unhashable"
-
-
-def _sha256_file(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    native = _files(native_kind)
+    gguf = _files(gguf_kind) if gguf_kind else []
+    return [AUTO, *merge_model_options(native, gguf)]
 
 
 class OpenH3IRCompile(io.ComfyNode):
@@ -210,140 +116,110 @@ class OpenH3IRCompile(io.ComfyNode):
 
     @classmethod
     def define_schema(cls) -> io.Schema:
-        unets = _model_choices("diffusion_models")
-        clips = _model_choices("text_encoders")
-        vaes = _model_choices("vae")
         return io.Schema(
             node_id="OpenH3IRCompile",
-            display_name="OpenH3-IR",
+            display_name="H3 from a Sentence",
             category="OpenH3-IR",
+            search_aliases=["minimax", "h3", "openh3", "ir", "brief", "prompt", "ref2va", "fl2va",
+                            "t2va"],
             description=("One sentence to a ready H3 job: writes the brief H3 wants, picks the right "
                          "weights, loads the encoder and VAEs, and outputs model, conditioning and "
                          "latent."),
             inputs=[
-                # ------------------------------------------------- what you are asking for
+                # --------------------------------------------------------- this is what I want
+                # No display name: on a multiline widget the placeholder is the only label there is,
+                # and a display name would spend the row this box does not have.
                 io.String.Input(
-                    "intent", display_name="what happens", multiline=True, default="",
-                    placeholder="she walks out onto the wet gantry in the rain and stops when she "
-                                "sees the city below",
-                    tooltip="One ordinary sentence. Not a tag list and not a shot breakdown, "
-                            "because the compiler writes those. Say the action and the beat you "
-                            "care about."),
+                    "intent", multiline=True, default="",
+                    placeholder="one plain sentence, what happens\nshe walks onto the wet gantry in "
+                                "the rain and stops when she sees the city below",
+                    tooltip="One plain sentence. Not a tag list and not a shot breakdown, because "
+                            "the compiler writes those. Say the action and the beat you care "
+                            "about."),
                 io.Float.Input(
-                    "seconds", display_name="how long, in seconds", default=8.0, min=1.0, max=60.0,
-                    step=0.1,
-                    tooltip="The only place length is set. H3 renders on a 17k+5 frame grid, so this "
-                            "is snapped once and used for both the brief and the latent. Ask for 10 "
-                            "and you get 10.125. Exactly one whole second exists in the trained "
-                            "range, and it is 8."),
+                    "seconds", display_name="seconds", default=8.0, min=1.0, max=149.0, step=0.1,
+                    tooltip="The only place length is set, used for both the brief and the latent. "
+                            "H3 renders on a 17 frame grid so this snaps up: ask for 10 and you get "
+                            "10.125. 8.0 is the only whole second on the grid. H3's trained band is "
+                            "5.167 to 15.083 seconds. Outside it a render still happens, untested "
+                            "and slower, and the report says so."),
                 io.Combo.Input(
                     "aspect", display_name="frame shape", options=list(ASPECTS), default="16:9",
-                    tooltip="The canvas is sized from this, so there is no resolution box to keep "
-                            "in step with anything."),
+                    tooltip="The canvas is sized from this, 768 on the short edge, so there is no "
+                            "resolution box to keep in step with anything."),
                 io.Combo.Input(
-                    "creativity", display_name="how much it may invent", options=list(CREATIVITY),
+                    "creativity", display_name="invention", options=list(CREATIVITY),
                     default="balanced",
-                    tooltip="restrained keeps to your sentence. balanced shapes it, and scores it if "
-                            "it wants scoring. bold and extreme may add a spoken line, music, "
-                            "on-screen text or a beat of their own. Saying no dialogue in your "
-                            "sentence still means no dialogue at every setting."),
+                    tooltip="How much the writer may add where your sentence is silent, which is "
+                            "three things: a score, a spoken line, text in the frame. restrained "
+                            "adds none of them. balanced may add a score. bold may also put words "
+                            "in a mouth and text on screen. extreme adds nothing beyond bold, it "
+                            "pushes every choice harder. Shot count is never on this dial, and "
+                            "saying no dialogue in your sentence still means no dialogue at every "
+                            "position."),
                 io.Boolean.Input(
-                    "silent", display_name="no music or speech", default=False,
+                    "silent", display_name="no music", default=False,
                     tooltip="H3 writes sound in the same pass as the picture, so silence is a "
-                            "decision rather than an absence. It belongs with the rest of what you "
-                            "are asking for, which is why it sits here."),
-                io.Int.Input(
-                    "shots", display_name="how many shots, 0 to decide for me", default=0, min=0,
-                    max=8,
-                    tooltip="0 is usually right: cut times have to land on the frame grid too, and "
-                            "the compiler knows where they can go."),
+                            "decision rather than an absence. This turns off the score only. "
+                            "Ambient and physical sound still get written, and speech is governed "
+                            "by your sentence and by invention."),
+                io.Combo.Input(
+                    "shots", display_name="shots", options=list(SHOTS), default="auto",
+                    tooltip="auto is usually right: cut times have to land on the frame grid too, "
+                            "and the compiler knows where they can go. Set a number when the piece "
+                            "has to be one continuous take, or exactly two. Four is the compiler's "
+                            "ceiling."),
 
-                # ------------------------------------------------- what it should look at
+                # --------------------------------------------------------- this is what it looks at
                 io.Image.Input(
-                    "opening_frame", display_name="first frame of the video", optional=True,
-                    tooltip="The video STARTS on this picture. That is a different job from a "
-                            "reference, and it uses H3's first-and-last-frame weights, which this "
-                            "node loads for you."),
+                    "first_frame", display_name="first frame", optional=True,
+                    tooltip="The video STARTS on this picture. A different job from a picture "
+                            "reference, on H3's first-and-last-frame weights, which this node loads "
+                            "for you. Cannot be combined with the picture sockets."),
                 io.Image.Input(
-                    "closing_frame", display_name="last frame of the video", optional=True,
-                    tooltip="The video ENDS on this picture."),
+                    "last_frame", display_name="last frame", optional=True,
+                    tooltip="The video ENDS on this picture. Cannot be combined with the picture "
+                            "sockets."),
                 io.Autogrow.Input(
-                    "references", display_name="things the shot should contain", optional=True,
-                    template=io.Autogrow.TemplatePrefix(
+                    "pictures", display_name="pictures", optional=True,
+                    template=io.Autogrow.TemplateNames(
                         input=io.Image.Input(
-                            "reference", display_name="a thing in the shot",
-                            tooltip="A person, a car, a room. The first becomes <Picture 1>, which "
-                                    "is how a subject in the brief binds to it. Another socket "
-                                    "appears once this one is filled."),
-                        prefix="reference_", min=0, max=MAX_REFERENCES)),
+                            "picture",
+                            tooltip="Something the shot should contain: a person, a car, a room. "
+                                    "The socket's number is the picture's number in the brief and "
+                                    "in the notes below. The next socket appears once this one is "
+                                    "filled."),
+                        names=list(PICTURE_NAMES), min=0)),
                 io.String.Input(
-                    "picture_notes", display_name="what each picture is", multiline=True,
-                    optional=True, default="",
-                    placeholder="one short line per picture, in order\nthe man\nthe car\nthe empty "
-                                "showroom",
-                    tooltip="Never required, and often the difference between the right subject "
-                            "being described and the wrong one."),
-                io.Video.Input(
-                    "video_to_edit", display_name="footage this changes", optional=True,
-                    tooltip="Footage the piece is an edit of. Its soundtrack comes along with it."),
-                io.Video.Input(
-                    "video_to_continue", display_name="footage this carries on from", optional=True,
-                    tooltip="Footage the piece continues from."),
-                io.Audio.Input(
-                    "music", display_name="music to reuse or match", optional=True),
-                io.Audio.Input(
-                    "sound_effect", display_name="sound effect to reuse or match", optional=True),
-                io.Audio.Input(
-                    "voice_to_match", display_name="voice to match", optional=True,
-                    tooltip="A voice whose timbre should be matched. Type what it says below."),
-                io.String.Input(
-                    "sound_notes", display_name="how the sounds should feel", multiline=True,
-                    optional=True, default="",
-                    placeholder="one line per sound, in order\na slow synth score, no drums\na "
-                                "heavy door slamming",
-                    tooltip="Timbre, delivery, tempo. A transcript gives the words only, so "
-                            "everything else about a sound has to be said here."),
-                io.String.Input(
-                    "spoken_words", display_name="what the voice says", multiline=True,
-                    optional=True, default="",
-                    placeholder="type the words in the voice clip, exactly as spoken",
-                    tooltip="Nothing in this chain can hear. A model asked about a waveform invents "
-                            "a plausible answer instead of admitting it cannot listen, so the words "
-                            "are typed or run through a real recogniser."),
+                    "picture_notes", multiline=True, optional=True, default="",
+                    placeholder="one line per picture, in order\nthe man\nthe red car",
+                    tooltip="Optional, and often the difference between the right subject being "
+                            "described and the wrong one. Line one describes picture 1. The first "
+                            "and last frame sockets need no line here."),
+                io.Autogrow.Input(
+                    "footage", display_name="footage", optional=True,
+                    template=io.Autogrow.TemplateNames(
+                        input=Footage.Input(
+                            "clip",
+                            tooltip="Reference footage from an OpenH3-IR Footage node, up to "
+                                    "three."),
+                        names=list(CLIP_NAMES), min=0)),
+                Sound.Input(
+                    "sound", display_name="sound", optional=True,
+                    tooltip="Music, an effect, or a voice to match, from an OpenH3-IR Sound node."),
+                Setup.Input(
+                    "setup", display_name="setup", optional=True,
+                    tooltip="Service address and model files, from an OpenH3-IR Setup node. Without "
+                            f"one the service is expected at {DEFAULT_SERVER.split('//')[-1]} and "
+                            "the H3 files are found by name in your models folders. The report "
+                            "lists whatever was used."),
 
-                # ------------------------------------------------- where, and with what
-                io.String.Input(
-                    "server", display_name="OpenH3-IR service address", default=DEFAULT_SERVER,
-                    tooltip="Where the service is listening. Start one from the repo with h3ir "
-                            "serve. It can be another machine."),
+                # --------------------------------------------------------- rarely touched
                 io.Combo.Input(
-                    "reference_model", display_name="H3 weights for reference and text jobs",
-                    options=unets, default=_default_like(unets, ("ref2va", "int8"), ("ref2va",)),
-                    tooltip="Set once and forget."),
-                io.Combo.Input(
-                    "frames_model", display_name="H3 weights for first and last frame jobs",
-                    options=unets, default=_default_like(unets, ("fl2va", "int8"), ("fl2va",)),
-                    tooltip="Frame work has its own checkpoint, and the node chooses between the two "
-                            "from which sockets you filled."),
-                io.Combo.Input(
-                    "text_encoder", display_name="text encoder", options=clips,
-                    default=_default_like(clips, ("minimax",)),
-                    tooltip="The Qwen3-VL encoder H3 was trained against."),
-                io.Combo.Input(
-                    "video_vae", display_name="picture VAE", options=vaes,
-                    default=_default_like(vaes, ("minimax", "video"), ("h3", "video"))),
-                io.Combo.Input(
-                    "audio_vae", display_name="sound VAE", options=vaes,
-                    default=_default_like(vaes, ("minimax", "audio"), ("h3", "audio")),
-                    tooltip="Needed even for a silent piece, because H3 writes picture and sound "
-                            "together."),
-
-                # ------------------------------------------------- rarely touched
-                io.Combo.Input(
-                    "sizing", display_name="reference scaling", options=list(SIZING),
-                    default="match", optional=True, advanced=True,
-                    tooltip="match fits each reference to the render's pixel area. max keeps the "
-                            "reference's own size for stronger identity and is slower, because "
+                    "sizing", display_name="reference size", options=list(SIZING), default="match",
+                    optional=True, advanced=True,
+                    tooltip="match fits each picture to the render's pixel area. max keeps the "
+                            "picture's own size for stronger identity and is slower, because "
                             "reference tokens ride every sampling step."),
                 io.Int.Input(
                     "seed", display_name="brief seed", default=7, min=0, max=0xFFFFFFFFFFFFFF,
@@ -354,27 +230,7 @@ class OpenH3IRCompile(io.ComfyNode):
                 io.Combo.Input(
                     "effort", display_name="writing effort", options=list(EFFORT),
                     default="standard", optional=True, advanced=True,
-                    tooltip="max asks for reasoning prose and is slower."),
-                io.Combo.Input(
-                    "weight_dtype", display_name="weight precision",
-                    options=["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"],
-                    default="default", optional=True, advanced=True,
-                    tooltip="The same setting a UNET loader has. Leave alone unless you are short "
-                            "of VRAM."),
-                io.Int.Input(
-                    "timeout_s", display_name="give up after, in seconds", default=600, min=10,
-                    max=3600, optional=True, advanced=True,
-                    tooltip="Writing a brief is one call to your language model, so this is as slow "
-                            "as that model is."),
-                io.String.Input(
-                    "service_sees_comfy_at", display_name="where the service sees ComfyUI's folder",
-                    default="", optional=True, advanced=True,
-                    placeholder="usually blank, worked out automatically",
-                    tooltip="For setups the node cannot work out alone. ComfyUI's own folder is "
-                            "found automatically, and when the service reads the disk differently, "
-                            "for example ComfyUI on Windows with the service in WSL, the usual "
-                            "spellings are tried and checked. Fill this only if it reports that it "
-                            "could not find one that works."),
+                    tooltip="max asks the writer for reasoning prose and is slower."),
             ],
             outputs=[
                 io.Model.Output(display_name="model",
@@ -392,121 +248,177 @@ class OpenH3IRCompile(io.ComfyNode):
                                  tooltip="The compiled brief, to read or to keep."),
                 io.String.Output(display_name="report",
                                  tooltip="What happened in plain words: the job, the real length, "
-                                         "which picture became which, and every file loaded."),
+                                         "which socket became which picture, and every file "
+                                         "loaded."),
             ],
         )
 
     @classmethod
     def fingerprint_inputs(cls, **kwargs: Any) -> Any:
         """Re-run when something changed and never otherwise. The compiler is seeded, so an unchanged
-        graph re-queued would spend a model call to produce the same brief."""
-        refs = kwargs.pop("references", None) or {}
-        media = [_digest(v) for _k, v in sorted(refs.items())]
-        for key in ("opening_frame", "closing_frame", *VIDEO_SOCKETS, *SOUND_SOCKETS):
-            media.append(_digest(kwargs.pop(key, None)))
+        graph re-queued would spend a model call to produce the same brief.
+
+        The bundles are hashed by content along with the pictures, because a Setup, Footage or Sound
+        node hands over a dict whose `repr` is a memory address: hashing that would make a swapped
+        reference image or a re-typed note look like no change at all.
+        """
+        media = [digest(kwargs.pop("pictures", None)), digest(kwargs.pop("footage", None))]
+        for key in ("first_frame", "last_frame", "sound", "setup"):
+            media.append(digest(kwargs.pop(key, None)))
         return inputs_fingerprint(sorted((k, repr(v)) for k, v in kwargs.items()), media)
 
     # ------------------------------------------------------------------ the work
 
     @classmethod
     def execute(cls, intent: str, seconds: float, aspect: str, creativity: str, silent: bool,
-                shots: int, server: str, reference_model: str, frames_model: str,
-                text_encoder: str, video_vae: str, audio_vae: str, opening_frame=None,
-                closing_frame=None, references=None, picture_notes: str = "", video_to_edit=None,
-                video_to_continue=None, music=None, sound_effect=None, voice_to_match=None,
-                sound_notes: str = "", spoken_words: str = "", sizing: str = "match",
-                seed: int = 7, effort: str = "standard", weight_dtype: str = "default",
-                timeout_s: int = 600, service_sees_comfy_at: str = "") -> io.NodeOutput:
-        refs = [(k, v) for k, v in sorted((references or {}).items()) if v is not None]
-        videos = [(s, v) for s, v in (("video_to_edit", video_to_edit),
-                                      ("video_to_continue", video_to_continue)) if v is not None]
-        sounds = [(s, v) for s, v in (("music", music), ("sound_effect", sound_effect),
-                                      ("voice_to_match", voice_to_match)) if v is not None]
+                shots: str, first_frame=None, last_frame=None, pictures=None,
+                picture_notes: str = "", footage=None, sound=None, setup=None,
+                sizing: str = "match", seed: int = 7, effort: str = "standard") -> io.NodeOutput:
+        machine = dict(setup_defaults(), **(setup or {}))
+        pics = ordered(pictures, PICTURE_NAMES)
+        clips = ordered(footage, CLIP_NAMES)
+        sounds = cls._sounds_from(sound)
 
-        if (opening_frame is not None or closing_frame is not None) and (refs or videos):
+        anchored = first_frame is not None or last_frame is not None
+        if anchored and (pics or clips):
             raise ServiceError(
                 "this is two different jobs at once. The first and last frame sockets say a picture "
-                "is a frame of the video; the reference sockets say a picture is something the shot "
-                "should contain. H3 does one or the other, so unplug whichever you did not mean.")
+                "is a frame of the video; the picture and clip sockets say a file is something the "
+                "shot should contain. H3 does one or the other, so unplug whichever you did not "
+                "mean.")
+        if anchored and sounds:
+            raise ServiceError(
+                "a first or last frame job runs on H3's frame weights, and that path takes no "
+                "reference sound at all: the brief would name your clip and H3 would never receive "
+                "it. Unplug the sound, or use the picture sockets instead of the frame sockets.")
 
-        declared = expected_mode(opening_frame is not None, closing_frame is not None, len(refs),
-                                 len(videos))
+        declared = expected_mode(first_frame is not None, last_frame is not None, len(pics),
+                                 len(clips), len(sounds))
+        frames_job = declared in ("i2va", "l2va", "fl2va")
 
-        written, transcripts, video_frames = cls._write_everything(
-            opening_frame, closing_frame, refs, videos, sounds, spoken_words)
+        written, transcripts, clip_frames, clip_sounds = cls._write_everything(
+            first_frame, last_frame, pics, clips, sounds, (sound or {}).get("voice_words", ""))
+        bindings = bindings_by_content(written, sha256_file)
 
         body, used_prefix = cls._compile_where_the_service_can_read(
-            server=server, written=written, picture_notes=picture_notes, sound_notes=sound_notes,
-            sizing=sizing, transcripts=transcripts, override=service_sees_comfy_at,
-            timeout=float(timeout_s),
+            server=machine["server"], written=written, picture_notes=picture_notes, sizing=sizing,
+            transcripts=transcripts, override=machine["service_sees_comfy_at"],
+            timeout=float(machine["timeout_s"]),
             brief=dict(intent=intent, seconds=seconds, aspect=aspect, creativity=creativity,
                        effort=effort, seed=seed, silent=silent, shots=shots))
 
         prompt, width, height, length, ref_sizing = render_fields(body)
         warning = check_mode(declared, str(body.get("mode", "")))
-        frames_job = declared in ("i2va", "l2va", "fl2va")
 
-        model = cls._load_model(frames_model if frames_job else reference_model, weight_dtype)
-        clip = cls._load_clip(text_encoder)
+        checkpoint, alt_checkpoint = cls._pick(
+            machine["frames_model" if frames_job else "reference_model"],
+            "diffusion_models", "unet_gguf",
+            FRAMES_PATTERNS if frames_job else REFERENCE_PATTERNS,
+            what=("H3 first-and-last-frame checkpoint" if frames_job
+                  else "H3 reference checkpoint"),
+            looks_like=("minimax_h3_fl2va_....safetensors" if frames_job
+                        else "minimax_h3_ref2va_....safetensors"))
+        encoder, alt_encoder = cls._pick(
+            machine["text_encoder"], "text_encoders", "clip_gguf", ENCODER_PATTERNS,
+            what="H3 text encoder", looks_like="qwen3vl_..._minimax_h3_....safetensors")
+        video_vae, _ = cls._pick(machine["video_vae"], "vae", "", VIDEO_VAE_PATTERNS,
+                                 what="H3 picture VAE", looks_like="minimax_h3_video_vae_....")
+        audio_vae, _ = cls._pick(machine["audio_vae"], "vae", "", AUDIO_VAE_PATTERNS,
+                                 what="H3 sound VAE", looks_like="minimax_h3_audio_vae_....")
+
+        model = cls._load_model(checkpoint, machine["weight_dtype"])
+        clip = cls._load_clip(encoder)
         vae = cls._load_vae(video_vae)
         avae = cls._load_vae(audio_vae)
 
         positive, latent = cls._condition(
             declared=declared, clip=clip, vae=vae, audio_vae=avae, prompt=prompt, width=width,
-            height=height, length=length, ref_image_size=ref_sizing, opening=opening_frame,
-            closing=closing_frame, refs=refs, video_frames=video_frames, sounds=sounds)
+            height=height, length=length, ref_image_size=ref_sizing, first=first_frame,
+            last=last_frame, pics=pics, clip_frames=clip_frames, clip_sounds=clip_sounds,
+            sounds=sounds)
 
         wiring = body.get("wiring") or []
         conflict = len({w.get("sizing") for w in wiring if w.get("sizing")}) > 1
-        text = report(body, server=server, sizing_conflict=conflict)
-        text += f"\njob            {declared}"
-        text += f"\nweights        {frames_model if frames_job else reference_model}"
-        text += f"\nencoder        {text_encoder}"
-        text += f"\nvaes           {video_vae}  +  {audio_vae}"
+        text = report(body, server=machine["server"], sizing_conflict=conflict,
+                      asked_seconds=seconds, bindings=bindings)
+        text += "\n" + line("job", declared)
+        text += "\n" + line("weights", f"{checkpoint}  via {unet_loader_for(checkpoint)}")
+        text += "\n" + line("encoder", f"{encoder}  via {clip_loader_for(encoder)}")
+        text += "\n" + line("vaes", f"{video_vae}  +  {audio_vae}")
         if used_prefix:
-            text += f"\npaths          the service reads ComfyUI's folder at {used_prefix}"
+            text += "\n" + line("paths", f"the service reads ComfyUI's folder at {used_prefix}")
+        if alt_checkpoint:
+            text += "\n" + gguf_alternative_note(
+                "frame weights" if frames_job else "reference weights", alt_checkpoint)
+        if alt_encoder:
+            text += "\n" + gguf_alternative_note("text encoder", alt_encoder)
+        if is_gguf(checkpoint) and machine["weight_dtype"] != "default":
+            text += "\n" + precision_ignored_note()
         if warning:
-            text += "\nWARNING        " + warning
+            text += "\n" + line("WARNING", warning)
             print("[OpenH3-IR] " + warning)
+        # A length outside the trained band is a choice, not a fault, so it stays in the `note`
+        # register. It also goes to the console, because nothing obliges anyone to wire the report
+        # output to a node that shows it.
+        for note in length_notes(seconds, length):
+            if note.startswith("note"):
+                print("[OpenH3-IR] " + " ".join(note.split()[1:]))
         print(f"[OpenH3-IR] {declared}: {length} frames ({length / FPS:.3f}s), {width}x{height}")
         return io.NodeOutput(model, positive, latent, vae, avae, prompt, text)
 
     # ------------------------------------------------------------------ helpers
 
     @classmethod
-    def _write_everything(cls, opening, closing, refs, videos, sounds, spoken_words):
-        """Put every attachment on disk. Only the writing lives here, because only the writing needs
-        ComfyUI; ordering, roles and notes are decided in h3ir_client where they can be tested."""
-        written: list[tuple[str, str, str, dict[str, Any]]] = []
-        video_frames: list[Any] = []
-        transcripts: dict[str, str] = {}
-
-        ordered = ([("opening_frame", opening)] if opening is not None else []) \
-            + ([("closing_frame", closing)] if closing is not None else [])
-        for i, (_socket, img) in enumerate(refs, 1):
-            ordered.append((f"reference_{min(i, MAX_REFERENCES)}", img))
-        for socket, img in ordered:
-            written.append((socket, "image", _write_picture(img, socket), {}))
-
-        for socket, vid in videos:
-            path, dur, frames, imgs = _write_video(vid, socket)
-            written.append((socket, "video", path, {"seconds": round(dur, 3), "frames": frames}))
-            if imgs is not None:
-                video_frames.append(imgs)
-
-        for socket, snd in sounds:
-            path, dur = _write_sound(snd, socket)
-            written.append((socket, "audio", path, {"seconds": round(dur, 3)}))
-            if socket == "voice_to_match" and (spoken_words or "").strip():
-                # The service keys transcripts by the file's own hash, computed here from the very
-                # bytes the service will read.
-                transcripts[_sha256_file(path)] = spoken_words.strip()
-
-        return written, transcripts, video_frames
+    def _sounds_from(cls, sound: dict[str, Any] | None) -> list[tuple[str, Any, str]]:
+        """The Sound node's filled sockets as (canvas name, clip, note), in numbering order."""
+        if not sound:
+            return []
+        return [(shown, sound[key], sound.get(note_key, ""))
+                for key, shown, note_key in SOUND_PARTS if sound.get(key) is not None]
 
     @classmethod
-    def _compile_where_the_service_can_read(cls, *, server, written, picture_notes, sound_notes,
-                                           sizing, transcripts, override, timeout, brief):
+    def _write_everything(cls, first, last, pics, clips, sounds, voice_words):
+        """Put every attachment on disk. Only the socket-to-file mapping lives here; the conversion
+        itself is in `media`, and ordering, roles and notes are decided in `h3ir_client`, both of
+        which can be tested without a canvas."""
+        written: list[tuple[str, str, str, dict[str, Any]]] = []
+        clip_frames: list[Any] = []
+        clip_sounds: list[Any] = []
+        transcripts: dict[str, str] = {}
+        temp = _temp_dir()
+
+        for socket, img in ([("first frame", first)] if first is not None else []) \
+                + ([("last frame", last)] if last is not None else []) + pics:
+            written.append((socket, "image", write_picture(img, socket, temp), {}))
+
+        for socket, bundle in clips:
+            path, dur, n = write_footage(bundle["frames"], bundle.get("its_sound"), socket, temp)
+            written.append((socket, "video", path,
+                            {"role": bundle["role"], "seconds": round(dur, 3), "frames": n}))
+            clip_frames.append(bundle["frames"])
+            clip_sounds.append(bundle.get("its_sound"))
+            if bundle.get("its_sound") is not None:
+                # The soundtrack goes in as its own asset pointing back at this clip, which is what
+                # makes the service's <Audio j> ordering the same one H3 receives: the runtime emits
+                # a paired soundtrack's label immediately before its video's.
+                snd_path, snd_dur = write_sound(bundle["its_sound"], f"{socket} sound", temp)
+                written.append((f"{socket} sound", "audio", snd_path,
+                                {"role": "bgm", "seconds": round(snd_dur, 3),
+                                 "paired_video_path": path}))
+
+        for socket, snd, note in sounds:
+            path, dur = write_sound(snd, socket, temp)
+            written.append((socket, "audio", path, {"seconds": round(dur, 3), "note": note}))
+            if socket == "voice to match" and (voice_words or "").strip():
+                # The service keys transcripts by the file's own hash, computed here from the very
+                # bytes the service will read.
+                transcripts[sha256_file(path)] = voice_words.strip()
+
+        return written, transcripts, clip_frames, clip_sounds
+
+    @classmethod
+    def _compile_where_the_service_can_read(cls, *, server, written, picture_notes, sizing,
+                                           transcripts, override, timeout, brief):
         r"""Compile, working the path mapping out by trying rather than by asking anyone to type it.
 
         The service opens attachments from disk, and it may see the disk differently than ComfyUI
@@ -520,8 +432,8 @@ class OpenH3IRCompile(io.ComfyNode):
         candidates = path_candidates(root, override)
         last: ServiceError | None = None
         for prefix in candidates:
-            assets = plan_assets(written, list((picture_notes or "").splitlines()),
-                                 list((sound_notes or "").splitlines()), sizing, root, prefix)
+            assets = plan_assets(written, list((picture_notes or "").splitlines()), sizing, root,
+                                 prefix)
             payload = build_payload(assets=assets, transcripts=transcripts, **brief)
             try:
                 body = compile_brief(server, payload, timeout=timeout)
@@ -535,23 +447,71 @@ class OpenH3IRCompile(io.ComfyNode):
             + "\n\nTried these spellings of ComfyUI's folder: " + ", ".join(repr(c) for c in
                                                                            candidates)
             + ". If the service runs on a different machine it cannot open these files at all, and "
-              "only text-only prompts will work. If it can reach them by some other path, put that "
-              "path in this node's 'where the service sees ComfyUI's folder' field.")
+              "only text-only prompts will work. If it can reach them by some other path, add an "
+              "OpenH3-IR Setup node and put that path in its 'ComfyUI as the service sees it' "
+              "field.")
+
+    @classmethod
+    def _pick(cls, chosen: str, native_kind: str, gguf_kind: str,
+              patterns: tuple[tuple[str, ...], ...], *, what: str,
+              looks_like: str) -> tuple[str, str]:
+        """A model file, either the one that was picked or the one H3's own naming identifies.
+
+        Resolution happens per file and only for the files this job needs, so a machine with no
+        first-and-last-frame checkpoint can still run reference jobs. Nothing here falls back to the
+        first entry in a list: a plausible file from the wrong family loads, and then the render is
+        wrong for a reason nobody can see.
+        """
+        if chosen and chosen != AUTO:
+            return chosen, ""
+        native = _files(native_kind)
+        gguf = _files(gguf_kind) if gguf_kind else []
+        return resolve_model(merge_model_options(native, gguf), patterns, what=what,
+                             looks_like=looks_like)
+
+    @classmethod
+    def _node(cls, class_name: str, missing: str):
+        import nodes
+        cls_ = nodes.NODE_CLASS_MAPPINGS.get(class_name)
+        if cls_ is None:
+            raise ServiceError(missing)
+        return cls_()
 
     @classmethod
     def _load_model(cls, name: str, weight_dtype: str):
-        if not name:
-            raise ServiceError("no H3 weights selected. Pick a checkpoint for reference jobs, and "
-                               "one for frame jobs if you use the first or last frame sockets.")
-        import nodes
-        return nodes.NODE_CLASS_MAPPINGS["UNETLoader"]().load_unet(name, weight_dtype)[0]
+        if is_gguf(name):
+            loader = cls._node("UnetLoaderGGUF",
+                               f"{name} is a GGUF checkpoint, and the ComfyUI-GGUF pack that reads "
+                               "one is not installed. Install ComfyUI-GGUF, or pick a .safetensors "
+                               "checkpoint on the Setup node.")
+            return loader.load_unet(name)[0]
+        return cls._node("UNETLoader", "ComfyUI's own UNETLoader is missing from this install, "
+                                       "which no custom node can work around.") \
+            .load_unet(name, weight_dtype)[0]
 
     @classmethod
     def _load_clip(cls, name: str):
-        if not name:
-            raise ServiceError("no text encoder selected. H3 needs its Qwen3-VL encoder.")
-        import nodes
-        loader = nodes.NODE_CLASS_MAPPINGS["CLIPLoader"]()
+        """H3's encoder, loaded as H3's family and never as whatever the loader defaults to.
+
+        Both loaders resolve the CLIP type by name, and ComfyUI-GGUF's does it with a getattr whose
+        default is STABLE_DIFFUSION: an unknown name there loads H3's encoder as the wrong family
+        silently, and the render comes out plausible and wrong. So the member is asserted first.
+        """
+        import comfy.sd
+        if not hasattr(comfy.sd.CLIPType, "MINIMAX"):
+            raise ServiceError(
+                "this ComfyUI does not know MiniMax H3's text encoder family (comfy.sd.CLIPType "
+                "has no MINIMAX member), so the encoder would be loaded as the wrong family and "
+                "the render would be wrong with nothing on screen to say so. Update ComfyUI to a "
+                "version whose own MiniMax H3 nodes work.")
+        if is_gguf(name):
+            loader = cls._node("CLIPLoaderGGUF",
+                               f"{name} is a GGUF text encoder, and the ComfyUI-GGUF pack that "
+                               "reads one is not installed. Install ComfyUI-GGUF, or pick a "
+                               ".safetensors encoder on the Setup node.")
+            return loader.load_clip(name, "minimax")[0]
+        loader = cls._node("CLIPLoader", "ComfyUI's own CLIPLoader is missing from this install, "
+                                         "which no custom node can work around.")
         try:
             return loader.load_clip(name, "minimax", "default")[0]
         except TypeError:
@@ -559,15 +519,12 @@ class OpenH3IRCompile(io.ComfyNode):
 
     @classmethod
     def _load_vae(cls, name: str):
-        if not name:
-            raise ServiceError("both VAEs have to be selected. H3 writes picture and sound "
-                               "together, so it needs each one.")
-        import nodes
-        return nodes.NODE_CLASS_MAPPINGS["VAELoader"]().load_vae(name)[0]
+        return cls._node("VAELoader", "ComfyUI's own VAELoader is missing from this install, which "
+                                      "no custom node can work around.").load_vae(name)[0]
 
     @classmethod
     def _condition(cls, *, declared, clip, vae, audio_vae, prompt, width, height, length,
-                   ref_image_size, opening, closing, refs, video_frames, sounds):
+                   ref_image_size, first, last, pics, clip_frames, clip_sounds, sounds):
         """Hand the conditioning to ComfyUI's own H3 nodes rather than reimplementing it. They own
         how references are tokenised and how the latent is packed, and a copy of that here would be
         the version that rots."""
@@ -577,17 +534,208 @@ class OpenH3IRCompile(io.ComfyNode):
         if declared in ("i2va", "l2va", "fl2va"):
             out = MiniMaxH3ImageToVideo.execute(
                 clip=clip, vae=vae, prompt=prompt, width=width, height=height, length=length,
-                first_frame=opening, last_frame=closing)
+                first_frame=first, last_frame=last)
             return tuple(out.result)
 
-        ref_images = {f"ref_image_{i}": img for i, (_s, img) in enumerate(refs, 1)}
-        ref_videos = {f"ref_video_{i}": f for i, f in enumerate(video_frames, 1)}
-        ref_audios = {f"ref_audio_{i}": snd for i, (_s, snd) in enumerate(sounds, 1)}
+        # Index-paired, exactly as the stock node reads them: ref_video_audio_N belongs to
+        # ref_video_N. This is the pairing the service was told about, so the labels it computed and
+        # the labels H3 receives are the same labels.
+        ref_images = {f"ref_image_{i}": img for i, (_s, img) in enumerate(pics, 1)}
+        ref_videos = {f"ref_video_{i}": f for i, f in enumerate(clip_frames, 1)}
+        ref_video_audios = {f"ref_video_audio_{i}": s for i, s in enumerate(clip_sounds, 1)
+                            if s is not None}
+        ref_audios = {f"ref_audio_{i}": snd for i, (_s, snd, _n) in enumerate(sounds, 1)}
         out = MiniMaxH3ReferenceToVideo.execute(
             clip=clip, vae=vae, audio_vae=audio_vae, prompt=prompt, width=width, height=height,
             length=length, ref_image_size=ref_image_size, ref_images=ref_images or None,
-            ref_videos=ref_videos or None, ref_audios=ref_audios or None)
+            ref_videos=ref_videos or None, ref_video_audios=ref_video_audios or None,
+            ref_audios=ref_audios or None)
         return tuple(out.result)
+
+
+class OpenH3IRSetup(io.ComfyNode):
+    """The machine, not the shot: where the service is and which files to load.
+
+    Optional by design. With no Setup node in the graph the five H3 files resolve by name on
+    whatever disk the workflow lands on, so a workflow shared with a stranger runs; a pinned
+    filename is a workflow that fails on someone else's install. That is also why every model combo
+    opens on `(found automatically)` rather than on a file.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="OpenH3IRSetup",
+            display_name="OpenH3-IR Setup",
+            category="OpenH3-IR",
+            search_aliases=["openh3", "h3", "ir", "service", "server", "gguf", "models"],
+            description=("Where the OpenH3-IR service is, and which H3 files to load. Optional: "
+                         "without it the service is expected on localhost and the files are found "
+                         "by name."),
+            inputs=[
+                io.String.Input(
+                    "server", display_name="service", default=DEFAULT_SERVER,
+                    tooltip="Where the OpenH3-IR service is listening. Start one from the repo with "
+                            "h3ir serve. It can be another machine."),
+                io.Combo.Input(
+                    "reference_model", display_name="reference weights",
+                    options=_model_options("diffusion_models", "unet_gguf"), default=AUTO,
+                    tooltip="H3's checkpoint for reference and text jobs. Found by name unless you "
+                            "pick one. Both formats are in this list: pick a .gguf and it loads "
+                            "through Unet Loader (GGUF), pick a .safetensors and it loads "
+                            "natively."),
+                io.Combo.Input(
+                    "frames_model", display_name="frame weights",
+                    options=_model_options("diffusion_models", "unet_gguf"), default=AUTO,
+                    tooltip="H3's checkpoint for first and last frame jobs. The compile node "
+                            "chooses between this and the reference weights from which sockets you "
+                            "filled. Both formats are in this list: a .gguf loads through Unet "
+                            "Loader (GGUF)."),
+                io.Combo.Input(
+                    "text_encoder", display_name="text encoder",
+                    options=_model_options("text_encoders", "clip_gguf"), default=AUTO,
+                    tooltip="The Qwen3-VL encoder H3 was trained against. Both formats are in this "
+                            "list, chosen independently of the checkpoint: a GGUF encoder works "
+                            "with safetensors weights and the other way round."),
+                io.Combo.Input(
+                    "video_vae", display_name="picture VAE", options=_model_options("vae"),
+                    default=AUTO,
+                    tooltip="H3's picture VAE, used for the decode as well."),
+                io.Combo.Input(
+                    "audio_vae", display_name="sound VAE", options=_model_options("vae"),
+                    default=AUTO,
+                    tooltip="H3's sound VAE. Needed even for a silent piece, because H3 writes "
+                            "picture and sound together."),
+                io.Combo.Input(
+                    "weight_dtype", display_name="weight precision", options=list(WEIGHT_DTYPES),
+                    default="default", advanced=True,
+                    tooltip="The same setting a UNET loader has. Leave alone unless you are short "
+                            "of VRAM. It does not apply to a GGUF checkpoint, which carries its own "
+                            "quantisation, and the report says when it was ignored."),
+                io.Int.Input(
+                    "timeout_s", display_name="timeout, seconds", default=600, min=10, max=3600,
+                    advanced=True,
+                    tooltip="Writing a brief is one call to your language model, so this is as slow "
+                            "as that model is."),
+                io.String.Input(
+                    "service_sees_comfy_at", display_name="ComfyUI as the service sees it",
+                    default="", advanced=True,
+                    tooltip="Only for a split install, for example ComfyUI on Windows with the "
+                            "service in WSL. ComfyUI's own folder is found automatically and the "
+                            "usual spellings are tried and checked. Fill this only if the node "
+                            "reports that none of them worked."),
+            ],
+            outputs=[Setup.Output(display_name="setup")],
+        )
+
+    @classmethod
+    def execute(cls, server: str, reference_model: str, frames_model: str, text_encoder: str,
+                video_vae: str, audio_vae: str, weight_dtype: str = "default",
+                timeout_s: int = 600, service_sees_comfy_at: str = "") -> io.NodeOutput:
+        return io.NodeOutput(setup_bundle(
+            server=server, reference_model=reference_model, frames_model=frames_model,
+            text_encoder=text_encoder, video_vae=video_vae, audio_vae=audio_vae,
+            weight_dtype=weight_dtype, timeout_s=timeout_s,
+            service_sees_comfy_at=service_sees_comfy_at))
+
+
+class OpenH3IRFootage(io.ComfyNode):
+    """One reference clip: its frames, its soundtrack, and what it is for.
+
+    Its own node because those three facts have to travel together and an autogrow item holds
+    exactly one input. As a satellite the pairing is structural rather than positional, and the
+    per-clip job becomes expressible at all.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="OpenH3IRFootage",
+            display_name="OpenH3-IR Footage",
+            category="OpenH3-IR",
+            search_aliases=["openh3", "h3", "ir", "video", "clip", "footage", "edit", "continue"],
+            description="One reference clip for H3: its frames, its soundtrack, and its job.",
+            inputs=[
+                io.Image.Input(
+                    "frames", display_name="frames",
+                    tooltip="The clip's frames, from Load Video (Upload) or any loader with an "
+                            "IMAGE output. H3 reads 24 fps, 2 to 15 seconds."),
+                io.Audio.Input(
+                    "its_sound", display_name="its sound", optional=True,
+                    tooltip="The same clip's soundtrack, from the loader's audio output. It stays "
+                            "paired with these frames, which is how H3 labels it."),
+                io.Combo.Input(
+                    "job", display_name="what it is for", options=list(FOOTAGE_JOBS),
+                    default="copy what is in it",
+                    tooltip="copy what is in it puts what the clip contains into a new shot. edit "
+                            "it says the piece is a changed version of this footage. carry on from "
+                            "it says the piece continues where this footage stopped. These are "
+                            "three different jobs in the brief, so the wrong one renders something "
+                            "plausible and wrong."),
+            ],
+            outputs=[Footage.Output(display_name="clip")],
+        )
+
+    @classmethod
+    def execute(cls, frames, job: str, its_sound=None) -> io.NodeOutput:
+        return io.NodeOutput(footage_bundle(frames, its_sound, job))
+
+
+class OpenH3IRSound(io.ComfyNode):
+    """Up to three reference sounds, each with the note that is the only thing describing it.
+
+    The notes are prominent here and modest on the compile node for a measurable reason: the service
+    never asks a model to listen, because nothing in the chain can, and H3's tokenizer emits only
+    `<Audio j>: `. A picture gets looked at; a sound does not. So the caller's note is the only
+    channel by which anything learns what a sound is.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="OpenH3IRSound",
+            display_name="OpenH3-IR Sound",
+            category="OpenH3-IR",
+            search_aliases=["openh3", "h3", "ir", "audio", "music", "voice", "sfx", "sound"],
+            description="Reference music, a sound effect and a voice to match, each with the note "
+                        "that describes it.",
+            inputs=[
+                io.Audio.Input("music", display_name="music", optional=True,
+                               tooltip="A score to reuse or match."),
+                io.String.Input(
+                    "music_note", display_name="what the music is", default="", optional=True,
+                    tooltip="Nothing in this chain can hear. This line is the only thing the model "
+                            "will ever learn about the track, so timbre, tempo and instruments "
+                            "belong here: slow synth score, no drums."),
+                io.Audio.Input("effect", display_name="sound effect", optional=True,
+                               tooltip="A sound effect to reuse or match."),
+                io.String.Input(
+                    "effect_note", display_name="what the effect is", default="", optional=True,
+                    tooltip="The only description the model gets: a heavy door slamming, close, no "
+                            "reverb."),
+                io.Audio.Input("voice", display_name="voice to match", optional=True,
+                               tooltip="A voice whose timbre and delivery should be matched."),
+                io.String.Input(
+                    "voice_note", display_name="how the voice sounds", default="", optional=True,
+                    tooltip="Delivery, age, accent, pace: hoarse, unhurried, mid-forties."),
+                io.String.Input(
+                    "voice_words", multiline=True, default="", optional=True,
+                    placeholder="the words in the voice clip, exactly as spoken",
+                    tooltip="A model asked about a waveform invents a plausible answer instead of "
+                            "admitting it cannot listen, so the words are typed here or run through "
+                            "a real recogniser. This is a transcript of the clip, not dialogue for "
+                            "your video. Lines you want spoken go in the sentence on the compile "
+                            "node."),
+            ],
+            outputs=[Sound.Output(display_name="sound")],
+        )
+
+    @classmethod
+    def execute(cls, music=None, music_note: str = "", effect=None, effect_note: str = "",
+                voice=None, voice_note: str = "", voice_words: str = "") -> io.NodeOutput:
+        return io.NodeOutput(sound_bundle(
+            music=music, music_note=music_note, effect=effect, effect_note=effect_note,
+            voice=voice, voice_note=voice_note, voice_words=voice_words))
 
 
 class OpenH3IRShowText(io.ComfyNode):
@@ -614,12 +762,12 @@ class OpenH3IRShowText(io.ComfyNode):
 
 class OpenH3IRExtension(ComfyExtension):
     async def get_node_list(self):
-        return [OpenH3IRCompile, OpenH3IRShowText]
+        return [OpenH3IRCompile, OpenH3IRSetup, OpenH3IRFootage, OpenH3IRSound, OpenH3IRShowText]
 
 
 async def comfy_entrypoint() -> OpenH3IRExtension:
     return OpenH3IRExtension()
 
 
-__all__ = ["OpenH3IRCompile", "OpenH3IRShowText", "OpenH3IRExtension", "comfy_entrypoint",
-           "ServiceError"]
+__all__ = ["OpenH3IRCompile", "OpenH3IRSetup", "OpenH3IRFootage", "OpenH3IRSound",
+           "OpenH3IRShowText", "OpenH3IRExtension", "comfy_entrypoint", "ServiceError"]

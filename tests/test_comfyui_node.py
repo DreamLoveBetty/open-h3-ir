@@ -1,12 +1,13 @@
-"""The ComfyUI node, tested with no ComfyUI, no torch and no server in the process.
+"""The ComfyUI nodes, tested with no ComfyUI, no torch and no server in the process.
 
-The node's value is entirely in what it does on a bad day, so most of what follows asserts on the
+The nodes' value is entirely in what they do on a bad day, so most of what follows asserts on the
 sentence a user reads rather than on an exception type. A node that raises the right class with a
 useless message has failed at the only job that matters when something is wrong.
 
 Several of these are falsification controls: they fail if the code starts guessing. `render_fields`
-inventing a frame count, or a mapping key being renamed, would both leave the node looking like it
-works while quietly producing the wrong render or breaking every saved workflow in the world.
+inventing a frame count, `resolve_model` falling back to the first file in a list, or a mapping key
+being renamed would each leave the node looking like it works while quietly producing the wrong
+render or breaking every saved workflow in the world.
 """
 from __future__ import annotations
 
@@ -20,23 +21,49 @@ from comfyui import h3ir_client as C
 def test_an_empty_intent_says_what_to_type_instead_of_posting_nothing():
     with pytest.raises(C.ServiceError) as e:
         C.build_payload("   ", seconds=8, aspect="16:9", creativity="balanced", effort="standard",
-                        seed=7, silent=False, shots=0, assets=[], transcripts={})
+                        seed=7, silent=False, shots="auto", assets=[], transcripts={})
     msg = str(e.value)
     assert "intent field is empty" in msg
     assert "gantry" in msg, "the message should show an example sentence, not just scold"
 
 
-def test_shots_zero_is_omitted_rather_than_sent_as_zero():
-    """0 is the node's way of saying 'you decide'. Sending shots=0 would ask for no shots."""
+def test_auto_shots_is_omitted_rather_than_sent_as_zero():
+    """`auto` is the widget's way of saying 'you decide', which is the service's own default when the
+    field is absent. Sending 0 would ask for no shots."""
+    kw = dict(seconds=8, aspect="16:9", creativity="balanced", effort="standard", seed=7,
+              silent=False, assets=[], transcripts={})
+    assert "shots" not in C.build_payload("a", shots="auto", **kw)
+    assert C.build_payload("a", shots="3", **kw)["shots"] == 3
+
+
+def test_a_workflow_saved_against_the_old_integer_shots_still_compiles():
+    """The widget changed from an INT with a magic 0 to a combo. A saved workflow hands back what it
+    saved, so 0 and 3 have to keep meaning what they meant."""
     kw = dict(seconds=8, aspect="16:9", creativity="balanced", effort="standard", seed=7,
               silent=False, assets=[], transcripts={})
     assert "shots" not in C.build_payload("a", shots=0, **kw)
     assert C.build_payload("a", shots=3, **kw)["shots"] == 3
 
 
+def test_more_shots_than_the_compiler_can_cut_is_refused_rather_than_clamped():
+    """`shots.py` MAX_SHOTS is 4 and `plan.py` clamps the caller's number to it, so asking for 6 used
+    to silently get 4. A number the engine drops is the surface lying about what it will do."""
+    from h3ir.shots import MAX_SHOTS
+
+    with pytest.raises(C.ServiceError) as e:
+        C.shot_count(MAX_SHOTS + 2)
+    assert str(MAX_SHOTS) in str(e.value) and "dropped" in str(e.value)
+
+
+def test_a_shots_value_that_is_neither_auto_nor_a_number_is_refused():
+    with pytest.raises(C.ServiceError) as e:
+        C.shot_count("lots")
+    assert "auto" in str(e.value)
+
+
 def test_transcripts_are_only_sent_when_there_are_some():
     kw = dict(seconds=8, aspect="16:9", creativity="balanced", effort="standard", seed=7,
-              silent=False, shots=0, assets=[])
+              silent=False, shots="auto", assets=[])
     assert "transcripts" not in C.build_payload("a", transcripts={}, **kw)
     assert C.build_payload("a", transcripts={"ab": "hello"}, **kw)["transcripts"] == {"ab": "hello"}
 
@@ -44,71 +71,155 @@ def test_transcripts_are_only_sent_when_there_are_some():
 # ------------------------------------------------------- the socket decides the role and the job
 
 def test_each_socket_carries_the_role_it_means():
-    """The whole point of sockets over dropdowns: a picture in opening_frame IS the first frame, and
+    """The whole point of sockets over dropdowns: a picture in `first frame` IS the first frame, and
     the service is told that rather than left to infer it from prose."""
-    written = [("opening_frame", "image", "/a.png", {}),
-               ("reference_1", "image", "/b.png", {}),
-               ("video_to_edit", "video", "/c.mp4", {"seconds": 3.0, "frames": 72}),
-               ("voice_to_match", "audio", "/d.wav", {"seconds": 2.0})]
-    got = C.plan_assets(written, ["the start", "the car"], ["a low voice"], "match", "", "")
+    written = [("first frame", "image", "/a.png", {}),
+               ("picture 1", "image", "/b.png", {}),
+               ("clip 1", "video", "/c.mp4", {"role": "edit_source", "seconds": 3.0, "frames": 72}),
+               ("voice to match", "audio", "/d.wav", {"seconds": 2.0})]
+    got = C.plan_assets(written, ["the car"], "match", "", "")
     assert [a["role"] for a in got] == ["frame_anchor_first", "subject", "edit_source",
                                         "voice_timbre"]
     assert [a["kind"] for a in got] == ["image", "image", "video", "audio"]
 
 
-def test_notes_are_matched_within_their_own_kind():
-    """A video sitting between two pictures must not shift the picture notes by one."""
-    written = [("reference_1", "image", "/a.png", {}),
-               ("video_to_edit", "video", "/v.mp4", {}),
-               ("reference_2", "image", "/b.png", {}),
-               ("music", "audio", "/m.wav", {}),
-               ("sound_effect", "audio", "/s.wav", {})]
-    got = C.plan_assets(written, ["first picture", "second picture"], ["the score", "a door"],
-                        "match", "", "")
+def test_a_picture_note_binds_to_a_picture_socket_and_never_to_a_frame_anchor():
+    """This is the bug the design was written to close. `plan_assets` walked images in written order
+    with one counter, which is opening frame, closing frame, then references, so with a first frame
+    plus two pictures line 1 described the first frame. Nobody would guess that, and the canvas now
+    says `picture 1` for the socket the brief calls <Picture 1>."""
+    written = [("first frame", "image", "/f.png", {}),
+               ("picture 1", "image", "/a.png", {}),
+               ("picture 2", "image", "/b.png", {})]
+    got = C.plan_assets(written, ["the man", "the red car"], "match", "", "")
+    assert "note" not in got[0], "the frame anchor takes no line from the picture notes"
+    assert got[1]["note"] == "the man"
+    assert got[2]["note"] == "the red car"
+
+
+def test_a_clip_between_two_pictures_does_not_shift_the_picture_notes():
+    written = [("picture 1", "image", "/a.png", {}),
+               ("clip 1", "video", "/v.mp4", {"role": "subject"}),
+               ("picture 2", "image", "/b.png", {})]
+    got = C.plan_assets(written, ["first picture", "second picture"], "match", "", "")
     assert got[0]["note"] == "first picture"
     assert got[2]["note"] == "second picture"
-    assert got[3]["note"] == "the score"
-    assert got[4]["note"] == "a door"
-    assert "note" not in got[1], "a video takes no note from the picture list"
+    assert "note" not in got[1], "a clip takes no note from the picture list"
+
+
+def test_a_sound_note_arrives_with_its_own_socket_rather_than_by_position():
+    """The old block matched lines by position across three differently named roles, so filling only
+    the effect attached line one to it and adding music later shifted everything."""
+    written = [("sound effect", "audio", "/s.wav", {"note": "a heavy door slamming"}),
+               ("music", "audio", "/m.wav", {"note": "slow synth score, no drums"})]
+    got = C.plan_assets(written, [], "match", "", "")
+    assert got[0]["note"] == "a heavy door slamming" and got[0]["role"] == "sfx"
+    assert got[1]["note"] == "slow synth score, no drums" and got[1]["role"] == "bgm"
 
 
 def test_a_blank_note_line_does_not_become_an_empty_note():
-    got = C.plan_assets([("reference_1", "image", "/a.png", {}),
-                         ("reference_2", "image", "/b.png", {})],
-                        ["the man", "   "], [], "match", "", "")
+    got = C.plan_assets([("picture 1", "image", "/a.png", {}),
+                         ("picture 2", "image", "/b.png", {})],
+                        ["the man", "   "], "match", "", "")
     assert got[0]["note"] == "the man"
     assert "note" not in got[1]
 
 
 def test_only_pictures_carry_sizing():
-    got = C.plan_assets([("reference_1", "image", "/a.png", {}),
-                         ("music", "audio", "/m.wav", {})], [], [], "max", "", "")
+    got = C.plan_assets([("picture 1", "image", "/a.png", {}),
+                         ("music", "audio", "/m.wav", {})], [], "max", "", "")
     assert got[0]["sizing"] == "max"
     assert "sizing" not in got[1], "sizing is a picture idea; sending it for audio is noise"
 
 
-def test_extra_facts_about_a_video_are_passed_through():
-    """Duration and frame count come from the video object, so the service never has to probe."""
-    got = C.plan_assets([("video_to_edit", "video", "/v.mp4", {"seconds": 4.5, "frames": 108})],
-                        [], [], "match", "", "")
+def test_extra_facts_about_a_clip_are_passed_through():
+    """Duration and frame count come from the frames themselves, so the service never has to probe
+    for what the node already knows."""
+    got = C.plan_assets([("clip 1", "video", "/v.mp4",
+                          {"role": "subject", "seconds": 4.5, "frames": 108})], [], "match", "", "")
     assert got[0]["seconds"] == 4.5 and got[0]["frames"] == 108
+
+
+def test_a_clips_soundtrack_points_back_at_its_own_clip():
+    """`plan.py:build_manifest` emits a paired soundtrack's <Audio j> label BEFORE its <Video k>, and
+    the stock node pairs `ref_video_audio_N` with `ref_video_N`. Without the pointer the service
+    numbers the soundtrack as a standalone audio and the two sides disagree about which label is
+    which, which is the plausible-and-wrong failure this pack exists to prevent."""
+    got = C.plan_assets([("clip 1", "video", "/v.mp4", {"role": "subject"}),
+                         ("clip 1 sound", "audio", "/v.wav",
+                          {"role": "bgm", "paired_video_path": "/v.mp4"})], [], "match", "", "")
+    assert got[1]["paired_video_path"] == "/v.mp4"
+
+
+def test_the_pointer_to_the_paired_clip_is_translated_like_any_other_path():
+    """FOUND BY RENDERING. The pointer was sent in ComfyUI's spelling while every other path was
+    translated, so on a split install the service could not open it, stopped treating the pair as a
+    pair, and numbered the soundtrack as a standalone <Audio 1> while H3 received it as
+    ref_video_audio_1. Two labels for one file, and only the report block showed it."""
+    got = C.plan_assets(
+        [("clip 1", "video", r"C:\ComfyUI\temp\v.mp4", {"role": "subject"}),
+         ("clip 1 sound", "audio", r"C:\ComfyUI\temp\v.wav",
+          {"role": "bgm", "paired_video_path": r"C:\ComfyUI\temp\v.mp4"})],
+        [], "match", r"C:\ComfyUI", "/mnt/c/ComfyUI")
+    assert got[0]["path"] == "/mnt/c/ComfyUI/temp/v.mp4"
+    assert got[1]["paired_video_path"] == got[0]["path"], \
+        "the pointer has to name the file by the same spelling the clip was sent under"
 
 
 def test_an_unknown_socket_is_refused_rather_than_sent_with_no_role():
     with pytest.raises(C.ServiceError):
-        C.plan_assets([("mystery", "image", "/a.png", {})], [], [], "match", "", "")
+        C.plan_assets([("mystery", "image", "/a.png", {})], [], "match", "", "")
 
 
-@pytest.mark.parametrize("opening,closing,refs,vids,expect", [
-    (False, False, 0, 0, "t2va"),
-    (True, False, 0, 0, "i2va"),
-    (False, True, 0, 0, "l2va"),
-    (True, True, 0, 0, "fl2va"),
-    (False, False, 2, 0, "ref2va"),
-    (False, False, 0, 1, "ref2va"),
+def test_grown_sockets_are_read_in_socket_order_and_not_in_dict_order():
+    """The order decides which picture becomes <Picture 1>. A prompt that serialised its inputs in
+    another order must not renumber them."""
+    got = C.ordered({"picture 3": "c", "picture 1": "a", "picture 2": "b"}, C.PICTURE_NAMES)
+    assert got == [("picture 1", "a"), ("picture 2", "b"), ("picture 3", "c")]
+
+
+def test_a_gap_in_the_grown_sockets_closes_up_rather_than_leaving_a_hole():
+    """Autogrow can leave socket 2 empty while 3 is filled. The brief numbers what arrived."""
+    assert C.ordered({"picture 1": "a", "picture 3": "c"}, C.PICTURE_NAMES) == \
+        [("picture 1", "a"), ("picture 3", "c")]
+    assert C.ordered({"picture 2": None, "picture 1": "a"}, C.PICTURE_NAMES) == [("picture 1", "a")]
+
+
+def test_an_unexpected_grown_socket_is_refused():
+    with pytest.raises(C.ServiceError):
+        C.ordered({"picture 99": "x"}, C.PICTURE_NAMES)
+
+
+@pytest.mark.parametrize("first,last,pics,clips,sounds,expect", [
+    (False, False, 0, 0, 0, "t2va"),
+    (True, False, 0, 0, 0, "i2va"),
+    (False, True, 0, 0, 0, "l2va"),
+    (True, True, 0, 0, 0, "fl2va"),
+    (False, False, 2, 0, 0, "ref2va"),
+    (False, False, 0, 1, 0, "ref2va"),
+    (False, False, 0, 0, 1, "ref2va"),
+    (False, False, 0, 0, 3, "ref2va"),
 ])
-def test_the_job_is_read_off_the_sockets(opening, closing, refs, vids, expect):
-    assert C.expected_mode(opening, closing, refs, vids) == expect
+def test_the_job_is_read_off_the_sockets(first, last, pics, clips, sounds, expect):
+    assert C.expected_mode(first, last, pics, clips, sounds) == expect
+
+
+def test_a_sound_on_its_own_is_a_reference_job_and_not_a_text_only_one():
+    """FOUND BY RENDERING. A graph with only a music clip declared t2va while the service correctly
+    wrote ref2va, so the node printed a warning saying the render would come out wrong. It would
+    not have. A warning that fires on a correct graph teaches people to ignore warnings.
+
+    The service's rule is not a heuristic: an attached video or audio forces ref2va because H3's
+    frame checkpoint cannot accept either.
+    """
+    from h3ir.mode import infer_mode
+    from h3ir.models import AssetKind, AssetRef, Brief, Role
+
+    declared = C.expected_mode(False, False, 0, 0, 1)
+    reported = infer_mode(Brief(intent="a score over an empty street", assets=[
+        AssetRef(kind=AssetKind.AUDIO, role=Role.BGM, sha256="a" * 64)])).mode.value
+    assert declared == reported == "ref2va"
+    assert C.check_mode(declared, reported) is None, "and therefore no warning"
 
 
 def test_a_disagreement_between_graph_and_brief_is_spelled_out():
@@ -117,7 +228,161 @@ def test_a_disagreement_between_graph_and_brief_is_spelled_out():
     assert C.check_mode("ref2va", "ref2va") is None
     msg = C.check_mode("ref2va", "i2va")
     assert msg and "ref2va" in msg and "i2va" in msg
-    assert "opening_frame" in msg and "reference_1" in msg, "name the sockets, not the concepts"
+    assert "first frame" in msg and "picture 1" in msg, "name the sockets as the canvas names them"
+
+
+# --------------------------------------------------------------------------- the bundles
+
+def test_a_transcript_with_no_clip_to_transcribe_is_an_error_and_not_a_no_op():
+    """`spoken_words` used to be dropped entirely unless the voice socket was connected, so it was a
+    field that could silently do nothing while being labelled `what the voice says`."""
+    with pytest.raises(C.ServiceError) as e:
+        C.sound_bundle(music=None, music_note="", effect=None, effect_note="", voice=None,
+                       voice_note="", voice_words="hello there")
+    msg = str(e.value)
+    assert "no voice is connected" in msg
+    assert "not dialogue for your video" in msg, "say what the field is, since it invites the wrong "\
+                                                "thing"
+
+
+def test_an_empty_sound_node_says_so_rather_than_changing_nothing():
+    with pytest.raises(C.ServiceError) as e:
+        C.sound_bundle(music=None, music_note="", effect=None, effect_note="", voice=None,
+                       voice_note="", voice_words="")
+    assert "nothing connected" in str(e.value)
+
+
+def test_each_sound_keeps_the_note_that_was_typed_beside_it():
+    got = C.sound_bundle(music="M", music_note=" slow synth ", effect=None, effect_note="ignored",
+                         voice="V", voice_note="hoarse", voice_words=" the words ")
+    assert got["music_note"] == "slow synth" and got["voice_note"] == "hoarse"
+    assert got["voice_words"] == "the words"
+    assert got["effect"] is None
+
+
+def test_a_clip_carries_the_role_its_job_means():
+    for job, role in C.FOOTAGE_JOBS.items():
+        assert C.footage_bundle("FRAMES", None, job)["role"] == role
+
+
+def test_a_clip_with_no_frames_names_the_loader_that_provides_them():
+    with pytest.raises(C.ServiceError) as e:
+        C.footage_bundle(None, None, "edit it")
+    assert "Load Video (Upload)" in str(e.value)
+
+
+def test_an_unknown_clip_job_is_refused():
+    with pytest.raises(C.ServiceError):
+        C.footage_bundle("FRAMES", None, "make it better")
+
+
+def test_a_service_address_with_no_scheme_is_refused_before_anything_is_requested():
+    with pytest.raises(C.ServiceError) as e:
+        C.setup_bundle(server="127.0.0.1:8420", reference_model=C.AUTO, frames_model=C.AUTO,
+                       text_encoder=C.AUTO, video_vae=C.AUTO, audio_vae=C.AUTO,
+                       weight_dtype="default", timeout_s=600, service_sees_comfy_at="")
+    assert "no scheme" in str(e.value) and C.DEFAULT_SERVER in str(e.value)
+
+
+def test_no_setup_node_means_nothing_is_pinned():
+    """A workflow with no Setup node has to run on a stranger's disk, which is only true if every
+    model is left to auto-resolution rather than to a filename this machine happened to have."""
+    d = C.setup_defaults()
+    assert d["server"] == C.DEFAULT_SERVER
+    for model in ("reference_model", "frames_model", "text_encoder", "video_vae", "audio_vae"):
+        assert d[model] == C.AUTO
+
+
+# --------------------------------------------------------------------------- the file is the format
+
+def test_both_builds_of_a_folder_land_next_to_each_other_in_one_list():
+    """`unet_gguf` is not a different place: ComfyUI-GGUF registers it over the same directories with
+    a `.gguf` filter, so a checkpoint's two builds sit side by side and the extension is the only
+    thing that tells them apart."""
+    got = C.merge_model_options(["minimax_h3_ref2va_pruned_int8.safetensors", "Krea2.safetensors"],
+                                ["minimax_h3_ref2va_Q4_K_M.gguf"])
+    assert got == ["Krea2.safetensors", "minimax_h3_ref2va_pruned_int8.safetensors",
+                   "minimax_h3_ref2va_Q4_K_M.gguf"]
+    assert got[0] == "Krea2.safetensors", "case-insensitive, or K sorts away from k"
+
+
+def test_a_file_listed_twice_is_offered_once():
+    assert C.merge_model_options(["a.gguf"], ["a.gguf"]) == ["a.gguf"]
+
+
+def test_the_loader_is_chosen_from_the_extension_per_file():
+    assert C.unet_loader_for("m_Q4_K_M.gguf") == "Unet Loader (GGUF)"
+    assert C.unet_loader_for("m.safetensors") == "UNETLoader"
+    assert C.clip_loader_for("q.GGUF") == "CLIPLoader (GGUF)", "case is not a format"
+    assert C.clip_loader_for("q.safetensors") == "CLIPLoader"
+
+
+def test_a_gguf_checkpoint_and_a_safetensors_encoder_are_both_legal():
+    """Separate files with separate loaders, so the combinations are all valid. One boolean would
+    either force both or leave the encoder undefined."""
+    assert C.is_gguf("weights.gguf") and not C.is_gguf("encoder.safetensors")
+
+
+# ------------------------------------------------- finding H3's files: controls against guessing
+
+def test_the_family_comes_before_a_loose_match():
+    """"video" alone matched an LTX VAE on a box that also had H3's. A plausible file from the wrong
+    family loads, and then the render is wrong for a reason nobody can see."""
+    got, _alt = C.resolve_model(
+        ["LTX23_video_vae_bf16.safetensors", "minimax_h3_video_vae_fp16.safetensors"],
+        C.VIDEO_VAE_PATTERNS, what="H3 picture VAE", looks_like="minimax_h3_video_vae")
+    assert got == "minimax_h3_video_vae_fp16.safetensors"
+
+
+def test_nothing_matching_raises_instead_of_taking_the_first_file_in_the_list():
+    """THE control. `options[0]` was the old fallback, and on a machine with no H3 weights it
+    pre-selected something from another model family that loads happily."""
+    with pytest.raises(C.ServiceError) as e:
+        C.resolve_model(["Krea2Turbo.safetensors", "ideogram4_fp8_scaled.safetensors"],
+                        C.REFERENCE_PATTERNS, what="H3 reference checkpoint",
+                        looks_like="minimax_h3_ref2va_....safetensors")
+    msg = str(e.value)
+    assert "minimax_h3_ref2va" in msg, "say what it was looking for"
+    assert "OpenH3-IR Setup" in msg, "name the node that fixes it"
+    assert "Krea2Turbo.safetensors" in msg, "say what it did find, or the message is unfalsifiable"
+
+
+def test_an_empty_install_says_the_list_was_empty_rather_than_listing_nothing():
+    with pytest.raises(C.ServiceError) as e:
+        C.resolve_model([], C.ENCODER_PATTERNS, what="H3 text encoder", looks_like="qwen3vl")
+    assert "list was empty" in str(e.value)
+
+
+def test_safetensors_wins_and_the_gguf_build_that_was_passed_over_is_named():
+    """Auto-resolution prefers the native path because it needs no third-party pack, and then says
+    the other build was there. The user learns the choice exists at the only moment it matters, and
+    no control had to exist for them to learn it."""
+    got, alt = C.resolve_model(
+        ["minimax_h3_ref2va_pruned_int8_convrot.safetensors", "minimax_h3_ref2va_Q4_K_M.gguf"],
+        C.REFERENCE_PATTERNS, what="H3 reference checkpoint", looks_like="x")
+    assert got == "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+    assert alt == "minimax_h3_ref2va_Q4_K_M.gguf", \
+        "a quantised build is named for its quantisation, so it never matches the precise pattern " \
+        "the safetensors build matched; searching them together would hide it"
+
+
+def test_a_gguf_build_is_used_when_it_is_the_only_one_installed():
+    got, alt = C.resolve_model(["minimax_h3_ref2va_Q4_K_M.gguf"], C.REFERENCE_PATTERNS,
+                               what="x", looks_like="y")
+    assert got == "minimax_h3_ref2va_Q4_K_M.gguf"
+    assert alt == "", "there is no alternative to report when it is the one that was taken"
+
+
+def test_the_alternative_note_says_which_file_and_where_to_pick_it():
+    note = C.gguf_alternative_note("reference weights", "minimax_h3_ref2va_Q4_K_M.gguf")
+    assert "minimax_h3_ref2va_Q4_K_M.gguf" in note and "OpenH3-IR Setup" in note
+
+
+def test_the_ignored_precision_note_says_why_it_was_ignored():
+    """A setting that silently does nothing is worse than one that is absent."""
+    note = " ".join(C.precision_ignored_note().split())
+    assert "carries its own quantisation" in note and "it was ignored" in note
+
 
 # --------------------------------------------------------------------------- path translation
 
@@ -156,7 +421,7 @@ def _fake(monkeypatch, *replies):
     monkeypatch.setattr(C, "_request", fake_request)
 
 
-def test_an_unreachable_service_names_the_command_that_starts_one(monkeypatch):
+def test_an_unreachable_service_names_the_command_and_the_node_that_point_elsewhere(monkeypatch):
     import urllib.error
 
     def boom(req, timeout=None):
@@ -169,9 +434,11 @@ def test_an_unreachable_service_names_the_command_that_starts_one(monkeypatch):
     assert "h3ir serve" in msg, "the message must tell them how to start the thing that is missing"
     assert "H3IR_LLM_URL" in msg
     assert "8420" in msg
+    assert "OpenH3-IR Setup" in msg, \
+        "the address left the compile node, so the discovery cost is paid by this message"
 
 
-def test_a_timeout_points_at_the_knob_that_fixes_it(monkeypatch):
+def test_a_timeout_points_at_the_node_that_holds_the_knob(monkeypatch):
     import socket as s
 
     def boom(req, timeout=None):
@@ -180,18 +447,19 @@ def test_a_timeout_points_at_the_knob_that_fixes_it(monkeypatch):
     monkeypatch.setattr(C.urllib.request, "urlopen", boom)
     with pytest.raises(C.ServiceError) as e:
         C._request("http://x", "/v1/briefs", payload={}, timeout=30)
-    assert "timeout_s" in str(e.value)
+    assert "OpenH3-IR Setup" in str(e.value) and "timeout" in str(e.value)
 
 
-def test_an_unreadable_reference_explains_the_two_path_views(monkeypatch):
+def test_an_unreadable_reference_names_the_field_that_fixes_it(monkeypatch):
     """The failure this project will actually generate: ComfyUI on Windows, service in WSL."""
     _fake(monkeypatch, (422, {"detail": {"code": "asset-missing",
                                         "message": "no such file: C:\\x\\ref.png"}}))
     with pytest.raises(C.ServiceError) as e:
         C.compile_brief("http://x", {"intent": "a"})
     msg = str(e.value)
-    assert "comfy_path_prefix" in msg and "service_path_prefix" in msg, \
-        "naming the widgets that fix it is the whole point of the message"
+    assert "ComfyUI as the service sees it" in msg, \
+        "naming the widget that fixes it is the whole point of the message"
+    assert "OpenH3-IR Setup" in msg, "and naming the node it lives on, since it is not on the canvas"
     assert "another machine" in msg, "the remote case has no fix and must be stated"
 
 
@@ -296,6 +564,128 @@ def test_render_fields_passes_through_exactly_what_the_service_said():
         {"prompt": "doc", "frames": 243, "canvas": [1920, 1088],
          "wiring": [{"sizing": "max"}, {"sizing": "max"}]})
     assert (prompt, w, h, length, sizing) == ("doc", 1920, 1088, 243, "max")
+
+
+# --------------------------------------------------------------------------- what the report says
+
+def test_the_length_the_user_asked_for_is_printed_when_snapping_moved_it():
+    """H3's grid is 17k+5 at 24 fps, so almost every request moves. Silently rendering 10.125 seconds
+    for a 10 second script is how a mismatch gets blamed on the model."""
+    notes = C.length_notes(10.0, 243)
+    assert any("10.0s, snapped up onto the frame grid" in n for n in notes)
+
+
+def test_a_length_inside_the_trained_band_says_nothing_extra():
+    assert C.length_notes(8.0, 192) == [], "8.0 is the one whole second on the grid"
+
+
+def test_a_long_render_is_reported_as_a_choice_rather_than_a_fault():
+    """The range opens past H3's trained band deliberately, so the report carries the fact the
+    surface no longer refuses."""
+    notes = C.length_notes(20.0, 481)
+    text = " ".join(" ".join(n.split()) for n in notes)
+    assert "past H3's trained band" in text and "362 frames, 15.083s" in text
+    assert "it is untested" in text and "VRAM and time" in text
+    assert "note" in notes[-1].split()[0], "a choice belongs in the note register, not as a warning"
+
+
+def test_a_short_render_is_reported_too():
+    notes = C.length_notes(1.0, 39)
+    text = " ".join(" ".join(n.split()) for n in notes)
+    assert "below H3's trained band" in text and "124 frames, 5.167s" in text
+
+
+def test_the_report_puts_the_users_own_socket_names_back_on_the_services_labels():
+    """The only defence against the plausible-and-wrong case, and it is checkable because both sides
+    hash the same bytes: the service's manifest, with the socket each file was plugged into."""
+    body = {"mode": "ref2va", "frames": 243, "canvas": [1344, 768], "render_hash": "f" * 64,
+            "wiring": [{"label": "<Picture 1>", "wiring": "ref_image_1", "sha256": "a" * 64,
+                        "sizing": "match", "retention": "fully_preserved"},
+                       {"label": "<Audio 1>", "wiring": "ref_video_audio_1", "sha256": "b" * 64}]}
+    text = C.report(body, server="http://x", sizing_conflict=False, asked_seconds=10.0,
+                    bindings={"a" * 64: ["picture 1"], "b" * 64: ["clip 1 sound"]})
+    assert "picture 1" in text and "<Picture 1>" in text and "ref_image_1" in text
+    assert "fully_preserved" in text
+    assert "clip 1 sound" in text and "<Audio 1>" in text
+
+
+def test_the_same_file_on_two_sockets_gets_both_of_its_labels():
+    """FOUND BY RENDERING. Files are content-addressed, so plugging one clip into two sockets sends
+    one file twice, and a hash-keyed binding map lost the first socket: one label printed as `?`. Both
+    sockets are real, and they take their labels in the order the service numbered them."""
+    written = [("sound effect", "audio", "/same.wav", {}),
+               ("voice to match", "audio", "/same.wav", {})]
+    bindings = C.bindings_by_content(written, lambda _p: "s" * 64)
+    assert bindings == {"s" * 64: ["sound effect", "voice to match"]}
+    body = {"mode": "ref2va", "frames": 192, "canvas": [1344, 768], "wiring": [
+        {"label": "<Audio 1>", "wiring": "ref_audio_1", "sha256": "s" * 64, "kind": "audio"},
+        {"label": "<Audio 2>", "wiring": "ref_audio_2", "sha256": "s" * 64, "kind": "audio"}]}
+    text = C.report(body, server="http://x", sizing_conflict=False, bindings=bindings)
+    assert "?" not in text, text
+    assert "sound effect" in text and "voice to match" in text
+    lines = [ln for ln in text.splitlines() if "<Audio" in ln]
+    assert "sound effect" in lines[0] and "voice to match" in lines[1], \
+        "in numbering order, so the first socket sent takes the first label"
+
+
+def test_a_socket_whose_file_never_reached_the_brief_is_still_reported_when_it_shares_a_hash():
+    """One of two sockets carrying the same file appearing in the brief, and the other not, is still
+    an attachment that was left out."""
+    body = {"mode": "ref2va", "frames": 192, "canvas": [1344, 768], "wiring": [
+        {"label": "<Audio 1>", "wiring": "ref_audio_1", "sha256": "s" * 64, "kind": "audio"}]}
+    text = " ".join(C.report(body, server="http://x", sizing_conflict=False,
+                             bindings={"s" * 64: ["music", "voice to match"]}).split())
+    assert "does not mention what you plugged into voice to match" in text
+
+
+def test_a_sound_is_not_labelled_with_a_sizing_it_has_no_use_for():
+    """The service's own manifest defaults `sizing` to match on every entry, so printing it for a
+    sound reads as a setting somebody chose about a thing that has no pixel area."""
+    body = {"mode": "ref2va", "frames": 141, "canvas": [1344, 768], "wiring": [
+        {"label": "<Audio 1>", "wiring": "ref_video_audio_1", "sha256": "b" * 64, "kind": "audio",
+         "sizing": "match"},
+        {"label": "<Video 1>", "wiring": "ref_video_1", "sha256": "a" * 64, "kind": "video",
+         "sizing": "match"}]}
+    text = C.report(body, server="http://x", sizing_conflict=False,
+                    bindings={"a" * 64: "clip 1", "b" * 64: "clip 1 sound"})
+    audio_line = next(ln for ln in text.splitlines() if "<Audio 1>" in ln)
+    assert "sizing" not in audio_line
+    assert "ref_video_audio_1" in audio_line, "the wiring it rides is the fact worth printing"
+
+
+def test_an_attachment_the_brief_left_out_is_reported_rather_than_dropped():
+    """A note on footage used to be discarded in silence. Anything that reached the service and did
+    not reach the brief is a fact the user cannot otherwise see."""
+    body = {"mode": "ref2va", "frames": 243, "canvas": [1344, 768], "wiring": []}
+    text = C.report(body, server="http://x", sizing_conflict=False,
+                    bindings={"c" * 64: ["sound effect"]})
+    assert "does not mention what you plugged into sound effect" in " ".join(text.split())
+
+
+def test_one_socket_name_is_not_read_as_five_sockets_called_m_u_s_i_c():
+    """A bare string is iterable, so `list("music")` is a list of letters. Accepting either shape
+    beats a report that names sockets that do not exist."""
+    body = {"mode": "ref2va", "frames": 243, "canvas": [1344, 768], "wiring": []}
+    text = " ".join(C.report(body, server="http://x", sizing_conflict=False,
+                             bindings={"c" * 64: "music"}).split())
+    assert "plugged into music," in text
+    assert "plugged into m," not in text
+
+
+def test_a_label_that_lands_on_no_socket_is_shown_as_unknown_rather_than_guessed():
+    body = {"mode": "ref2va", "frames": 243, "canvas": [1344, 768],
+            "wiring": [{"label": "<Picture 1>", "wiring": "ref_image_1", "sha256": "z" * 64}]}
+    text = C.report(body, server="http://x", sizing_conflict=False, bindings={})
+    assert "?" in text and "<Picture 1>" in text
+
+
+def test_every_report_line_lines_its_facts_up_in_one_column():
+    """It is read in a monospace box, and a wrapped sentence whose continuation starts under the
+    label reads as a new fact."""
+    got = C.line("note", "x " * 80)
+    first, second = got.splitlines()[0], got.splitlines()[1]
+    assert first.startswith("note") and len(first) <= 94
+    assert second.startswith(" " * 15) and second[15] != " "
 
 
 # ---------------------------------------------------- finding the path without asking anyone to type it
