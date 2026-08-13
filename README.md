@@ -18,6 +18,11 @@ and that you should call their hosted service for it.
 
 This is an open one, running on your own machine, with a dial on top of it.
 
+It talks to any OpenAI-compatible endpoint you already have up. Ollama, llama.cpp's server, LM Studio
+and vLLM all speak that API, so if you already run local models there is nothing new to stand up. The
+compiler needs no GPU of its own, because the weights live at the endpoint, and nothing here ever
+calls MiniMax.
+
 ## What you are looking at
 
 Both halves are the same request: *"she walks out onto the wet gantry in the rain and stops when she
@@ -72,9 +77,12 @@ Both briefs are committed too, so you can read exactly what the flag did:
 
 ## Install
 
-Python 3.10 or newer, and an OpenAI-compatible LLM endpoint with vision. vLLM, llama.cpp's server,
-LM Studio and Ollama all speak that API. Nothing here calls MiniMax, and the compiler itself wants no
-GPU: the endpoint is where the weights live.
+Python 3.10 or newer, and an OpenAI-compatible LLM endpoint. vLLM, llama.cpp's server, LM Studio and
+Ollama all speak that API. Nothing here calls MiniMax, and the compiler itself wants no GPU: the
+endpoint is where the weights live.
+
+Give that endpoint a vision-capable model if you want to pass reference images, since that is how the
+pictures get read. Text-only prompts never send an image, so they work against a plain chat model.
 
 Every brief on this page was written by Qwen3.6 27B, 4-bit, served by vLLM at 262K context on two RTX
 3090s, and H3 rendered the videos from those briefs. That is what the project is proven against, and
