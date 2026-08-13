@@ -400,7 +400,9 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
     if is_ref:
         pref = re.match(r"\s*\[([^\]]+)\]", summ)
         if not pref:
-            add("M1-task-prefix", "ERROR", "summary must open with a [task type] prefix")
+            add("M1-task-prefix", "ERROR",
+                "summary must open with a [task type] prefix, before any other text: "
+                "'[video editing] The target video is an edited version of <Video 1>. ...'")
         else:
             parts = [p.strip() for p in pref.group(1).split("+")]
             for p in parts:
@@ -409,16 +411,73 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             if len(parts) != len(set(parts)):
                 add("M3-task-dupe", "ERROR", "task type repeated in the prefix")
             if "video editing" in parts:
+                # The mandated sentence, allowed to CONTINUE. A full stop is what ref-en.txt 3
+                # prints, and demanding it byte-exact rejected "The target video is an edited
+                # version of <Video 1>, where the vehicle is changed to a white car" -- the same
+                # mandated clause, carrying on into the specifics. The model then obeyed the finding
+                # by prepending the sentence it had already written, and the brief shipped with it
+                # twice. So a comma continuation satisfies the rule and the doubling is what gets
+                # caught.
+                opening = re.compile(r"The target video is an edited version of <Video \d+>\s*[.,]")
+                hits = opening.findall(summ)
                 if not used["Video"]:
                     add("M5-editing-without-video", "ERROR",
                         "'video editing' claimed but no <Video N> is referenced")
-                elif not re.search(r"The target video is an edited version of <Video \d+>\.", summ):
+                elif not hits:
+                    # "must open with" was read literally by the model it was sent to, which moved
+                    # the sentence in FRONT of the task-type prefix and tripped M1 on the next
+                    # round -- one finding manufacturing the next. The spec's own words are "For
+                    # video-editing tasks, begin the summary AFTER the task-type prefix with", so
+                    # the message now says that and shows the whole shape.
                     add("M6-editing-opening", "ERROR",
-                        "video-editing summaries must open with "
-                        "'The target video is an edited version of <Video N>.'")
-            if "audio reuse" in parts and not used["Audio"]:
-                add("M7-audio-reuse-without-audio", "ERROR",
-                    "'audio reuse' claimed but no <Audio N> is referenced")
+                        "a video-editing summary must contain the mandated opening sentence "
+                        "immediately after the task-type prefix, and keep the prefix first: "
+                        "'[video editing] The target video is an edited version of <Video 1>. ...' "
+                        "(ref-en.txt 3: begin the summary after the task-type prefix with that "
+                        "sentence; it may continue with a comma instead of stopping). Add the "
+                        "sentence, do not move the prefix")
+                elif len(hits) > 1:
+                    add("M10-editing-opening-repeated", "ERROR",
+                        f"the mandated editing sentence appears {len(hits)} times in the summary; "
+                        "it is the opening, so it belongs once. Keep the first one and let the rest "
+                        "of the paragraph say what the edit actually changes")
+            # A second prefix mid-summary, which is how the fix loop's own output came back once the
+            # message above was ambiguous: the model prepended the mandated sentence with a fresh
+            # prefix and left its original one in place. Every existing rule passed -- M1 reads the
+            # opening and M3 reads inside one bracket group -- and the doubled prefix shipped.
+            # Counted only when a later bracket group is entirely task types, so '[Shot 1]' and any
+            # other bracketed aside is untouched.
+            for m in list(re.finditer(r"\[([^\]]+)\]", summ))[1:]:
+                bits = [p.strip() for p in m.group(1).split("+")]
+                if bits and all(b in TASK_TYPES for b in bits):
+                    add("M9-task-prefix-repeated", "ERROR",
+                        f"the task-type prefix appears again inside the summary ({m.group(0)!r}); "
+                        "it belongs once, at the very start, and the rest of the paragraph is prose")
+                    break
+            # Both audio task types claim a relationship to an attached audio SIGNAL, so both are
+            # unsupported when nothing is attached. The message says what to write instead, and
+            # that is the fix rather than a nicety: this rule fired on 6 of 7 video-edit briefs and
+            # survived both correction rounds every time, because naming the defect without naming
+            # the remedy leaves the model to guess -- and the thing it is asserting ("the original
+            # audio is preserved") is what a video edit MEANS, so it re-asserted it.
+            #
+            # The reason it is still wrong: ref-en.txt 2.5 says an ordinary reference video does
+            # not create an <Audio N> merely because the file contains sound. The runtime takes a
+            # video's soundtrack as a separate wired input, so with none wired the signal never
+            # reaches the model and the target's audio is generated. Claiming reuse promises
+            # something the render cannot do.
+            for claimed, rule in (("audio reuse", "M7-audio-reuse-without-audio"),
+                                  ("audio reference", "M8-audio-reference-without-audio")):
+                if claimed in parts and not used["Audio"]:
+                    add(rule, "ERROR",
+                        f"the summary claims {claimed!r} and no <Audio N> is attached. A source "
+                        "video's soundtrack is not an <Audio N> unless it is wired as one "
+                        "(ref-en.txt 2.5), so nothing here can be "
+                        + ("reused" if claimed == "audio reuse" else "referenced")
+                        + " and this render generates the target video's audio instead. Delete "
+                        f"{claimed!r} from the task-type prefix, and say what the audio should "
+                        "sound like in overall_soundscape rather than claiming the original is "
+                        + ("reused." if claimed == "audio reuse" else "referenced."))
 
     # ---------------------------------------------------------------- retention
     if is_ref:

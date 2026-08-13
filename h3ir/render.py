@@ -202,7 +202,12 @@ def render_summary(plan: Plan) -> str:
     edit = next((m.label for m in plan.manifest if m.role is Role.EDIT_SOURCE), None)
     if edit:
         required = f"The target video is an edited version of {edit}."
-        if not body.startswith(required):
+        # `startswith(required)` matched only the full-stop form, so a body already opening "The
+        # target video is an edited version of <Video 1>, where the vehicle changes ..." had the
+        # sentence prepended anyway and shipped it twice. The mandated clause is what matters and it
+        # is allowed to continue; ref-en.txt 3 prints the stop, and a comma is the same sentence
+        # carrying on.
+        if not re.match(rf"The target video is an edited version of {re.escape(edit)}\s*[.,]", body):
             body = f"{required} {body}"
     return f"{prefix} {body}"
 

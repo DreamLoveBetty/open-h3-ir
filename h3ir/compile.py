@@ -202,11 +202,18 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                 scope = _scope(brief, draft_plan)
                 chosen_compose = compose_prompt or (
                     "compose.v2.txt" if mode is Mode.REF2VA else "compose_base.v1.txt")
+                # The wiring's own facts travel with the ask: which mode's document shape this is,
+                # what the pictures are, and what the audio roles settle. Each of those was a
+                # question the model had to guess at, and each guess had a rule waiting for it.
+                pic_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
+                                  if m.kind.value == "image")
                 written = compose_brief(backend, brief, draft_plan.subjects, cards,
                                        draft_plan.target, labels,
                                        prompt_name=chosen_compose, seed=seed,
                                        thinking=thinking_planning, images=imgs,
-                                       style=style, licence=licence, scope=scope, omit=omit)
+                                       style=style, licence=licence, scope=scope,
+                                       mode=mode, task_types=tuple(draft_plan.task_types),
+                                       picture_roles=pic_roles, omit=omit)
                 timings["compose_s"] = round(time.time() - t, 2)
 
                 from .prose import _definition_lines

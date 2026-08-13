@@ -164,36 +164,140 @@ def _reference_governed(licence) -> list[str]:
     return [a for a, who in licence.governs.items() if who == "reference" and a != MEDIUM]
 
 
+def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...]) -> str:
+    """What the wiring settles about the two audio task types, stated as a fact in the ask.
+
+    The renderer already owns this: "a prose stage that could write the prefix could invent a
+    relationship the pack does not contain" (render.render_summary). The write-first inversion
+    handed the prefix back to the model without handing over the fact it needed, and the model
+    then claimed `audio reuse` on 6 of 7 video edits -- reasonably, because keeping the original
+    audio is what editing a video means. It is still a claim the render cannot deliver: a
+    soundtrack is a separately wired input, and with none wired the signal never reaches the model.
+
+    The audio half only is pinned, because the wiring decides it completely. Whether reusing a
+    person out of a reference video also counts as `reference generation` is a judgement about how
+    the reference is used, and ref-en.txt 3 phrases it as one ("normally", "only when"), so the
+    model keeps it.
+    """
+    audio = [lb for lb in labels if lb.startswith("<Audio")]
+    if not audio:
+        return ("No <Audio N> is attached, so the task-type prefix may NOT contain `audio reuse` "
+                "or `audio reference`: both claim a relationship to an attached audio signal and "
+                "there is none. If the request implies the source video's own sound, note that a "
+                "video's soundtrack is a separately wired input and none is wired here — this "
+                "render GENERATES the target video's audio. So do not write that the original "
+                "audio is preserved, reused or carried over anywhere in the brief; decide what the "
+                "video should sound like and put it in overall_soundscape.")
+    declared = [t for t in task_types if t.startswith("audio ")]
+    return (f"Attached audio: {', '.join(audio)}. The audio relationship their roles declare is "
+            f"{' + '.join(declared) or 'reference generation only'}, and that is the audio task "
+            "type to use; do not claim the other one. The retention marker has to agree with it: "
+            "`fully_copy` and `partially_copy` are copies, `reference` and `weak_reference` are "
+            "not, and a line that says one while the prefix says the other contradicts itself.")
+
+
+def base_mode_label_facts(subjects: list[SubjectPlan], labels: tuple[str, ...],
+                          picture_roles: tuple[tuple[str, str], ...]) -> str:
+    """What the attached pictures ARE, for the three-section formats.
+
+    A base mode has no `subject_definitions` section, so the facts cannot be definition lines.
+    Handing `<Subject 1> is the black car in <Picture 1>` to this format hands the model a sentence
+    with nowhere to live: it wrote the label, no section defined it, and L2 rejected the brief. i2va
+    degraded on exactly that pair 3 times in 7 -- `<Subject 1>` used and defined inline, and
+    `<Picture 1>` never cited at all, so L4 fired too.
+
+    The system prompt for these modes already says subject labels do not exist here. The ask was
+    contradicting it with a fact sheet in the other format's shape, and a fact sheet that looks like
+    output gets used as output.
+    """
+    role_says = {
+        "frame_anchor_first": "IS the target video's first frame, at 0.00 seconds, and belongs to "
+                              "[Shot 1]",
+        "frame_anchor_last": "IS the target video's last frame and belongs to the final shot; it "
+                             "does not belong to [Shot 1]",
+    }
+    by_label = dict(picture_roles)
+    lines: list[str] = []
+    for label in labels:
+        shows = [s for s in subjects if label in s.sources]
+        what = "; ".join(s.descriptor + (f" ({', '.join(s.attributes[:6])})" if s.attributes else "")
+                         for s in shows)
+        line = f"{label} {role_says.get(by_label.get(label, ''), 'is a reference for this video')}"
+        lines.append(line + (f". It shows {what}." if what else "."))
+    return "\n".join(lines) + (
+        "\n\nThese are the only labels this request has. This format has NO subject_definitions "
+        "section, so `<Subject N>` does not exist in it and writing one is a defect rather than a "
+        "style choice: name people, objects and places in plain prose, the same way every time they "
+        "appear. Cite each picture above by its label in the shot it belongs to — an attached "
+        "picture the brief never names is still wired into the render and still costs rows on every "
+        "sampling step.")
+
+
+def reference_picture_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
+    """The one thing a full-reference brief must not say about its pictures.
+
+    ref2va conditions on a picture as content: what it shows is redrawn into the requested scene,
+    and there is no mechanism that pins an exact frame -- which is why an anchor role arriving on
+    this route is downgraded to a subject reference with a finding (compile.X10). The system prompt
+    is the spec, and the spec teaches the standalone `<Picture N>` line for a picture that IS a
+    frame, so the model wrote "is the first frame of [Shot 1]" on a single-image ref2va brief 3
+    times in 7 and R10 rejected the whole brief. Nothing had told it which case it was in.
+
+    Emitted only when no attached picture actually carries an anchor role, so the statement is read
+    off the wiring rather than asserted.
+    """
+    if any(role.startswith("frame_anchor") for _, role in picture_roles):
+        return ""
+    return ("None of the pictures here is a frame of the target video. This checkpoint takes them "
+            "as content references — what they show is redrawn into the scene the request asks for "
+            "— and it has no exact-frame mechanism, so never write that a picture `is the first "
+            "frame of` or `is the last frame of` a shot and never claim `keyframe completion`: both "
+            "promise an exactness this render cannot deliver. Cite the picture inside the definition "
+            "of what it shows, or as the composition, storyboard or style anchor it is.")
+
+
 def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   cards: dict[str, AssetCard], target, labels: tuple[str, ...], *,
                   prompt_name: str = "compose.v2.txt", seed: int | None = None,
                   thinking: bool | None = None, images: list[str] | None = None,
                   style=None, licence=None, scope=None,
+                  mode: Mode | None = None,
+                  task_types: tuple[str, ...] = (),
+                  picture_roles: tuple[tuple[str, str], ...] = (),
                   omit: tuple[str, ...] = ()) -> str:
     """One call. The model writes all six sections and decides everything creative in them.
 
     The facts are handed over and the craft is not. Labels, duration and dialogue are stated as
     givens; shot count, cuts, camera, performance and the sound shape are the model's.
     """
-    # Handed over as the definition LINES, in the exact form the spec wants. An earlier version
-    # listed them as "LABEL = description" and the model copied that shape straight into
-    # subject_definitions, which then failed the "<Subject N> is ..." rule. A fact sheet that looks
-    # like output gets used as output.
-    label_facts = "\n".join(_definition_lines(subjects, cards, labels))
-    # Every label in the wiring, not only the subject ones. `_definition_lines` walks `subjects`, so an
-    # <Audio N> or a bare <Video N> was never named in the ask at all -- and a model cannot bind a
-    # label it was not told exists. A video-plus-audio brief came back with the audio referenced
-    # nowhere, which is an asset the app would wire in against text that never mentions it.
-    unnamed = [lb for lb in labels if lb not in label_facts]
-    if unnamed:
-        label_facts += ("\n" if label_facts else "") + (
-            "Also attached and NOT yet described above: " + ", ".join(unnamed) + ". Every one of these "
-            "is wired into the render and must be referenced in the brief — define what it is, and "
-            "give it a retention line. An attached reference the text never mentions is dead weight "
-            "the model still pays for.\n"
-            "For any <Audio N> in that list: you have NOT heard it and cannot describe what it "
-            "contains. Say only what its note above states, and never claim it came from a <Video N> "
-            "— the wiring decides that and you have not been told it.")
+    # `None` keeps the six-section shape, which is what every caller predating the split passes.
+    is_ref = mode is None or mode is Mode.REF2VA
+    if not is_ref:
+        label_facts = base_mode_label_facts(subjects, labels, picture_roles) if labels else ""
+    else:
+        # Handed over as the definition LINES, in the exact form the spec wants. An earlier version
+        # listed them as "LABEL = description" and the model copied that shape straight into
+        # subject_definitions, which then failed the "<Subject N> is ..." rule. A fact sheet that
+        # looks like output gets used as output.
+        label_facts = "\n".join(_definition_lines(subjects, cards, labels))
+        # Every label in the wiring, not only the subject ones. `_definition_lines` walks `subjects`,
+        # so an <Audio N> or a bare <Video N> was never named in the ask at all -- and a model cannot
+        # bind a label it was not told exists. A video-plus-audio brief came back with the audio
+        # referenced nowhere, which is an asset the app would wire in against text that never
+        # mentions it.
+        unnamed = [lb for lb in labels if lb not in label_facts]
+        if unnamed:
+            label_facts += ("\n" if label_facts else "") + (
+                "Also attached and NOT yet described above: " + ", ".join(unnamed) + ". Every one of these "
+                "is wired into the render and must be referenced in the brief — define what it is, and "
+                "give it a retention line. An attached reference the text never mentions is dead weight "
+                "the model still pays for.\n"
+                "For any <Audio N> in that list: you have NOT heard it and cannot describe what it "
+                "contains. Say only what its note above states, and never claim it came from a <Video N> "
+                "— the wiring decides that and you have not been told it.")
+        pics = reference_picture_facts(picture_roles)
+        if pics and any(lb.startswith("<Picture") for lb in labels):
+            label_facts += ("\n" if label_facts else "") + pics
     dlg = "\n".join(f'- "{d.text}" ({d.language})'
                       + (f", spoken by {d.speaker_hint}" if d.speaker_hint else "")
                       + (" as an off-screen voiceover" if d.voiceover else "")
@@ -207,16 +311,20 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # Three cases, and the middle one used to be told the wrong thing. A base mode with an
         # image attached has a real <Picture 1> and no definition lines at all, so keying the message
         # off the definition lines announced "nothing is attached" over a live reference.
-        + (f"Facts you must honour — these are the definition lines, use or reword them:\n"
-           f"{label_facts}\n\n" if label_facts.strip() else
+        + (("Facts you must honour — these are the definition lines, use or reword them:\n"
+            if is_ref else "Facts you must honour — what each attached picture is:\n")
+           + f"{label_facts}\n\n" if label_facts.strip() else
            (f"The only labels that exist for this request are {', '.join(labels)}, and they carry no "
             "separate definitions. Everything else — people, objects, the place — is named in plain "
             "prose, the same way every time it appears.\n\n" if labels else
             "There are NO labels for this request: nothing is attached, so no `<Subject N>`, "
             "`<Picture N>`, `<Video N>` or `<Audio N>` exists. Name people and objects in plain "
             "prose and name them the same way every time.\n\n"))
-        + 
+        +
         f"Dialogue:\n{dlg}\n"
+        # Scoped to the full-reference shape: a base mode has no task-type prefix to constrain, and
+        # cannot have an <Audio N> at all -- any audio attachment routes to ref2va (mode.py 12.2#1).
+        + (f"\n{audio_task_facts(labels, task_types)}\n" if is_ref else "")
     )
     # Ablation lever. Each name drops one block from the ask, so the question "does this block earn
     # its place" is a measurement instead of a belief. Production passes nothing.

@@ -95,6 +95,15 @@ def _mut_editing_without_video(t: str) -> str:
     return t.replace("[reference generation + audio reference]", "[video editing]", 1)
 
 
+def _mut_duplicate_prefix(t: str) -> str:
+    """The task-type prefix twice, which is what a correction round produced on live output: the
+    model prepended the mandated editing sentence with a fresh prefix and kept its original one.
+    M1 reads only the opening and M3 reads only inside one bracket group, so it shipped clean."""
+    return t.replace("[reference generation + audio reference] The target video",
+                     "[reference generation + audio reference] The target video is described "
+                     "below. [reference generation + audio reference] The target video", 1)
+
+
 def _mut_out_of_order(t: str) -> str:
     """Swap two sections so the mandated order is broken."""
     i, j = t.index("summary:"), t.index("retention_analysis:")
@@ -122,6 +131,7 @@ MUTANTS: list[tuple[str, callable, str]] = [
     ("curly apostrophe in structural text", _mut_smart_quote, "H1-unicode-hazard"),
     ("invented task type", _mut_task_type, "M2-task-type"),
     ("'video editing' with no edit source", _mut_editing_without_video, "M6-editing-opening"),
+    ("the task-type prefix written twice", _mut_duplicate_prefix, "M9-task-prefix-repeated"),
     ("sections out of order", _mut_out_of_order, "S2-section-order"),
     ("wrapped in a code fence", _mut_code_fence, "S4-code-fence"),
     ("<D> instead of <d>", _mut_dialogue_marker_case, "D5-marker-not-byte-exact"),
