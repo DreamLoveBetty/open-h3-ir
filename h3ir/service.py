@@ -152,8 +152,19 @@ def _to_brief(b: BriefIn) -> Brief:
             role = {"image": Role.SUBJECT, "video": Role.EDIT_SOURCE,
                     "audio": Role.BGM}[a.kind]
         paired = None
-        if a.paired_video_path and Path(a.paired_video_path).exists():
-            paired = sha256_file(a.paired_video_path)
+        if a.paired_video_path:
+            # Refused rather than ignored. A soundtrack whose pointer cannot be resolved gets
+            # numbered as a standalone <Audio j>, while the runtime that receives it as
+            # ref_video_audio_k emits its label immediately before the video's: two different
+            # labels for one file, and a caller who asked for the pairing would never learn it did
+            # not happen. `asset-missing` is also the one code callers retry a path translation on.
+            paired_path = Path(a.paired_video_path)
+            if not paired_path.exists():
+                raise HTTPException(422, detail={
+                    "code": "asset-missing",
+                    "message": f"no such file: {a.paired_video_path} (given as the video this "
+                               "soundtrack is paired with)"})
+            paired = sha256_file(paired_path)
         assets.append(AssetRef(kind=AssetKind(a.kind), role=role, sha256=sha256_file(p),
                                path=str(p), note=a.note, sizing=a.sizing, seconds=a.seconds,
                                frames=a.frames, provenance=a.provenance,
@@ -383,8 +394,15 @@ def get_prompt(brief_id: str) -> dict[str, Any]:
     if not rec:
         raise HTTPException(404, detail={"code": "unknown-brief", "message": brief_id})
     doc: IRDocument = rec["doc"]
+    # The retention marker the brief asserts about each attachment, keyed by the label it was
+    # asserted about. A caller that wired the files cannot read this off the prose it did not write,
+    # and it is the difference between "the file arrived" and "the file arrived as the thing you
+    # meant": an attachment the brief marks weak_reference is not going to be reproduced.
+    marker = {src: s.retention for s in doc.plan.subjects for src in s.sources}
     return {"prompt": doc.prompt, "mode": doc.mode.value,
             "wiring": [{"label": m.label, "wiring": m.wiring, "sha256": m.sha256,
-                        "sizing": m.sizing} for m in doc.plan.manifest],
+                        "kind": m.kind.value, "sizing": m.sizing,
+                        "retention": marker.get(m.label, "")}
+                       for m in doc.plan.manifest],
             "frames": doc.plan.target.frames, "canvas": list(doc.plan.target.canvas),
             "render_hash": doc.render_hash()}

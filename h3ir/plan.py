@@ -137,10 +137,19 @@ def build_manifest(brief: Brief, target: Target) -> list[ManifestEntry]:
                                  seconds=v.seconds, frames=v.frames, rows=v_rows))
         slot += 1
 
+    # The LABEL ordinal counts every audio, paired ones included, because that is the order the
+    # runtime emits them in. The WIRING name does not: `ref_audios` and `ref_video_audios` are two
+    # separate autogrow lists on the node, each numbered from 1, and the runtime takes a standalone
+    # audio's ordinal from its position in its own list rather than from its key. So a brief with one
+    # paired soundtrack and one score published `<Audio 2>` -- correct -- riding `ref_audio_2`, which
+    # is a socket that does not exist: the score goes in `ref_audio_1`. The label was right and the
+    # instruction for wiring it up was wrong, which is worse than either alone.
+    n_standalone = 0
     for a in standalone:
         n_aud += 1
+        n_standalone += 1
         out.append(ManifestEntry(slot=slot, label=f"<Audio {n_aud}>", kind=a.kind,
-                                 sha256=a.sha256, wiring=f"ref_audio_{n_aud}", role=a.role,
+                                 sha256=a.sha256, wiring=f"ref_audio_{n_standalone}", role=a.role,
                                  seconds=a.seconds,
                                  characterisation=(a.note or "").strip()))
         slot += 1
