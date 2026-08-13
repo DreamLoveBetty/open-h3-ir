@@ -77,6 +77,19 @@ def render_subject_definitions(plan: Plan) -> str:
             lines.append(f"{m.label} is the source video for the target video edit.")
         elif m.kind is AssetKind.VIDEO and m.role is Role.CONTINUATION_SOURCE:
             lines.append(f"{m.label} is the source video the target video continues from.")
+        elif m.kind is AssetKind.IMAGE and m.role is Role.STORYBOARD:
+            # A storyboard is a shot-planning anchor, not a reusable visible unit, so
+            # `build_subjects` skips it and it gets no <Subject N> -- which left a storyboard-only
+            # ref2va brief with an EMPTY subject_definitions and an uncited <Picture N>: two
+            # ERRORs in the deterministic draft, so the compile raised and the caller got a bare
+            # 500. ref-en.txt 2.2 gives this label its own line and its own form ("<Picture 3> is
+            # a storyboard reference for [Shot 1] and [Shot 2], defining their viewpoint, subject
+            # placement, and shot order"), which is the one case where a standalone <Picture N>
+            # line is what the spec asks for. It earns that line by having a retention entry, so
+            # L5 is satisfied by render_retention below rather than by an exemption here.
+            shots = " and ".join(f"[Shot {s.n}]" for s in plan.shots) or "[Shot 1]"
+            lines.append(f"{m.label} is a storyboard reference for {shots}, defining their "
+                         "viewpoint, subject placement, and shot order.")
     for m in plan.manifest:
         if m.kind is not AssetKind.AUDIO:
             continue
@@ -128,6 +141,13 @@ def render_retention(plan: Plan) -> str:
         elif m.kind is AssetKind.IMAGE and m.role is Role.FRAME_ANCHOR_LAST:
             lines.append(f"{m.label} ([Shot {plan.shots[-1].n}] last frame): fully_preserved - "
                          "the final composition and subject placement are reached.")
+        elif m.kind is AssetKind.IMAGE and m.role is Role.STORYBOARD:
+            # The entry that earns the standalone definition line above. `weak_reference` is what
+            # the role's own marker table says (plan._ROLE_MARKER) and what the marker means here:
+            # the planning information is followed, the drawing itself is not preserved.
+            lines.append(f"{m.label} (storyboard reference): weak_reference - the viewpoint, "
+                         "subject placement and shot order are followed, while the drawing itself "
+                         "is not reproduced.")
     for label, marker, note in audio_relations(plan):
         lines.append(f"{label}: {marker} - {note}.")
     return "\n".join(lines)

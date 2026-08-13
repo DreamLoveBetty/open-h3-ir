@@ -160,9 +160,19 @@ _ROLE_MARKER = {
     Role.STYLE: "weak_reference",
     Role.STORYBOARD: "weak_reference",
 }
+# `sfx` is `reference`, not a copy, and that was a real 500 rather than a nicety. R22
+# (validate.py) forbids a copy marker for the two roles whose definition IS "a property is
+# referenced, not the signal", so the renderer wrote `partially_copy`, the validator rejected it,
+# and because this is the deterministic draft the compiler raised instead of falling back. Every
+# other place the codebase states what `sfx` means agrees with the rule: the card summary is "a
+# sound-effect reference" (analyse.py), the retention note is "its sound texture is referenced"
+# (audio_relations, below) and the definition line is "a sound-texture reference for the target
+# video" (render.py). ref-en.txt 4.2 defines `reference` as "only timbre, rhythm, music style,
+# dialogue content, or sound texture is referenced", which is that sentence exactly. So the marker
+# table was the wrong side of the contradiction.
 _AUDIO_MARKER = {
     Role.BGM: "partially_copy",
-    Role.SFX: "partially_copy",
+    Role.SFX: "reference",
     Role.VOICE_TIMBRE: "reference",
 }
 
@@ -425,13 +435,17 @@ def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
     if Role.CONTINUATION_SOURCE in roles:
         types.append("video continuation")
     if has_audio:
-        # Editing a source video while its original audio stays audible is reuse; a timbre
-        # or style reference is not a copy.
-        if any(m.role in (Role.BGM, Role.SFX) for m in manifest) and Role.EDIT_SOURCE in roles:
+        # The task type has to agree with the retention marker the same role produces, because
+        # ref-en.txt 3 defines the two against each other: `audio reuse` is "the same audio signal
+        # is reused in full or in part" and `audio reference` is "the signal is not copied
+        # directly; only its music style, timbre, dialogue or lyric content, sound-effect texture,
+        # beat, or continuity is referenced". `bgm` copies part of the signal, so it is reuse; a
+        # timbre reference and a sound-effect texture are named in that second sentence, so they
+        # are not. A summary claiming reuse over a retention line saying `reference` is the
+        # document contradicting itself, and no rule catches that shape.
+        if any(m.role is Role.BGM for m in manifest):
             types.append("audio reuse")
-        elif any(m.role in (Role.BGM, Role.SFX) for m in manifest):
-            types.append("audio reuse")
-        if any(m.role is Role.VOICE_TIMBRE for m in manifest):
+        if any(m.role in (Role.VOICE_TIMBRE, Role.SFX) for m in manifest):
             types.append("audio reference")
     out: list[str] = []
     for t in types:
