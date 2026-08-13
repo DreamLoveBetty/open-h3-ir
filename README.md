@@ -1,8 +1,14 @@
-# open-h3-ir
+# OpenH3-IR
+
+Open-source local Context-IR for MiniMax H3.
 
 [![tests](https://github.com/Ruashots/open-h3-ir/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruashots/open-h3-ir/actions/workflows/ci.yml)
 
 **Type one sentence. Get better video out of MiniMax H3.**
+
+![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
+
+*Same model, same seed, same reference image. The only difference is the words.*
 
 H3 does not want a prompt. It wants a structured document: named sections in a fixed order, every
 subject bound to a numbered picture label, cut times that land on a legal frame grid. MiniMax
@@ -12,9 +18,7 @@ and that you should call their hosted service for it.
 
 This is an open one, running on your own machine, with a dial on top of it.
 
-## Same model, same seed, same reference image. The only difference is the words.
-
-![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
+## What you are looking at
 
 Both halves are the same request: *"she walks out onto the wet gantry in the rain and stops when she
 sees the city below."* On the left that sentence goes to H3 as typed. On the right it goes through

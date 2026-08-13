@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # what you actually type. Stated in the README install block so nobody has to discover it.
 name = "open-h3-ir"
 version = "0.1.0"
-description = "An open implementation of MiniMax H3's closed Context-IR stage. One sentence in, a validated H3 video brief out, with the asset wiring it is true for."
+description = "Open-source local implementation of MiniMax H3 Context-IR. Turn simple prompts into structured, validated H3 video briefs."
 readme = "README.md"
 requires-python = ">=3.10"
 # SPDX expression, not the old `License :: OSI Approved ::` classifier. PEP 639 replaced that
