@@ -19,7 +19,7 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from .analyse import analyse_all
+from .analyse import analyse_all, measure_assets
 from .backend import Backend, BackendError
 from .config import get_config
 from . import creativity
@@ -129,6 +129,10 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         # Before the backend and before analysis: a request with more references than the runtime
         # can wire cannot be improved by looking at them, and analysis is the expensive stage.
         check_capacity(brief)
+        # What the files themselves say, before anything reads a guess instead: pixel dimensions
+        # (the row cost and the aspect check are computed from them) and a declared kind that does
+        # not match the bytes.
+        measure_assets(brief.assets)
         backend.require_available()
 
         t = time.time()

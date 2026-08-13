@@ -231,6 +231,131 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
         analyzer_version=ANALYZER_VERSION, model_id="none (typed metadata only)")
 
 
+# --------------------------------------------------------------------------- what a file IS
+
+def sniff_container(path: str | Path) -> str | None:
+    """"image", "video", "audio", or None when the bytes are not one this recognises.
+
+    POSITIVE identification only, and that asymmetry is the whole design. A file this cannot place
+    gets None and goes through untouched, because refusing a format the vision model might handle
+    fine would trade a bad error message for lost work. What it is used for is the one case that is
+    decidable: the caller declared `kind: image` and the bytes are an MP4 container, which reached
+    the vision endpoint and came back as `HTTP 400: Failed to load image: cannot identify image
+    file <_io.BytesIO object>` -- the inference server's internals, forwarded to the caller as a 502,
+    for what is a wrong field in their request.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+    except OSError:
+        return None
+    if head[:8] == b"\x89PNG\r\n\x1a\n" or head[:2] == b"\xff\xd8" or head[:6] in (
+            b"GIF87a", b"GIF89a") or head[:2] == b"BM":
+        return "image"
+    if head[:4] == b"RIFF":
+        # WEBP, WAVE and AVI all open with RIFF; the type is the four bytes after the size.
+        return {b"WEBP": "image", b"WAVE": "audio", b"AVI ": "video"}.get(head[8:12])
+    if head[4:8] == b"ftyp":
+        # ISO base media: mp4, m4v, mov, and also m4a, which is audio in the same container. The
+        # brand cannot be trusted to separate them (an m4a can carry `isom`), so this reports
+        # "video" and callers use it only where that ambiguity does not matter.
+        return "video"
+    if head[:4] == b"\x1a\x45\xdf\xa3":
+        return "video"          # matroska / webm
+    if head[:3] == b"ID3" or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return "audio"
+    if head[:4] in (b"fLaC", b"OggS"):
+        return "audio"
+    return None
+
+
+def image_size(path: str | Path) -> tuple[int, int] | None:
+    """Pixel dimensions from the file header. None for anything not recognised.
+
+    `AssetRef.px` was populated in exactly one place in the codebase -- the eval suite -- so the
+    service, the CLI and the node all left it None. Everything downstream that reads it therefore
+    took its fallback branch: `plan.rows_for_image` reported the canvas figure for every reference
+    regardless of its real size, so `sizing: "max"` and `sizing: "match"` published the SAME row
+    cost for the same plate (1008 for a 1400x933 image, where max sizing is really 1276 and a
+    4000x3000 plate would be 5440), and `mode.infer_mode`'s aspect-mismatch downgrade could never
+    fire because it reads `a.px`.
+
+    Header parsing rather than a dependency: this package's runtime deps are fastapi, uvicorn,
+    pydantic, httpx and tiktoken, and one number per image does not earn Pillow. Formats a
+    generative pipeline actually produces: PNG, JPEG, WebP (all three chunk types), GIF, BMP.
+    """
+    p = Path(path)
+    try:
+        with open(p, "rb") as fh:
+            head = fh.read(32)
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w = int.from_bytes(head[16:20], "big")
+                h = int.from_bytes(head[20:24], "big")
+                return (w, h) if w and h else None
+            if head[:6] in (b"GIF87a", b"GIF89a"):
+                return (int.from_bytes(head[6:8], "little"),
+                        int.from_bytes(head[8:10], "little"))
+            if head[:2] == b"BM":
+                fh.seek(18)
+                b = fh.read(8)
+                return (abs(int.from_bytes(b[0:4], "little", signed=True)),
+                        abs(int.from_bytes(b[4:8], "little", signed=True)))
+            if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+                return _webp_size(fh, head)
+            if head[:2] == b"\xff\xd8":
+                return _jpeg_size(fh)
+    except OSError:
+        return None
+    return None
+
+
+def _webp_size(fh, head: bytes) -> tuple[int, int] | None:
+    chunk = head[12:16]
+    if chunk == b"VP8X":
+        fh.seek(24)
+        b = fh.read(6)
+        return (int.from_bytes(b[0:3], "little") + 1, int.from_bytes(b[3:6], "little") + 1)
+    if chunk == b"VP8 ":
+        fh.seek(26)
+        b = fh.read(4)
+        return (int.from_bytes(b[0:2], "little") & 0x3FFF,
+                int.from_bytes(b[2:4], "little") & 0x3FFF)
+    if chunk == b"VP8L":
+        fh.seek(21)
+        bits = int.from_bytes(fh.read(4), "little")
+        return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+    return None
+
+
+def _jpeg_size(fh) -> tuple[int, int] | None:
+    """Walk the segment markers to the first SOF. The dimensions are not at a fixed offset in a
+    JPEG, so there is no shortcut that is correct for progressive and EXIF-carrying files."""
+    fh.seek(2)
+    while True:
+        b = fh.read(1)
+        while b and b != b"\xff":
+            b = fh.read(1)
+        marker = fh.read(1)
+        while marker == b"\xff":
+            marker = fh.read(1)
+        if not marker:
+            return None
+        m = marker[0]
+        if m in (0xD8, 0xD9) or 0xD0 <= m <= 0xD7:
+            continue
+        size = fh.read(2)
+        if len(size) < 2:
+            return None
+        length = int.from_bytes(size, "big")
+        # SOF0..SOF15, excluding DHT (C4), JPG (C8) and DAC (CC), which are not frame headers.
+        if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+            body = fh.read(5)
+            if len(body) < 5:
+                return None
+            return (int.from_bytes(body[3:5], "big"), int.from_bytes(body[1:3], "big"))
+        fh.seek(length - 2, 1)
+
+
 class AssetAnalysisError(RuntimeError):
     """An asset could not be analysed. Raised rather than returning an empty card: a card that
     describes nothing is indistinguishable from a card describing something dull, and the compiler
@@ -369,6 +494,31 @@ def _name_the_asset(e: AssetAnalysisError, ref: AssetRef) -> AssetAnalysisError:
     if isinstance(e, ToolMissing) or ref.kind is not AssetKind.VIDEO:
         return type(e)(msg + ".")
     return type(e)(msg + ". If it is a still image, attach it with kind: image instead.")
+
+
+def measure_assets(refs: list[AssetRef]) -> None:
+    """Fill in what the file itself says, and refuse a file whose bytes are the wrong kind.
+
+    Two things the layer was guessing at when it did not have to. Dimensions decide the row cost
+    this service publishes and the aspect check mode inference makes, and nothing populated them.
+    The declared kind decides which analyser runs, and an mp4 declared `image` used to travel all
+    the way to the vision endpoint and come back as its internal error, forwarded as a 502.
+
+    In place, because the AssetRef is this layer's own intake object and every stage after intake
+    reads `px` off it. Never overwrites a value the caller supplied.
+    """
+    for ref in refs:
+        if not ref.path:
+            continue
+        sniffed = sniff_container(ref.path)
+        if sniffed and sniffed != ref.kind.value and {sniffed, ref.kind.value} <= {"image", "video"}:
+            raise AssetAnalysisError(
+                f"{Path(ref.path).name} was attached as kind: {ref.kind.value}, and its bytes are "
+                f"a {sniffed} file. Attach it with kind: {sniffed}. Sending it to the analyser as "
+                f"{ref.kind.value} fails inside the inference server, which reports it in its own "
+                "terms rather than yours")
+        if ref.kind is AssetKind.IMAGE and ref.px is None:
+            ref.px = image_size(ref.path)
 
 
 def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = True,
