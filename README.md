@@ -232,23 +232,36 @@ Routes and request shapes: [`docs/calling-the-api.md`](docs/calling-the-api.md).
 
 ## Or stay in ComfyUI
 
-If you already render H3 in ComfyUI, there is a node for it in [`comfyui/`](comfyui/README.md). Copy
-that one folder into `custom_nodes`, restart, and it replaces the text box, the resolution picker, the
-frame-count arithmetic, the model and VAE and encoder loaders, and the H3 conditioning node. One node
-in, model and conditioning and latent out. The same render that took twenty seven nodes takes sixteen.
+If you already render H3 in ComfyUI, there are nodes for it in [`comfyui/`](comfyui/README.md). Copy
+that one folder into `custom_nodes`, restart, and **H3 from a Sentence** replaces the text box, the
+resolution picker, the frame-count arithmetic, the model and VAE and encoder loaders, and the H3
+conditioning node. One node in, model and conditioning and latent out. The same render that took
+twenty seven nodes takes sixteen.
 
-The socket you plug a picture into is the job. `opening_frame` means it is the first frame of the
-video; `reference_1` means it is something the shot should contain. Those use different H3 weights, and
-the node picks between them for you. It also means the brief and the graph cannot disagree, which they
-could before: left to guess, the compiler can decide your picture is an opening frame while the graph
-feeds it as a reference, and the render comes out wrong with nothing on screen to say why.
+At rest it is one sentence and five widgets. Everything that is not about this shot lives on a node
+you only add when you need it: **OpenH3-IR Setup** for the service address and the model files,
+**OpenH3-IR Footage** for a reference clip, **OpenH3-IR Sound** for reference music, an effect or a
+voice. With no Setup node in the graph the five H3 files are found by name, so a workflow you share
+runs on someone else's disk.
+
+The socket you plug a picture into is the job. `first frame` means it is the first frame of the video;
+`picture 1` means it is something the shot should contain. Those use different H3 weights, and the node
+picks between them for you. It also means the brief and the graph cannot disagree, which they could
+before: left to guess, the compiler can decide your picture is an opening frame while the graph feeds
+it as a reference, and the render comes out wrong with nothing on screen to say why. The `report`
+output prints the binding it ended up with, one line per attachment, matched by the file's own hash:
+
+```
+attachments
+  picture 1      ->  <Picture 1>  ref_image_1  fully_preserved  sizing=match  sha256=fb43ce35675a
+```
 
 There is one duration field, because H3's frame grid has to be snapped once and used for both the
-brief and the latent. Sounds and video attach through their own sockets too, each named for what it
-is: music, a sound effect, a voice to match, footage to edit, footage to carry on from. The reference
-list grows a socket at a time up to H3's nine, and nothing asks you to type a filesystem path.
+brief and the latent. It opens wider than H3's trained band and the report says when a render left it.
+A `.gguf` checkpoint or encoder loads through ComfyUI-GGUF and a `.safetensors` one loads natively,
+decided per file from the extension, with no toggle to disagree with the filename.
 
-The node adds no packages to ComfyUI's Python. It speaks HTTP to `h3ir serve` with the standard
+The nodes add no packages to ComfyUI's Python. They speak HTTP to `h3ir serve` with the standard
 library, so the compiler can never break a ComfyUI install and the service can sit on another machine.
 
 ## What it will not do

@@ -165,6 +165,43 @@ because my first draft of that rule fired on "he gives an okay sign".
 | `comfy.py` | ComfyUI over HTTP; graph prompt substitution that refuses to guess. |
 | `acceptance.py` | the five-arm comparison, built without touching the GPU. |
 
+The ComfyUI pack in `comfyui/` is three files and imports nothing from `h3ir`:
+
+| file | what it owns |
+|---|---|
+| `h3ir_client.py` | the service protocol, the option lists, the report. No ComfyUI, no torch, no third-party packages. |
+| `media.py` | tensors and mappings to files on disk, content-addressed. No ComfyUI at module scope. |
+| `nodes.py` | the five schemas, the model loaders and the socket-to-file mapping. This is the only file that needs a canvas. |
+
+## ComfyUI frontend mechanics, measured rather than assumed
+
+Four of these cost a rebuild of the node surface to discover. They are recorded so nobody re-derives
+them, and each has a test in `tests/test_comfyui_schema.py` that fails if the surface stops respecting
+it. Measured against `comfyui_frontend_package 1.48.7` and `comfy_api/latest/_io.py`.
+
+- **`advanced` is not a hide.** The per-node expander exists only under Nodes 2.0 and is gated on the
+  setting `Comfy.Node.AlwaysShowAdvancedWidgets`. Under the legacy canvas renderer it does nothing at
+  all. Design as if every input is visible; treat the collapse as a bonus.
+- **A label and its value share one row of about 38 characters.** So a long display name makes both
+  unreadable. This is why every label in the pack is one or two words.
+- **A multiline STRING with no placeholder prints its own input id** on the canvas:
+  `addMultilineWidget` calls `createMultilineInputElement(default, placeholder || name)`. On a
+  multiline widget the placeholder is the only label there is, so it has to be the label and the
+  example at once and its first line has to stand alone under truncation. A **single-line** STRING's
+  placeholder is not drawn at all on the legacy canvas, so there the display name carries everything.
+- **Autogrow socket labels come from `names[ordinal]`, or from `prefix + ordinal` zero-based, and they
+  overwrite whatever the template declared.** `autogrowOrdinalToName` returns
+  `{name, display_name: s}` and `s` wins. So `TemplatePrefix` gives you `reference_0` on the canvas no
+  matter what the template's `display_name` says, and `TemplateNames` is the only way to get one-based
+  readable labels. Ids with a space in them (`pictures.picture 1`) round-trip through the API format
+  and the workflow save without trouble; verified by running one.
+- **The frontend already supports several inputs per grown item** (`inputSpecs` is a list and
+  `ensureWidgetForInput` runs when its length is not 1), but the Python side takes a single template
+  input and `_expand_schema_for_dynamic` reads only the first. That is the mechanical reason the
+  picture notes are one positional block and a clip's role lives on a satellite node, not a preference.
+- **An AUDIO is a Mapping, not necessarily a dict.** Load Video (Upload) hands out a `LazyAudioMap`
+  that shells out to ffmpeg on first key access. `isinstance(audio, dict)` refuses it.
+
 ## Known gaps, honestly
 
 - **The committed sample media cannot be rebuilt.** The two comparisons in `docs/media/` were
