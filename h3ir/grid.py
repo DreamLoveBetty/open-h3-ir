@@ -28,6 +28,25 @@ CANVAS_MULTIPLE = 32
 BASE_SHORT_EDGE = 768
 MAX_PIXELS = 768 * 1344
 
+# How many of each kind the runtime can actually take, read off its socket templates in
+# `MiniMaxH3ReferenceToVideo` (`nodes_minimax_h3.py`): `ref_image_` min=0 max=9, `ref_video_` max=3,
+# `ref_video_audio_` max=3, `ref_audio_` max=3. A tenth image has no socket to arrive on, so a
+# manifest that publishes `<Picture 10>` / `ref_image_10` describes a graph nobody can wire.
+#
+# There is deliberately NO total-file ceiling here. The service used to publish `total_files: 12`,
+# which the runtime does not impose: 9 images plus 3 videos plus their 3 soundtracks plus 3
+# standalone audios all have sockets. A limit that refuses a legal call is worse than no limit, and
+# the runtime outranks the note.
+MAX_REF_IMAGES = 9
+MAX_REF_VIDEOS = 3
+MAX_REF_AUDIOS = 3
+MAX_REF_VIDEO_SOUNDTRACKS = 3
+
+# `execute` truncates a reference video to the target's frame count (`frames[:frame_count]`) and
+# raises outright below 5 frames ("MiniMax H3 reference videos need at least 5 frames"). Both are
+# silent from here unless this layer says so.
+MIN_REF_VIDEO_FRAMES = 5
+
 
 def align_frame_count(n: int) -> int:
     """Snap up to the model's 17k+5 grid."""

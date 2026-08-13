@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from .analyse import AssetAnalysisError, ToolMissing, sha256_file
 from .backend import Backend, BackendError, BackendUnavailable
-from .compile import compile_brief, refine
+from .compile import OverCapacity, compile_brief, refine
 from .config import get_config
 from .mode import needs_clarification
 from .models import AssetKind, AssetRef, Brief, DialogueLine, IRDocument, Mode, Role
@@ -235,7 +235,8 @@ def list_loras() -> dict[str, Any]:
 
 @app.get("/v1/capabilities")
 def capabilities() -> dict[str, Any]:
-    from .grid import legal_frames
+    from .grid import (MAX_REF_AUDIOS, MAX_REF_IMAGES, MAX_REF_VIDEOS,
+                       MAX_REF_VIDEO_SOUNDTRACKS, legal_frames)
     return {
         # Durations must be frame-ALIGNED (n % 17 == 5 at 24 fps). The band below is where the
         # model was trained; longer renders work, they just take longer, so it is reported as
@@ -245,7 +246,16 @@ def capabilities() -> dict[str, Any]:
         "longer_durations": "supported if frame-aligned; slower, not rejected",
         "canvas": "any multiple of 32; 768 short edge is the default, larger renders fine",
         "aspects": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
-        "max_assets": {"images": 9, "videos": 3, "audios": 3, "total_files": 12},
+        # The runtime's own socket maxima, and now enforced: over capacity is a 422 refusal naming
+        # what to drop rather than a manifest that publishes a socket the graph does not have.
+        # `total_files` used to say 12, which the runtime does not impose -- 9 images, 3 videos,
+        # each video's soundtrack and 3 standalone audios all have sockets, so 18 attachments are
+        # legal and a 12-file ceiling would have refused legal work.
+        "max_assets": {"images": MAX_REF_IMAGES, "videos": MAX_REF_VIDEOS,
+                       "audios": MAX_REF_AUDIOS,
+                       "video_soundtracks": MAX_REF_VIDEO_SOUNDTRACKS,
+                       "total_files": (MAX_REF_IMAGES + MAX_REF_VIDEOS + MAX_REF_AUDIOS
+                                       + MAX_REF_VIDEO_SOUNDTRACKS)},
         "dialogue_languages": ["Arabic", "Chinese", "English", "French", "German", "Italian",
                                "Japanese", "Korean", "Portuguese", "Russian", "Spanish"],
         "output": {"short_edge": 768, "fps": 24, "audio": "32 kHz stereo"},
@@ -261,6 +271,10 @@ def create_brief(body: BriefIn) -> JSONResponse:
         doc = compile_brief(brief, opts=opts, seed=body.seed,
                             thinking_prose=(body.effort == "max"),
                             transcripts=dict(body.transcripts))
+    except OverCapacity as e:
+        # The refusal design.md 12 committed to and nothing implemented. 422 rather than a silently
+        # truncated manifest: which reference matters is the caller's call, not ours.
+        raise HTTPException(422, detail={"code": "over-capacity", "message": str(e)}) from e
     except BackendUnavailable as e:
         raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
     except BackendError as e:
@@ -306,6 +320,8 @@ def refine_brief(brief_id: str, body: RefineIn) -> JSONResponse:
     try:
         doc, amended, changed = refine(rec["brief"], body.change,
                                        opts=ProfileOptions(name=get_config().profile))
+    except OverCapacity as e:
+        raise HTTPException(422, detail={"code": "over-capacity", "message": str(e)}) from e
     except BackendUnavailable as e:
         raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
     except BackendError as e:

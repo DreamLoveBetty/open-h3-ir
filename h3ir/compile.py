@@ -49,6 +49,56 @@ class CompilerInvariantError(RuntimeError):
     """The deterministic path produced something invalid. Ours to fix, never shipped."""
 
 
+class OverCapacity(ValueError):
+    """More references than the runtime has sockets for. The caller's to fix, so it says what to drop.
+
+    design.md 12: "Refusals, not guesses, for over-capacity requests ... The layer returns a clear,
+    actionable error naming what to drop. Silently dropping a reference the user attached is the
+    worst available outcome." Nothing enforced it: ten images compiled to `ready` with a manifest
+    publishing `<Picture 10>` and wiring `ref_image_10`, a socket that does not exist.
+    """
+
+
+def check_capacity(brief: Brief) -> None:
+    """Refuse before analysing, because analysis is the expensive stage and this needs no cards.
+
+    The numbers are the runtime's own socket maxima (grid.py cites them). There is no total-file
+    check: the runtime imposes none, and refusing a legal call is worse than not checking.
+    """
+    from .grid import (MAX_REF_AUDIOS, MAX_REF_IMAGES, MAX_REF_VIDEOS,
+                       MAX_REF_VIDEO_SOUNDTRACKS, MIN_REF_VIDEO_FRAMES)
+
+    videos = [a for a in brief.assets if a.kind is AssetKind.VIDEO]
+    audios = [a for a in brief.assets if a.kind is AssetKind.AUDIO]
+    paired = [a for a in audios if a.paired_video_sha256]
+    counts = [
+        ("image", len([a for a in brief.assets if a.kind is AssetKind.IMAGE]), MAX_REF_IMAGES,
+         "ref_image_"),
+        ("video", len(videos), MAX_REF_VIDEOS, "ref_video_"),
+        ("standalone audio", len(audios) - len(paired), MAX_REF_AUDIOS, "ref_audio_"),
+        ("paired soundtrack", len(paired), MAX_REF_VIDEO_SOUNDTRACKS, "ref_video_audio_"),
+    ]
+    over = [(kind, n, cap, prefix) for kind, n, cap, prefix in counts if n > cap]
+    if over:
+        raise OverCapacity("; ".join(
+            f"{n} {kind} references attached and H3 takes at most {cap}: the runtime has sockets "
+            f"{prefix}1 to {prefix}{cap}, so drop "
+            + (f"{n - cap} {kind} references" if n - cap > 1 else f"one {kind} reference")
+            for kind, n, cap, prefix in over)
+            + ". Nothing is dropped for you: which reference matters is yours to decide")
+
+    # The runtime raises outright below five frames ("MiniMax H3 reference videos need at least 5
+    # frames"), so a brief built on one is a brief that cannot render. Checked against what the
+    # caller declared, which is all this layer has before ffprobe runs.
+    for a in videos:
+        n = a.frames if a.frames else (int(a.seconds * 24) if a.seconds else None)
+        if n is not None and n < MIN_REF_VIDEO_FRAMES:
+            raise OverCapacity(
+                f"the reference video {a.path or a.sha256[:12]} is {n} frame(s) long and H3 needs "
+                f"at least {MIN_REF_VIDEO_FRAMES} (about 0.2s at 24 fps); the runtime refuses it "
+                "outright, so there is nothing to compile against")
+
+
 def compile_brief(brief: Brief, *, backend: Backend | None = None,
                   opts: ProfileOptions | None = None, seed: int | None = None,
                   use_cache: bool = True, thinking_prose: bool = False, llm: bool = True,
@@ -76,6 +126,9 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         thinking_planning = cfg.llm.default_thinking
 
     try:
+        # Before the backend and before analysis: a request with more references than the runtime
+        # can wire cannot be improved by looking at them, and analysis is the expensive stage.
+        check_capacity(brief)
         backend.require_available()
 
         t = time.time()
@@ -631,6 +684,26 @@ def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
                 f"{m.label} is wired as {m.role.value} but nothing describes {want}. Nothing here "
                 "can hear, and the IR text is the only channel the encoder has for that audio, so "
                 "an uncharacterised reference contributes nothing. Supply it as the asset's note."))
+
+    # A reference video longer than the target is TRUNCATED by the runtime, not summarised:
+    # `execute` does `frames[:frame_count]` and then walks back to the 17k+5 grid. So the brief can
+    # be written about the whole clip while only its opening conditions the render, and nothing said
+    # so. WARN: the caller fixes it by lengthening the target or trimming the clip, and which of
+    # those they want is theirs.
+    for m in plan.manifest:
+        if m.kind is not AssetKind.VIDEO:
+            continue
+        n = m.frames if m.frames else (int(m.seconds * 24) if m.seconds else None)
+        if n is None or n <= plan.target.frames:
+            continue
+        findings.append(Finding(
+            "X17-reference-video-truncated", "WARN",
+            f"{m.label} is {n} frames ({n / 24:.2f}s) and the target is {plan.target.frames} "
+            f"frames ({plan.target.effective_seconds:.2f}s). The runtime truncates a reference "
+            f"video to the target's length, so only the first {plan.target.effective_seconds:.2f}s "
+            "of it reaches the model and the rest of the brief is written about footage the render "
+            "never sees. Lengthen the target, or trim the clip so the part you mean is the part "
+            "that arrives."))
 
     findings += validate(result.prompt, ctx)
     for note in result.notes:
