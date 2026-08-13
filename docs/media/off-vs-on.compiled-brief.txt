@@ -1,0 +1,21 @@
+subject_definitions:
+<Subject 1> is the woman in <Picture 1>, with short dark hair with shaved sides and a small top knot, dark complexion, black tactical jacket with shoulder straps and buckles, black t-shirt, black cargo trousers, black lace-up combat boots, slender build.
+<Picture 1> is the source image defining the appearance of <Subject 1> and the visual style of the target video.
+
+summary:
+[reference generation] The target video shows <Subject 1> walking out onto a wet gantry in the rain and stopping when she sees the city below. The video uses a cinematic, high-contrast style with realistic 3D character design.
+
+retention_analysis:
+<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - the woman's appearance, including her short dark hair with shaved sides, small top knot, dark complexion, black tactical jacket, and combat boots, is retained.
+<Picture 1> (visual style and character reference): fully_preserved - the realistic 3D character design, cinematic lighting, and high-contrast palette are retained.
+
+detailed_description:
+The target video is in a cinematic, high-contrast style with realistic 3D character design, featuring cool blue tones and wet, reflective surfaces.
+[Shot 1] A medium-long tracking shot follows <Subject 1> from behind as she walks out onto a wet, metallic gantry in the rain. The camera tracks slowly with small amplitude, keeping her centered in the frame as she moves away from the viewer. Rain falls steadily, creating ripples on the wet metal floor and reflecting the dim ambient light. <Subject 1>, wearing her black tactical jacket, black cargo trousers, and black lace-up combat boots, walks with a steady, purposeful stride. Her short dark hair with shaved sides and small top knot is visible, and her slender build is apparent beneath the tactical gear. The environment is dark and industrial, with metal railings on either side of the gantry and distant city lights blurred in the background. The sound of rain hitting metal and her boots stepping on the wet surface is audible.
+[Shot 2] At 00:05.000, the shot cuts to a close-up of <Subject 1> from a slightly low angle as she stops at the edge of the gantry. The camera is static, focusing on her face and upper body. She looks down, her expression shifting to one of quiet contemplation as she sees the city below. Raindrops cling to her face and hair. The background shows a blurred, sprawling cityscape with scattered lights, suggesting a significant drop. She remains still, taking in the view. The rain continues to fall, and the sound of the city hums faintly in the distance.
+
+overall_soundscape:
+The sound of steady rain falling on metal and wet surfaces continues throughout the video, accompanied by the rhythmic sound of <Subject 1>'s boots stepping on the gantry in the first shot. A faint, distant city hum is audible in the second shot.
+
+non_diegetic_music:
+A subtle, atmospheric score with slow, sustained synth pads and a low, resonant bass tone enters at 00:02.000, building gently to emphasize the mood of contemplation. The music swells slightly as <Subject 1> stops and looks down, then fades out gradually towards the end of the video.

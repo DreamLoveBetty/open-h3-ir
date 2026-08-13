@@ -304,7 +304,10 @@ class Backend:
             # Temperature demonstrably breaks that tie where the seed does not, because at
             # temperature 0 the seed changes nothing. So attempt 0 keeps the caller's temperature,
             # which keeps the common path reproducible and cacheable, and only the retries move.
-            temp = temperature if attempt == 0 else temperature + 0.4 * attempt
+            # The first retry jumps straight to 0.7, which is the value measured to break
+            # this tie, rather than creeping up from 0.4 and wasting an attempt at a
+            # temperature that was never shown to work. Later attempts climb from there.
+            temp = temperature if attempt == 0 else max(0.7, temperature + 0.3) + 0.3 * (attempt - 1)
             reply = self.chat(msgs, thinking=thinking, response_format=rf,
                               max_tokens=max_tokens, temperature=temp, seed=seed,
                               retries=1)

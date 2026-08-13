@@ -1,60 +1,162 @@
-# OpenH3-IR
+# open-h3-ir
 
-**Write one sentence. Get a complete, structurally verified MiniMax H3 video brief, plus the exact
-asset wiring that brief is true for.**
+[![tests](https://github.com/Ruashots/open-h3-ir/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruashots/open-h3-ir/actions/workflows/ci.yml)
 
-MiniMax open-sourced H3 and kept its Context-IR stage closed, while saying that stage is "critical
-to the quality of the final output". This is an open implementation of it, running locally.
+**Type one sentence. Get better video out of MiniMax H3.**
 
-H3 does not want a prompt. It wants a document: named sections in a fixed order, subjects bound to
-numbered reference labels, cut times that land on a legal frame grid, retention markers that agree
-with what you actually attached. Get one field wrong and the model does not error. It quietly
-renders something adjacent to what you asked for. This compiles the document and checks every field
-a machine can check.
+H3 does not want a prompt. It wants a structured document: named sections in a fixed order, every
+subject bound to a numbered picture label, cut times that land on a legal frame grid. MiniMax
+open-sourced the model but not the stage that writes that document, saying only that
+["H3-Context-IR is critical to the quality of the final output"](https://huggingface.co/MiniMaxAI/MiniMax-H3)
+and that you should call their hosted service for it.
 
-```console
-$ h3ir compile "a woman steps off a night bus in the rain and realises she has left her bag on board" --seconds 10
+This is an open one, running on your own machine, with a dial on top of it.
 
-mode=t2va  tokens=275  timings={'analyse_s': 0.0, 'mode_s': 0.0, 'draft_s': 0.14, 'compose_s': 4.42}
-==========================================================================
-t2va IR
-  -> PASS (with warnings)   0 error(s), 1 warning(s), 1 info
-==========================================================================
-  [WARN] H3-token-band: prompt is 275 tokens, outside the 350-1400 band (published hosted IRs are 537-919); distribution drift, not a cost problem
-  [INFO] A5-music-no-tempo: non_diegetic_music should state instrumentation, tempo and dynamics
+## Same model, same seed, same reference image. The only difference is the words.
 
-integrated_multimodal_description: [Shot 1] Live-action, cinematic, a medium shot frames a woman in
-a dark trench coat stepping off a city bus onto a rain-slicked sidewalk at night. The camera holds a
-static shot as she closes the bus door behind her, the heavy thud of the mechanism sealing the
-scene. She takes two steps forward, her heels clicking on the wet pavement, then stops abruptly. […]
-The camera pushes in with small amplitude at slow speed toward her face as she turns her head
-sharply back toward the open bus doors, her eyes widening in realization.
+![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
 
-overall_soundscape: Heavy rain hammers against the bus roof and the pavement, creating a steady,
-loud white noise. The bus engine idles with a low, diesel rumble that cuts out abruptly as the doors
-close. Wet footsteps click on the concrete, followed by the rustle of her coat and the sharp intake
-of her breath as she realizes her mistake.
+Both halves are the same request: *"she walks out onto the wet gantry in the rain and stops when she
+sees the city below."* On the left that sentence goes to H3 as typed. On the right it goes through
+`h3ir` first. Nothing else moved between the two runs: same reference image, same seed, same 10.125
+seconds, same settings.
 
-non_diegetic_music: A sparse, melancholic piano melody begins softly under the rain, swelling
-slightly as she turns back to the bus, then fading to silence as the video ends.
+The right side does what the sentence asked. She walks out along the gantry, and at five seconds it
+cuts to a low-angle close-up of her looking down at the city.
+
+The left side is a good-looking clip that never arrives. It cannot decide where she is going, walking
+toward camera for the first half and away from it in the second, and the railing and the skyline
+behind her change into a different place along the way. She never looks down, so the beat the whole
+sentence was built around is missing. Nothing on that side is badly rendered, and that is the point:
+the model was fine, the words were the problem.
+
+**Watch it with sound:** [off-vs-on.mp4](docs/media/off-vs-on.mp4). H3 generates the rain and the
+score in the same pass as the picture. GitHub cannot play a repo-hosted mp4 inline, so the animation
+above is the silent version and the file is the one with audio. The brief that produced the right
+half is committed beside it:
+[`off-vs-on.compiled-brief.txt`](docs/media/off-vs-on.compiled-brief.txt).
+
+## And a dial, for how far it goes
+
+![the same request at restrained on the left and extreme on the right](docs/media/dial-restrained-vs-extreme.webp)
+
+*"the car rolls into the showroom and stops under the lights."* Run twice, changing one flag.
+
+`restrained` keeps the whole showroom in a steady wide and cuts once. `extreme` opens on an extreme
+wide, cuts to a fast push-in on the front wheel, lands on a locked hero shot, and scores the whole
+thing. Two shots became three, and the camera stopped being polite.
+
+```bash
+h3ir compile "the car rolls into the showroom and stops under the lights" --creativity extreme
 ```
 
-A real run, elided at `[…]`. The warning is worth reading rather than dismissing: it is not an
-error, it is the compiler saying this brief came out shorter than the hosted service's own output
-usually does. It reports that instead of padding the prose to hit a number.
+Four positions: `restrained`, `balanced` (the default), `bold`, `extreme`. What changes is how much
+the writer may introduce that you never asked for, and an explicit "no dialogue" at `extreme` still
+means no dialogue.
 
-You need one thing running: an OpenAI-compatible LLM endpoint with a vision tower. vLLM,
-llama.cpp's server, LM Studio and Ollama all work. Nothing here calls MiniMax, and nothing here
-needs a GPU of its own.
+**Watch it with sound:** [dial-restrained-vs-extreme.mp4](docs/media/dial-restrained-vs-extreme.mp4).
+Both briefs are committed, so you can read exactly what the flag did:
+[restrained](docs/media/dial-restrained.brief.txt) and
+[extreme](docs/media/dial-extreme.brief.txt). Both reference images are committed too, so you can
+run the whole thing yourself:
 
-## Why this exists
+```bash
+h3ir compile "the car rolls into the showroom and stops under the lights" \
+  --image docs/media/plate-car.jpg:"the car" \
+  --image docs/media/plate-showroom.jpg:"the empty showroom floor it drives across" \
+  --seconds 10 --creativity extreme
+```
 
-I needed it for another application I am building, and hand-writing H3 briefs for that application
-was the slowest and least reliable part of the job. So the shape of this is opinionated: it does
-what that application needs, correctly, rather than being a general framework for prompt
-construction. **Expect a few changes as I go.** If you build on it, pin a commit.
+## Install
 
-## Ask for ten seconds, get 10.125
+Python 3.10 or newer, and an OpenAI-compatible LLM endpoint with vision. vLLM, llama.cpp's server,
+LM Studio and Ollama all speak it. Nothing here calls MiniMax, and nothing here needs a GPU of its
+own.
+
+```bash
+git clone https://github.com/Ruashots/open-h3-ir.git
+cd open-h3-ir
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+
+export H3IR_LLM_URL=http://your-endpoint:8000/v1   # the only setting most people change
+h3ir doctor
+```
+
+The project is called `open-h3-ir`. The command and the import are both `h3ir`, which is what you
+type.
+
+`h3ir doctor` tells you what is actually answering before you debug anything else: the endpoint, the
+model it serves, its context length, whether ComfyUI is reachable and which H3 nodes it has, and a
+tokenizer self-test. Two commands need nothing running at all if you want to poke at it before
+configuring anything: `h3ir controls` and `h3ir budget --seconds 10`.
+
+Every setting, with the reason for each default, is in [`.env.example`](.env.example). This is
+version 0.1.0 and it still moves, so pin a commit if you build on it.
+
+## Your first brief
+
+This is the exact command that produced the right-hand side of the first video, and `ref1.png` ships
+in the repo, so you can run it now.
+
+```console
+$ h3ir compile "she walks out onto the wet gantry in the rain and stops when she sees the city below" \
+    --seconds 10 --image h3ir/golden/assets/ref1.png
+
+mode=ref2va  tokens=708  timings={…}
+==========================================================================
+ref2va IR
+  -> PASS (with warnings)   0 error(s), 2 warning(s), 0 info
+==========================================================================
+  [WARN] P2-too-short: detailed_description is 265 words; spec guidance 350-500, official example 336
+  [WARN] R15-wardrobe-not-restated: [Shot 2] names the subject but not the garments (jacket, shirt,
+         t-shirt); wardrobe drifts between shots when it is only stated once
+
+subject_definitions:
+<Subject 1> is the woman in <Picture 1>, with short dark hair with shaved sides and a small top knot,
+dark complexion, black tactical jacket with shoulder straps and buckles, black t-shirt, black cargo
+trousers, black lace-up combat boots, slender build.
+[…]
+detailed_description:
+The target video is in a cinematic, high-contrast style with realistic 3D character design, featuring
+cool blue tones and wet, reflective surfaces.
+[Shot 1] A medium-long tracking shot follows <Subject 1> from behind as she walks out onto a wet,
+metallic gantry in the rain. The camera tracks slowly with small amplitude, keeping her centered in
+the frame as she moves away from the viewer. […]
+[Shot 2] At 00:05.000, the shot cuts to a close-up of <Subject 1> from a slightly low angle as she
+stops at the edge of the gantry. The camera is static, focusing on her face and upper body. She looks
+down, her expression shifting to one of quiet contemplation as she sees the city below. […]
+```
+
+A real run, cut at `[…]`. Nobody typed `<Subject 1>`, `<Picture 1>`, `00:05.000`, or any section
+name. One image path went in with no description of what was in it, and the tactical jacket, the
+shaved sides and the combat boots were read off the pixels.
+
+Both findings are warnings rather than errors, so it compiled. The second one is the interesting
+kind: Shot 2 names the woman but not her clothes, which is the exact omission that lets wardrobe
+drift between cuts. No legality check can see that, so it is a named rule with a reason attached.
+
+## Your dialogue ships exactly as you typed it
+
+```bash
+h3ir compile "two engineers argue in a server room while an alarm blinks" --seconds 10 \
+  --say "The backup never ran, Mei." \
+  --say "Then we tell them tonight."
+```
+
+From what came back:
+
+```
+[…] The camera holds a static shot as the woman with a sharp, urgent voice (S1) says:
+<d>[English] The backup never ran, Mei.</d> The man turns his head slightly toward her, his
+expression serious, and replies with a calm, steady tone (S2): <d>[English] Then we tell them
+tonight.</d> The red alarm continues to flash in the background […]
+```
+
+Your lines never pass through the writing model. It decides who speaks, casts a voice for each of
+them, places the lines in the scene, and the renderer substitutes your words back byte for byte.
+
+## Ask for ten seconds and H3 gives you 10.125
 
 ```console
 $ h3ir budget --seconds 10
@@ -65,195 +167,32 @@ ref image at 'match' ~1,008 rows; at 'max' (2048 short edge) ~7,296 rows
 an 800-token IR is 1.08% of the pack
 ```
 
-That number is the whole idea in one line. H3 only makes clips whose frame count fits a fixed grid,
-so there are exactly fifteen legal lengths between 5.167 s and 15.083 s, and **only one of the
-fifteen is a whole number of seconds** (8.0 s, at 192 frames). Ten seconds is not on the grid. The
-nearest lengths are 9.417 s and 10.833 s, so 243 frames at 10.125 s is as close to ten as the model
-can get.
+H3 only makes clips whose frame count fits a fixed grid. There are exactly fifteen legal lengths
+between 5.167s and 15.083s, and **only one of them is a whole number of seconds** (8.0s, at 192
+frames). Ten is not on the grid, so 243 frames at 10.125s is the closest the model can get.
 
-Ask for a round number and you get something else. Nothing warns you. It matters the moment you cut
-to music, and it matters for every cut time inside the clip, which is why the compiler owns those
-and the model never writes one.
+Ask for a round number and you quietly get something else. It matters the first time you cut to
+music, and it matters for every cut time inside the clip, which is why the compiler owns those and
+the writing model never picks one.
 
-The same output shows the other thing worth knowing before you attach anything. Prompt text is
-nearly free and references are what cost, because H3 is a single-stream packed transformer: your
-brief's tokens sit in the same sequence as the video and reference latents, and pass through every
-DiT block on every step. An 800-token brief is about 1% of a ten-second pack. One reference image at
-maximum sizing is 7,296 rows, and a five-second reference video is 37,296, roughly as much as
-generating the video itself. So write long and precise, and be ruthless about how many assets you
-attach.
+The same output prices your references. Prompt text is nearly free and attachments are what cost: one
+reference image at maximum sizing runs about nine times the cost of an 800-token brief. Write long,
+attach few. The arithmetic is in [`docs/design.md`](docs/design.md).
 
-## Attach a reference and it changes mode by itself
+## Attach an image and it picks the mode for you
 
-You never pick a mode. T2VA, I2VA, FL2VA, L2VA and Ref2VA are decided by what you attached, because
-the wiring is the only thing that can decide them correctly.
+T2VA, I2VA, FL2VA, L2VA and Ref2VA are decided by what you attached, because the wiring is the only
+thing that can decide them correctly. You never pick one, and no screen built on this should ask.
 
-```console
-$ h3ir compile "the woman climbs onto the creature's back and they take off into the storm" \
-    --seconds 10 \
-    --image h3ir/golden/assets/ref1.png \
-    --image h3ir/golden/assets/ref2.png
+Attach two images and two subjects come back, bound to the labels the runtime will actually emit, each
+one carrying its own retention contract and cited in every shot it appears in. If an image is
+ambiguous about which of several things in it you care about, say so with
+`--image path.png:"the pilot"` instead of leaving it to the vision model.
 
-mode=ref2va  tokens=821  timings={'analyse_s': 12.32, 'mode_s': 1.24, 'draft_s': 0.15, 'compose_s': 10.44}
-  -> PASS (with warnings)   0 error(s), 1 warning(s), 2 info
-  [WARN] R15-wardrobe-not-restated: [Shot 2] names the subject but not the garments (jacket, shirt,
-         t-shirt); wardrobe drifts between shots when it is only stated once
-  [INFO] P5b-camera-no-amplitude: a motion type appears but without the 'with <small|large> amplitude
-         at <slow|fast> speed' idiom the spec defines
+## Drive it over HTTP
 
-subject_definitions:
-<Subject 1> is the woman in <Picture 1>, with short dark hair with shaved sides and a small top knot,
-dark complexion, black tactical jacket with shoulder straps and buckles, black t-shirt, black cargo
-trousers, black lace-up combat boots, slender build.
-<Subject 2> is the black dragon in <Picture 2>, with large reptilian creature, dark charcoal scales
-with subtle blue iridescence, large leathery wings with visible membrane and bone structure, long
-tail with dorsal spikes, multiple horns protruding from the head and snout […]
-
-retention_analysis:
-<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the woman's tactical gear,
-hairstyle, and physical build are retained throughout the action.
-<Subject 2> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the dragon's scale texture,
-horn structure, wing membrane, and color palette are retained as it moves.
-
-detailed_description:
-The target video is a cinematic, realistic 3D animation with high-contrast lighting, emphasizing the
-texture of wet scales and tactical fabric against a dark, stormy backdrop.
-[Shot 1] The scene opens with a low-angle medium shot of <Subject 2>, the massive black dragon,
-crouching on a wet, rocky surface amidst a heavy downpour. […] The camera tracks slightly to the
-right as <Subject 1> swings her leg over the dragon's back, settling into a seated position.
-[Shot 2] At 00:04.500, the shot cuts to a wider side profile view as <Subject 2> begins to move. The
-dragon's powerful hind legs push against the ground, kicking up spray and debris. The camera pulls
-back slowly with medium amplitude to capture the full extension of the dragon's wings as they
-unfurl, revealing the intricate membrane and bone structure. […]
-[Shot 3] At 00:07.500, the shot cuts to a dynamic low-angle view looking up as <Subject 2> launches
-into the air. The camera tilts up rapidly, following the dragon as it breaks the surface of the
-storm. […] The shot ends as they ascend higher into the clouds, becoming smaller in the frame.
-```
-
-Nobody typed `<Subject 1>`, `<Picture 2>`, `00:04.500`, `fully_preserved`, or the section names. Two
-image paths went in, with no description of what was in them. Two subjects came out bound to the two
-labels the runtime will actually emit, each with its own retention contract, cited in every shot they
-appear in. The woman's jacket and the dragon's horn count were read off the pixels by the vision
-model. Both sheets are in this repo under `h3ir/golden/assets/`, so this run is reproducible.
-
-The R15 warning is the interesting part. Shot 2 names the woman but not her jacket, which is the
-exact omission that lets wardrobe drift between cuts. A legality check cannot see that, so it is a
-named rule with a reason attached.
-
-You can tell it what a reference is instead of leaving it to the vision model, with
-`--image path.png:"the pilot"`. Worth doing when an image is ambiguous about which of several things
-in it you care about. It is not worth doing here, which is the point of the example.
-
-Ref2VA briefs have six sections. Three are cut from the excerpt above: `summary`, which sits between
-the two shown at the top, and `overall_soundscape` and `non_diegetic_music` at the end. The base
-modes have three sections, which is why the first example is shorter. The format is not one shape,
-and you do not choose which one you get.
-
-## Structure is compiled, prose is generated
-
-The model never decides a label number, a speaker ID, a cut time, a retention marker, a task-type
-prefix or a section order. It writes prose into slots whose shape is already fixed. Your dialogue
-never passes through it at all: the renderer substitutes placeholders with your exact words, so what
-you typed is what ships, byte for byte.
-
-Underneath, the order is inverted from the usual retry-until-valid loop.
-
-1. A **deterministic draft** is built first, a complete and valid brief with no prose model
-   involved. Thin but honest, saying only what the wiring and the asset analysis support.
-2. The model pass is additive prose enrichment over a bounded surface.
-3. The result is parsed back, reconstructed, and diffed against the plan. Findings go back to the
-   model to fix.
-4. If that does not converge, whether from a validator error, leaked reasoning, or an endpoint
-   outage, the draft ships. You always get something valid, and the response says which path
-   produced it.
-
-The one thing that raises instead of falling back is the draft failing its own validator. That is
-deterministic, so it would be a bug here, and there would be nothing left to fall back to.
-
-`compile_brief(..., llm=False)` gives you the draft alone, which is a free A/B baseline. If the
-enriched brief cannot beat its own no-model draft, the prose pass is not earning its cost.
-
-## The checks are the product, so they are checked too
-
-A rule that cannot be made to fire is not a rule. Every rule is proved in both directions before it
-counts.
-
-```console
-$ h3ir controls
-  [ok  ] MUST PASS: MiniMax official Ref2VA example (P5 exempt, see note)
-  [ok  ] MUST FAIL: missing (appears in [Shot N])
-  [ok  ] MUST FAIL: <Image N> instead of <Picture N>
-  [ok  ] MUST FAIL: invented retention marker
-  [ok  ] MUST FAIL: sections out of order
-  … 15 more …
-20 controls, 0 failing
-```
-
-MiniMax's own published example must validate with zero findings, and fourteen mutants of it, each
-carrying exactly one defect, must each trip a named rule. There are eighty-four named rules. This
-gate runs in under a tenth of a second and needs no model.
-
-Legality is not quality, so there is a scored suite as well. A prompt change can improve one and
-wreck the other.
-
-```console
-$ h3ir eval
-  t2va_battle          clean fix=0 mode=t2va   words= 126 (x0.38) shots=2 cuts=1 cam=3 restate=0.08 dup=0.04 E0/W1
-  t2va_silent          clean fix=0 mode=t2va   words= 103 (x0.31) shots=1 cuts=0 cam=2 restate=0.00 dup=0.09 E0/W1
-  ref2va_two_subjects  clean fix=0 mode=ref2va words= 254 (x0.64) shots=3 cuts=2 cam=2 restate=0.12 dup=0.05 E0/W1
-  … 3 more …
-
-means over 6 brief(s), 35.7s wall:
-  errors           0.0
-  restatement      0.075
-  sound_overlap    0.061
-  fallback_rate    0.0
-  clean_rate       1.0
-  … 10 more …
--- gate --
-  restatement         0.070 ->    0.075  (+0.005)  same
-  sound_overlap       0.051 ->    0.061  (+0.010)  same
-  …
-SHIP-ABLE
-```
-
-Six briefs, each one a failure that actually happened rather than a spread chosen to look broad.
-Errors gate absolutely, trends gate within a tolerance. A first run has no stored baseline yet, so
-you get the scores with no comparison; `h3ir eval --set-baseline` records one to measure the next
-change against.
-
-Prompt templates live in `h3ir/prompts/*.txt` as versioned files, so changing one is an artifact you
-can score instead of an opinion you can hold. This gate has already blocked a change that improved
-the metric it was aiming at while introducing validator errors, and the root cause turned out to be
-a latent bug rather than the prompt.
-
-## Install
-
-Needs Python 3.10 or newer and an OpenAI-compatible LLM endpoint with vision. Verified on 3.12.
-
-```bash
-git clone https://github.com/Ruashots/open-h3-ir.git && cd open-h3-ir
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-
-export H3IR_LLM_URL=http://your-endpoint:8000/v1   # the only setting most people change
-h3ir doctor
-```
-
-The project is `open-h3-ir`; the command and the import are both `h3ir`, which is what you type.
-
-`h3ir doctor` tells you what is actually answering before you debug anything else: the endpoint, the
-model it serves, its context length, whether ComfyUI is reachable and which H3 nodes are installed,
-and a tokenizer self-test.
-
-Two commands need nothing running at all, if you want to see it work before configuring anything:
-`h3ir controls` and `h3ir budget`. Every setting, with the reason for each default, is in
-[`.env.example`](.env.example).
-
-## The HTTP API
-
-The API is the product and the CLI is one of its clients. There is no quality-bearing field that
-only a UI could set, and no path that skips the validator.
+The API is the product and the CLI is one of its clients. No quality-bearing field is reachable only
+from a UI, and no path skips the validator.
 
 ```bash
 h3ir serve --port 8420
@@ -261,89 +200,76 @@ curl -s localhost:8420/v1/briefs -H 'content-type: application/json' \
   -d '{"intent":"a lighthouse keeper lights the lamp in a storm","seconds":10}'
 ```
 
-The minimum viable request is one sentence. No mode, no checkpoint, no canvas maths, no section
-names. Every response carries three layers, and a UI should read the first two.
+`intent` is the only required field. Every response comes back in three layers: `presentation` for a
+screen to show, `plan` for the creative decisions someone might want to change, and `ir` for whoever
+wires the graph. `GET /v1/capabilities` reports the legal durations, aspects and asset limits, so a
+caller never hardcodes them.
 
-| layer | what it is |
-|---|---|
-| `presentation` | plain language: the shots, who speaks, the sound. No labels, no markers, no field names, no mode names ever. |
-| `plan` | the creative decisions, refinable |
-| `ir` | the full document plus the asset manifest, for whoever wires the graph |
+Under-specification never fails. `{"intent":"make a video of my dog"}` and nothing else comes back
+`201` with a complete, zero-error brief: five seconds, widescreen, two shots, all picked for you.
+Routes and request shapes: [`docs/calling-the-api.md`](docs/calling-the-api.md).
 
-`PATCH /v1/briefs/{id}` takes plain language. `{"change":"make it darker"}` returns 200 with a new
-version and the fields it touched. `GET /v1/capabilities` reports the legal durations, aspects, asset
-limits and dialogue languages, so a caller never has to hardcode them. `GET /v1/loras` lists
-available styles by id and prose, never by trigger string.
+## What it will not do
 
-Under-specification never fails. `{"intent":"make a video of my dog"}` and nothing else returns 201
-with a complete, valid, zero-error brief: five seconds, widescreen, two shots, all chosen for you.
-What returns 422 is a request the service cannot honour as stated, such as an asset path it cannot
-read, or a caller-stated mode that contradicts what was attached. Impossible creative asks are not
-rejected, they are overruled. Ask for a first cut at twelve seconds inside a ten-second clip and you
-get a legal timeline, because the compiler owns cut times and will not emit one past the end.
-
-Route list and request shapes: [`docs/calling-the-api.md`](docs/calling-the-api.md).
-
-## What it does not do
-
-Stated plainly, because these are the assumptions most likely to be made wrongly.
-
-- **It does not judge whether the writing is good.** The validator has no access to that. It can
-  tell you a shot names a subject without restating the wardrobe. It cannot tell you the edit is
-  dull.
-- **It does not enforce length.** The spec's 350 to 500 word guidance is a warning and never an
-  error, deliberately: a 274-word brief directed well beat a 636-word one that was not. Briefs come
-  out under that band more often than in it, and the warning tells you when.
-- **It does not guarantee that a person's identity survives the render.** The brief binds the
-  reference and states what must be preserved. Whether the model delivers is a render outcome.
-- **It does not render anything.** No sampler, no graph submission, no GPU. It reports what ComfyUI
-  has installed; wiring the render is the caller's job.
+- **It does not render.** No sampler, no graph submission, no GPU. It reports which H3 nodes ComfyUI
+  has installed; wiring the render is yours.
+- **It does not judge whether the writing is good.** It can tell you a shot dropped the wardrobe. It
+  cannot tell you the edit is dull.
 - **It cannot hear.** There is a vision tower and no audio tower, and a model asked about a waveform
-  invents a plausible answer instead of abstaining. Audio references are described from typed
-  metadata plus a transcript you supply. Nothing here transcribes, and nothing here will guess a
-  timbre.
-- **It is H3-only, all the way down.** The validator rules, the frame grid, the vendored vocabulary
-  and the section names are H3's. This is not a general video-prompt library with an H3 backend, and
-  retargeting it at another model would be a rewrite rather than a config change.
-- **A single run is not a measurement.** The prose model is not deterministic enough for one output
-  to prove anything, which is what `h3ir eval` is for.
+  invents a plausible answer rather than admitting it cannot listen. Audio references are described
+  from typed metadata plus a transcript you supply.
+- **It does not guarantee a face survives the render.** The brief binds the reference and states what
+  must be preserved. Whether the model delivers is a render outcome.
+- **It is H3-only, all the way down.** The rules, the frame grid and the section names are H3's.
+  Pointing it at another video model would be a rewrite, not a config change.
+
+## How it keeps itself honest
+
+A rule that cannot be made to fire is not a rule, so every one is proved in both directions.
+
+```console
+$ h3ir controls
+20 controls, 0 failing
+```
+
+MiniMax's own published briefs have to validate clean, because a rule that fires on the spec's own
+artifact is a wrong rule. That direction has already caught two rules here and demoted them to
+guidance. There is one documented exemption, where MiniMax's example omits a camera motion type.
+
+Going the other way, fourteen mutants of that example each carry exactly one defect and each has to
+trip a rule by name, out of the eighty-four the validator knows. The whole gate runs in under a second
+and needs no model.
+
+Legality is not quality, so `h3ir eval` separately scores six briefs and gates a change against a
+stored baseline, because a prompt change can improve one and wreck the other.
+
+```console
+$ pytest -q
+370 passed in 1.37s
+```
+
+No model, no GPU, no network.
 
 ## Where to look next
 
 | file | what it is for |
 |---|---|
 | [`docs/calling-the-api.md`](docs/calling-the-api.md) | driving the service: what it guarantees, what it only attempts, what comes back |
-| [`docs/design.md`](docs/design.md) | why every rule exists: what the encoder actually sees, the cost model, the contract between stages |
-| [`docs/build-log.md`](docs/build-log.md) | a dated record of what the build measured, including the positions this project reversed |
-| [`AGENTS.md`](AGENTS.md) | working on the compiler: the rules that are not preferences, where things live, the known gaps |
-| [`loras/handpainted-anim-v2/`](loras/handpainted-anim-v2/) | a worked example of the style-LoRA registry format |
-
-The tokenizer under `h3ir/data/qwen25_tokenizer/` is vendored on purpose. Token counts have to be
-what H3's own encoder sees, and H3's shipped `vocab.json` is byte-identical to the one ComfyUI
-bundles (git blob `4783fe10ac3adce15ac8f358ef5462739852c569`), so `h3ir budget` is exact, offline,
-with nothing to download.
-
-## Tests
-
-```console
-$ pytest -q
-359 passed in 0.86s
-```
-
-No model, no GPU, no network.
+| [`docs/design.md`](docs/design.md) | why every rule exists: what the encoder sees, the cost model, the contract between stages |
+| [`docs/build-log.md`](docs/build-log.md) | a dated record of what the build measured, including the positions it reversed |
+| [`AGENTS.md`](AGENTS.md) | working on the compiler itself: the rules that are not preferences, and the known gaps |
+| [`loras/handpainted-anim-v2/`](loras/handpainted-anim-v2/) | a worked example of the style-LoRA registry format (the weights there are a labelled placeholder) |
 
 ## Licence
 
-Apache 2.0. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for what belongs to whom. The Qwen2.5
-tokenizer vocabulary vendored under `h3ir/data/` is Apache 2.0 as well, so it adds nothing this
-licence does not already carry.
+Apache 2.0. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for what belongs to whom.
 
-**Apache 2.0 covers this compiler. It does not cover the model you point it at, and H3's own licence
-is more restrictive than you might assume.** Three terms from it that are worth knowing before you
-build on this, because none of them is guessable:
+**That covers this compiler. It does not cover the model you point it at, and H3's own licence is
+more restrictive than you might assume.** Three terms worth knowing before you build on this, because
+none of them is guessable:
 
 - **H3 is not licensed for use in the European Union, the United Kingdom, the Republic of Korea or
-  the United States of America.** Those are its "Excluded Territories", and the grant is worldwide
+  the United States of America.** Those are its Excluded Territories, and the grant is worldwide
   except for them. MiniMax invites people there to contact them for a licence.
 - A commercial product or service using H3 **shall prominently display "MiniMax H3" in its user
   interface** (section IV.2).
@@ -351,5 +277,5 @@ build on this, because none of them is guessable:
   from MiniMax first (section IV.1).
 
 Read the [MiniMax H3 Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)
-yourself rather than trusting this summary. Nothing in this repository is a MiniMax work: there is no
-model code, no weights, and no checkpoint here.
+rather than trusting this summary. Nothing in this repository is a MiniMax work: no model code, no
+weights, no checkpoint.

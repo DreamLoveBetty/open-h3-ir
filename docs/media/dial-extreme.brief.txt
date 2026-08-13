@@ -1,0 +1,24 @@
+subject_definitions:
+<Subject 1> is the black sports car in <Picture 1>, with black carbon fiber body texture, sharp angular geometric design, low profile coupe shape, black five-spoke alloy wheels, orange brake calipers, orange LED strip lighting along the lower body, white LED headlights, rear spoiler.
+<Subject 2> is Ceiling light fixture in <Picture 2>, with circular, thin ring, warm glow, white.
+<Subject 3> is Floor in <Picture 2>, with reflective, smooth, dark concrete, cool tones.
+
+summary:
+[reference generation] The target video features <Subject 1> rolling into the showroom environment defined by <Subject 2> and <Subject 3>, coming to a dramatic halt under the lighting.
+
+retention_analysis:
+<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the carbon fiber texture, angular geometry, and orange/white lighting accents are retained while the car is animated.
+<Subject 2> (appears in [Shot 1], [Shot 3]): fully_preserved - the circular ring fixture and warm glow are retained as a static environmental element.
+<Subject 3> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the reflective dark concrete surface is retained to mirror the car's movement and lighting.
+
+detailed_description:
+The target video is a high-contrast, cinematic automotive showcase with deep shadows, hard light falloff, and a moody, sleek atmosphere.
+[Shot 1] The scene opens with an extreme wide shot of the showroom. The camera executes a Tracking Shot with large amplitude at fast speed, moving parallel to the floor to match the velocity of <Subject 1> as it rolls aggressively into the frame from the left. <Subject 1>, the black sports car with its sharp angular geometric design and carbon fiber body texture, dominates the foreground. Its white LED headlights cut through the darkness, while the orange LED strip lighting along the lower body casts a vibrant, elongated reflection across <Subject 3>, the reflective smooth dark concrete floor. Above, <Subject 2>, the circular ceiling light fixture, hangs in the background, providing a stark geometric contrast to the car's aggressive lines. The camera tracks forward rapidly, emphasizing the car's speed and the sleekness of the modern interior.
+[Shot 2] At 00:03.500, the shot cuts to a low-angle close-up of the front wheel and lower body of <Subject 1>. The camera performs a Pan Right with large amplitude at fast speed, following the rotation of the black five-spoke alloy wheels and the flash of the orange brake calipers. The motion blur of the wheels contrasts with the sharp, static reflection of the orange underglow on <Subject 3>. The camera movement slows abruptly as the car begins to brake, the wheels decelerating until they come to a complete, precise stop. The reflection on the floor stabilizes, mirroring the car's final position.
+[Shot 3] At 00:07.000, the shot cuts to a dramatic low-angle wide shot from the front-left quarter of the car. The camera executes a Push In with large amplitude at fast speed, closing the distance to <Subject 1> as it sits stationary under the showroom lights. The camera movement creates a dynamic sense of scale, highlighting the low profile coupe shape and the rear spoiler. The white LED headlights and orange accents remain illuminated, casting sharp highlights on the carbon fiber body texture. <Subject 2> is visible in the upper frame, its warm glow illuminating the dust motes in the air, while the deep shadows of the showroom envelop the background. The camera holds the final frame, emphasizing the car's aggressive stance and the high-contrast lighting.
+
+overall_soundscape:
+A deep, resonant engine hum and the sound of tires rolling on smooth concrete dominate the first half of the video, fading into silence as the car stops. A low, ambient room tone with a subtle electrical hum from the lighting continues throughout the final static shot.
+
+non_diegetic_music:
+A minimalist, high-tension electronic score with a deep bass pulse and sharp, metallic synth stabs. The music builds in intensity as the car enters, syncing with the camera movement, and cuts abruptly to a sustained, low-frequency drone as the car comes to a halt, emphasizing the dramatic stillness of the final pose.

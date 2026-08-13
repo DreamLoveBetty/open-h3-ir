@@ -1,0 +1,23 @@
+subject_definitions:
+<Subject 1> is the black sports car in <Picture 1>, with black carbon fiber body texture, sharp angular geometric design, low profile coupe shape, black five-spoke alloy wheels, orange brake calipers, orange LED strip lighting along the lower body, white LED headlights, rear spoiler.
+<Subject 2> is Ceiling light fixture in <Picture 2>, with circular, thin ring, warm glow, white.
+<Subject 3> is Floor in <Picture 2>, with reflective, smooth, dark concrete, cool tones.
+
+summary:
+[reference generation] The target video depicts <Subject 1> rolling into a showroom and stopping under the lights. The scene is set in the environment defined by <Picture 2>, featuring <Subject 2> and <Subject 3>. The car's movement and lighting are the primary focus, with no dialogue or non-diegetic music.
+
+retention_analysis:
+<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - the car's carbon fiber texture, angular design, wheels, and orange LED lighting are retained as it moves and stops.
+<Subject 2> (appears in [Shot 1], [Shot 2]): fully_preserved - the circular ceiling light fixture remains a constant visual anchor above the car.
+<Subject 3> (appears in [Shot 1], [Shot 2]): fully_preserved - the reflective dark concrete floor is retained, showing reflections of the car and lights.
+
+detailed_description:
+The target video is a high-contrast, cinematic automotive showcase with moody, dramatic low-key lighting.
+[Shot 1] The scene opens with a low-angle tracking shot moving backward at a slow speed, matching the forward momentum of <Subject 1> as it rolls into the frame from the left. <Subject 1>, the black sports car with its sharp angular geometric design and carbon fiber body, moves smoothly across <Subject 3>, the reflective dark concrete floor. The car's white LED headlights cut through the dimness, while the orange LED strip lighting along its lower body casts a vibrant, glowing reflection on the wet-looking surface of <Subject 3>. Above, <Subject 2>, the circular ceiling light fixture, hangs in the upper center of the frame, its warm white glow illuminating the space. As the car advances, the camera tracks steadily, keeping the vehicle centered and emphasizing its sleek, low-profile coupe shape. The background remains dark and indistinct, focusing attention on the car's movement and the interplay of light and reflection.
+[Shot 2] At 00:06.000, the shot cuts to a static medium shot as <Subject 1> comes to a complete stop directly beneath <Subject 2>. The camera holds steady, capturing the car's final position. The orange underglow continues to illuminate the floor, creating a striking contrast against the cool tones of <Subject 3>. The car's brake calipers are visible through the black five-spoke alloy wheels, hinting at the recent deceleration. The scene is quiet, with only the faint hum of the car's systems and the ambient room tone audible. The lighting remains dramatic, with the key light from the upper left highlighting the car's hood and windshield, while the rest of the showroom fades into shadow. The video ends with the car stationary, perfectly framed under the circular light.
+
+overall_soundscape:
+The sound of tires rolling smoothly on concrete, followed by the subtle whir of the car's engine and brakes as it comes to a stop. A low, ambient room tone persists throughout, with no other distinct sounds.
+
+non_diegetic_music:
+N/A

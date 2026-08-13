@@ -93,7 +93,7 @@ def test_the_caller_temperature_is_respected_as_the_floor():
     b.json_call([{"role": "user", "content": "x"}], SCHEMA,
                 required=("summary", "subjects"), temperature=0.7)
     assert seen[0] == 0.7
-    assert seen[1] > 0.7, f"retry went below the caller's temperature: {seen}"
+    assert seen[1] > 0.7, f"retry did not exceed the caller's temperature: {seen}"
 
 
 def test_a_schema_echo_is_named_rather_than_reported_as_a_missing_key():
