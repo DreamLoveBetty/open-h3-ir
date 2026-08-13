@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .analyse import sha256_file
+from .analyse import AssetAnalysisError, ToolMissing, sha256_file
 from .backend import Backend, BackendError, BackendUnavailable
 from .compile import compile_brief, refine
 from .config import get_config
@@ -265,6 +265,16 @@ def create_brief(body: BriefIn) -> JSONResponse:
         raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
     except BackendError as e:
         raise HTTPException(502, detail={"code": "llm-error", "message": str(e)}) from e
+    # The analyser writes its refusals for a person to read, and nothing caught them: a corrupt
+    # clip, a still attached as `kind: video`, or a machine with no ffmpeg all reached the caller
+    # as `Internal Server Error` with an empty body, and every one of those carefully worded
+    # messages was discarded. Subclass first: a missing binary is this deployment's problem and
+    # not something the caller can correct, so it keeps the 503 shape the LLM outage already uses.
+    except ToolMissing as e:
+        raise HTTPException(503, detail={"code": "analysis-tool-missing",
+                                         "message": str(e)}) from e
+    except AssetAnalysisError as e:
+        raise HTTPException(422, detail={"code": "asset-unreadable", "message": str(e)}) from e
 
     brief_id = uuid.uuid4().hex[:16]
     _remember(brief_id, brief, doc)
@@ -300,6 +310,13 @@ def refine_brief(brief_id: str, body: RefineIn) -> JSONResponse:
         raise HTTPException(503, detail={"code": "llm-unavailable", "message": str(e)}) from e
     except BackendError as e:
         raise HTTPException(502, detail={"code": "llm-error", "message": str(e)}) from e
+    # Refining recompiles, so it reaches the analyser too -- with the same assets, which means an
+    # asset that has become unreadable since the first compile lands here rather than there.
+    except ToolMissing as e:
+        raise HTTPException(503, detail={"code": "analysis-tool-missing",
+                                         "message": str(e)}) from e
+    except AssetAnalysisError as e:
+        raise HTTPException(422, detail={"code": "asset-unreadable", "message": str(e)}) from e
     _remember(brief_id, amended, doc)
     env = _envelope(brief_id, doc, amended)
     env["changed"] = changed

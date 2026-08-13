@@ -234,7 +234,21 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
 class AssetAnalysisError(RuntimeError):
     """An asset could not be analysed. Raised rather than returning an empty card: a card that
     describes nothing is indistinguishable from a card describing something dull, and the compiler
-    would build a brief on it without noticing."""
+    would build a brief on it without noticing.
+
+    The caller can act on this one: the file is unreadable, or it is not the kind it was attached
+    as. `service.create_brief` returns it as 422 with the message intact.
+    """
+
+
+class ToolMissing(AssetAnalysisError):
+    """ffmpeg or ffprobe is absent from the machine running the service.
+
+    A separate class rather than a phrase in the message, because the two need different answers
+    and the difference is not the caller's to fix: an unreadable file is a 422 they can correct,
+    and a missing binary is a 503 about this deployment. Sniffing "not installed" out of the text
+    would make the HTTP status depend on the wording of a sentence written for a human.
+    """
 
 
 def _run_ff(argv: list[str], *, timeout: int = 30):
@@ -249,7 +263,7 @@ def _run_ff(argv: list[str], *, timeout: int = 30):
     try:
         return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as e:
-        raise AssetAnalysisError(
+        raise ToolMissing(
             f"{argv[0]} is not installed, and video references need it. Install ffmpeg "
             f"(it provides both ffmpeg and ffprobe) and try again.") from e
 
@@ -339,6 +353,24 @@ def analyse_video(backend: Backend, ref: AssetRef, frames: list[str] | None = No
                      analyzer_version=ANALYZER_VERSION, model_id=backend.cfg.model)
 
 
+def _name_the_asset(e: AssetAnalysisError, ref: AssetRef) -> AssetAnalysisError:
+    """Say WHICH attachment failed and what it was attached as, keeping the class.
+
+    A brief can carry twelve files. "could not sample a single frame from plate-car.jpg" leaves
+    the caller to work out which of them that was and, worse, does not mention the thing that is
+    usually wrong: the file is fine and the declared `kind` is not. The most common way to reach
+    this is a still attached as `kind: video`, so the hint names that possibility without
+    asserting it -- nothing here has established what the file actually is.
+
+    Same class, so `ToolMissing` does not degrade into a plain analysis error and lose its 503.
+    """
+    where = ref.path or ref.url or f"sha256 {ref.sha256[:12]}"
+    msg = f"{str(e).rstrip('. ')} (attached as kind: {ref.kind.value}, {where})"
+    if isinstance(e, ToolMissing) or ref.kind is not AssetKind.VIDEO:
+        return type(e)(msg + ".")
+    return type(e)(msg + ". If it is a still image, attach it with kind: image instead.")
+
+
 def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = True,
                 seed: int | None = None,
                 transcripts: dict[str, str] | None = None) -> dict[str, AssetCard]:
@@ -350,12 +382,15 @@ def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = Tru
                 log.info("card cache hit %s", ref.sha256[:12])
                 out[ref.sha256] = hit
                 continue
-        if ref.kind is AssetKind.IMAGE:
-            card = analyse_image(backend, ref, seed=seed)
-        elif ref.kind is AssetKind.AUDIO:
-            card = analyse_audio(ref, (transcripts or {}).get(ref.sha256, ""))
-        else:
-            card = analyse_video(backend, ref, seed=seed)
+        try:
+            if ref.kind is AssetKind.IMAGE:
+                card = analyse_image(backend, ref, seed=seed)
+            elif ref.kind is AssetKind.AUDIO:
+                card = analyse_audio(ref, (transcripts or {}).get(ref.sha256, ""))
+            else:
+                card = analyse_video(backend, ref, seed=seed)
+        except AssetAnalysisError as e:
+            raise _name_the_asset(e, ref) from e
         out[ref.sha256] = card
         if use_cache:
             save_cached(ref, card, backend.cfg.model)
