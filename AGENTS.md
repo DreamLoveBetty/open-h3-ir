@@ -167,6 +167,39 @@ because my first draft of that rule fired on "he gives an okay sign".
 
 ## Known gaps, honestly
 
+- **The style-LoRA registry is read but not usable end to end. `--lora` crashes, both ways.** TODO,
+  deliberately deferred: proving this out needs the application that consumes it to exist first, so
+  it can be tested against real weights and a real render rather than against a placeholder.
+
+  What works: the registry loads a folder correctly and `h3ir loras` reports id, triggers, strength
+  bounds, variants, conflicts and the author prose. `GET /v1/loras` serves it.
+
+  Two separate defects behind that, and they fail differently:
+
+  ```
+  # variant mismatch, raised as an internal invariant instead of told to the caller
+  h3ir compile "a fox in tall grass" --lora handpainted-anim-v2
+  -> CompilerInvariantError: W11-lora-variant: handpainted-anim-v2 is trained for
+     ['ref2va'] but this request routes to the fl2va checkpoint
+
+  # variant matches, and the trigger splice produces text the validator rejects
+  h3ir compile "the car rolls in" --image plate.jpg --lora handpainted-anim-v2
+  -> CompilerInvariantError: R16-style-opening-malformed: a spliced clause keeps its
+     capital mid-sentence ('with Hi'):
+     'The target video is in hndpntd_anim_v2 style with High-contrast automotive...'
+  ```
+
+  The first is the validator being **right** and the handling being wrong: asking for a ref2va-only
+  style on a request that routes elsewhere is a real user error and deserves a sentence saying so,
+  not an invariant crash. The second is a genuine text bug: the trigger is spliced into the style
+  opening without lowercasing what follows.
+
+  And the part nobody has built at all: **nothing matches a request's own words to a registered
+  style.** The owner's intent was that mentioning a look in plain language pulls the LoRA in and says
+  so. Today only an explicit id does anything, and `"hand-painted animation look"` in the request
+  text is ignored. `docs/design.md` and `docs/calling-the-api.md` both expose the surface, so an
+  agent will discover styles and try to use them before this is fixed.
+
 - **Audio references have no transcript source wired in.** `analyse_audio` accepts a transcript
   and the plumbing for it exists, but nothing calls whisper yet. Until it does, an attached audio
   reference is described from the caller's note alone. This matters more than it looks: the
