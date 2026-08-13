@@ -218,3 +218,44 @@ def test_the_ask_is_built_from_the_wiring_a_real_brief_produces():
     fact = audio_task_facts(tuple(m.label for m in manifest),
                             tuple(derive_task_types(manifest, brief)))
     assert "may NOT contain `audio reuse` or `audio reference`" in fact
+
+
+# ---------------------------------------------------------------- the camera vocabulary, in full
+
+def test_the_camera_finding_lists_the_words_that_would_satisfy_it():
+    """Measured on live output. A brief that said "the camera begins a slow, smooth orbit to the
+    right, circling the car" was rejected twice by P5 and lost to the fallback: it had directed a
+    real move, in a word the closed list does not contain, and the message ended in an ellipsis that
+    hid the entry it needed. A finding that names the defect and not the remedy is a finding that
+    survives a correction pass.
+    """
+    from h3ir.models import CAMERA_TYPES
+
+    text = _ref2va("[video editing] The target video is an edited version of <Video 1>, where the "
+                   "car becomes white.").replace(
+        "The camera holds a static shot on <Subject 1> as it rolls through the tunnel.",
+        "The camera begins a slow, smooth orbit to the right, circling <Subject 1>.")
+    msg = _rules(text)["P5-camera-no-motion-type"]
+    for word in CAMERA_TYPES:
+        assert word in msg, f"{word} is legal and the message does not offer it"
+    assert "Arc Shot" in msg
+    assert "orbits, circles" in msg, "name the paraphrases that do not count"
+
+
+def test_a_paraphrased_move_still_does_not_count_as_the_vocabulary():
+    """The rule is not relaxed. Counting "orbit" as a motion type would defeat the closed
+    vocabulary, which exists so the brief carries the trained token rather than a synonym."""
+    text = _ref2va("[video editing] The target video is an edited version of <Video 1>, where the "
+                   "car becomes white.").replace(
+        "The camera holds a static shot on <Subject 1> as it rolls through the tunnel.",
+        "The camera begins a slow, smooth orbit to the right, circling <Subject 1>.")
+    assert "P5-camera-no-motion-type" in _rules(text)
+
+
+def test_the_canonical_word_satisfies_it():
+    text = _ref2va("[video editing] The target video is an edited version of <Video 1>, where the "
+                   "car becomes white.").replace(
+        "The camera holds a static shot on <Subject 1> as it rolls through the tunnel.",
+        "The camera arcs around <Subject 1> with small amplitude at slow speed as it rolls "
+        "through the tunnel.")
+    assert "P5-camera-no-motion-type" not in _rules(text)

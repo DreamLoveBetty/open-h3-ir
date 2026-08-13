@@ -836,10 +836,20 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             "the camera is never described; H3 drifts and reframes on its own when it is "
             "unspecified, so an unstated camera is a defect rather than a stylistic choice")
     elif not has_motion:
+        # The message lists the WHOLE vocabulary, and that is a fix rather than a detail. A brief
+        # that said "the camera begins a slow, smooth orbit to the right, circling the car" was
+        # rejected twice by this rule and lost to the fallback: it had directed a real move, in a
+        # word the closed list does not contain, and the message ended in an ellipsis that hid the
+        # entry it needed (Arc Shot). Naming the defect without naming the remedy is what makes a
+        # finding survive a correction pass. The paraphrase still does not count -- the point of a
+        # closed vocabulary is the trained token, not a synonym for it.
         add("P5-camera-no-motion-type", "ERROR",
-            "framing is described but no motion type from the closed vocabulary appears "
-            "(Push In / Pull Out / Pan / Truck / Tilt / Static Shot / ...). Every shot needs a "
-            "stated camera or the model chooses its own")
+            "framing is described but no motion type from the closed vocabulary appears. Use one of "
+            "these words exactly, woven into the sentence rather than as a label: "
+            + ", ".join(CAMERA_TYPES)
+            + ". A paraphrase of a move (orbits, circles, glides, drifts, sweeps) is not one of "
+            "them, and an orbit around the subject is 'Arc Shot'. Every shot needs a stated camera "
+            "or the model chooses its own")
     elif not has_amp_speed:
         add("P5b-camera-no-amplitude", "INFO",
             "a motion type appears but without the 'with <small|large> amplitude at "
