@@ -2,7 +2,7 @@
 
 Open-source local Context-IR for MiniMax H3.
 
-[![tests](https://github.com/Ruashots/open-h3-ir/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruashots/open-h3-ir/actions/workflows/ci.yml)
+[![tests](https://github.com/ruashots/open-h3-ir/actions/workflows/ci.yml/badge.svg)](https://github.com/ruashots/open-h3-ir/actions/workflows/ci.yml)
 
 **Type one sentence. Get better video out of MiniMax H3.**
 
@@ -91,7 +91,7 @@ it is the bar to size your own box against: a 27B-class local model with a visio
 it.
 
 ```bash
-git clone https://github.com/Ruashots/open-h3-ir.git
+git clone https://github.com/ruashots/open-h3-ir.git
 cd open-h3-ir
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"

@@ -29,7 +29,7 @@ Nothing here calls MiniMax, downloads a checkpoint, or renders video.
 ## Step 1: install
 
 ```bash
-git clone https://github.com/Ruashots/open-h3-ir.git
+git clone https://github.com/ruashots/open-h3-ir.git
 cd open-h3-ir
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
