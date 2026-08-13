@@ -107,6 +107,21 @@ class RefineIn(BaseModel):
 
 _ROLE_BY_NAME = {r.value: r for r in Role}
 
+# Which roles make sense for which kind, for the error message only. A picture cannot be a voice
+# reference and a wav cannot be a first frame, and listing all eleven under a typo'd audio role
+# would be a worse message than naming the three that apply.
+_ROLES_BY_KIND = {
+    "image": (Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST, Role.SUBJECT, Role.ENVIRONMENT,
+              Role.STYLE, Role.STORYBOARD),
+    "video": (Role.EDIT_SOURCE, Role.CONTINUATION_SOURCE, Role.SUBJECT, Role.ENVIRONMENT,
+              Role.STYLE, Role.STORYBOARD),
+    "audio": (Role.VOICE_TIMBRE, Role.BGM, Role.SFX),
+}
+
+
+def _role_fits(role: Role, kind: str) -> bool:
+    return role in _ROLES_BY_KIND.get(kind, ())
+
 
 def _to_brief(b: BriefIn) -> Brief:
     assets: list[AssetRef] = []
@@ -121,6 +136,18 @@ def _to_brief(b: BriefIn) -> Brief:
             raise HTTPException(422, detail={"code": "asset-missing",
                                              "message": f"no such file: {a.path}"})
         role = _ROLE_BY_NAME.get(a.role or "", None)
+        if role is None and (a.role or "").strip():
+            # A role that does not resolve used to fall through to the kind default in silence, so
+            # `frame_anchor` -- one word short of `frame_anchor_first` -- got a content reference and
+            # the caller was never told. Anchor versus reference is the product's central
+            # distinction, and this field is the only place a caller can state it.
+            raise HTTPException(422, detail={
+                "code": "unknown-role",
+                "message": f"{a.role!r} is not a role. For "
+                           f"{'an' if a.kind[0] in 'aeiou' else 'a'} {a.kind} the roles are: "
+                           + ", ".join(r.value for r in Role if _role_fits(r, a.kind))
+                           + ". Omit `role` to have it inferred from the request"})
+        stated = role is not None
         if role is None:
             role = {"image": Role.SUBJECT, "video": Role.EDIT_SOURCE,
                     "audio": Role.BGM}[a.kind]
@@ -130,7 +157,7 @@ def _to_brief(b: BriefIn) -> Brief:
         assets.append(AssetRef(kind=AssetKind(a.kind), role=role, sha256=sha256_file(p),
                                path=str(p), note=a.note, sizing=a.sizing, seconds=a.seconds,
                                frames=a.frames, provenance=a.provenance,
-                               paired_video_sha256=paired))
+                               paired_video_sha256=paired, role_stated=stated))
 
     # An answered clarification becomes an explicit role, which is exactly how it would have
     # arrived had the caller known: the answer is data, not a special code path.

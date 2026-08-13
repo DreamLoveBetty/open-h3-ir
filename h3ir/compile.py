@@ -175,6 +175,19 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         # as a cond latent that is never denoised. Ref2VA has no such mechanism, so carrying the
         # role into a Ref2VA plan would write a retention line promising something the render
         # cannot deliver. Downgrade it and say so, rather than asserting it.
+        # The counterpart to X10, for the direction that used to be silent: the caller declared a
+        # reference role and the request also carried anchor wording. The role wins, because it is
+        # the more specific statement, and saying so is the difference between honouring it and
+        # ignoring the other half.
+        override = next((s for s in decision.signals
+                         if s.startswith("anchor language in the request is overridden")), None)
+        if override:
+            lora_findings.append(Finding(
+                "X18-role-overrides-anchor-language", "WARN",
+                f"{override}. The declared role is treated as ground truth, so the picture is a "
+                "content reference and not the video's opening frame. Set the role to "
+                "frame_anchor_first (or frame_anchor_last) if it should be an exact frame."))
+
         if mode is Mode.REF2VA:
             for a in brief.assets:
                 if a.role in (Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST):

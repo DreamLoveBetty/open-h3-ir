@@ -98,6 +98,14 @@ class AssetRef:
     composition: str = "unknown"     # bare_plate | composed_scene | unknown
     provenance: dict[str, Any] | None = None
     paired_video_sha256: str | None = None   # a soundtrack points at its video
+    # Did the CALLER name the role, or is it the kind's default? `role` cannot answer that: the
+    # service fills an omitted role with `subject` for an image, so an explicit `role: "subject"`
+    # and an omitted one arrive identical. Mode inference needs the difference -- a stated
+    # `storyboard` is ground truth about what the picture is FOR and outranks a phrase in the
+    # request, while an unstated `subject` is only a placeholder and must not block the anchor
+    # reading. `AssetIn.role` already promises "Inferred when omitted"; this is what makes that
+    # promise keepable.
+    role_stated: bool = False
 
 
 @dataclass

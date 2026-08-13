@@ -114,6 +114,29 @@ def infer_mode(brief: Brief, cards: dict[str, AssetCard] | None = None,
                             signals=["the caller assigned frame-anchor roles"])
 
     anchor_hits, ref_hits = _text_signals(brief.intent)
+
+    # The same rule in the other direction, which was missing. A caller who states `storyboard`,
+    # `style`, `environment` or `subject` has said what the picture is FOR, and that outranks a
+    # phrase in the request -- yet only the anchor roles counted as evidence, so a declared
+    # storyboard reference with "animate this" wording routed to i2va and became the video's literal
+    # opening frame: a conditioning latent pinned to frame 0 and never denoised, while the manifest
+    # still reported `role: storyboard`. No finding, status ready. The reverse direction has been
+    # guarded all along (compile.X10 downgrades an anchor role on the ref2va route and says so).
+    #
+    # `role_stated` is what makes this decidable: the service fills an omitted role with the kind's
+    # default, so `role` alone cannot tell an explicit `subject` from silence, and treating the
+    # default as evidence would break every "animate this photo" request that names no role at all.
+    if images and all(a.role_stated for a in images):
+        signals = [f"the caller declared {', '.join(sorted(r.value for r in roles))}, which is a "
+                   "content reference rather than a frame of the video"]
+        if anchor_hits:
+            # Reported, never silently resolved: the same asymmetry style.py uses when the request
+            # and the reference disagree. The role wins because it is the more specific statement,
+            # and the caller is told which way it went and how to change it.
+            signals.append("anchor language in the request is overridden by the declared role: "
+                           + ", ".join(repr(p) for p in anchor_hits))
+        return ModeDecision(mode=Mode.REF2VA, confidence=1.0, rule_fired="explicit-role-reference",
+                            signals=signals, alternatives=["i2va", "fl2va"])
     signals = ([f"anchor phrase: {p!r}" for p in anchor_hits]
                + [f"reference phrase: {p!r}" for p in ref_hits])
 
