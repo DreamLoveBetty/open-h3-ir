@@ -271,7 +271,7 @@ A rule that cannot be made to fire is not a rule, so every one is proved in both
 
 ```console
 $ h3ir controls
-20 controls, 0 failing
+21 controls, 0 failing
 ```
 
 MiniMax's own published briefs have to validate clean, because a rule that fires on the spec's own

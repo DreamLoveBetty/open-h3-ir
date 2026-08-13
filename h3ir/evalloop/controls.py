@@ -193,8 +193,15 @@ def run_controls(verbose: bool = False) -> tuple[bool, list[ControlResult]]:
             f"a rule now fires on prose that was rejected on taste: {sorted(errs)}. If that rule "
             "judges the writing rather than a decidable fact, it does not belong in the validator"))
 
+    # official_fl2va_example.txt is base-en.txt's own case 3, copied out byte for byte (a test
+    # asserts it still matches the shipped spec). It is here because its absence is how a rule that
+    # rejected EVERY legal first-and-last-frame brief shipped green: fl2va cites its pictures bare,
+    # the label scanner read only the bracketed form, and L4 fired on correct text. There were
+    # controls for t2va, i2va and ref2va, so those three modes were protected and this one was not.
     for name, ctx in (("t2va.ir.txt", Context(mode="t2va", n_pictures=0, duration_s=10.125)),
                       ("i2va.ir.txt", Context(mode="i2va", n_pictures=1, duration_s=8.0)),
+                      ("official_fl2va_example.txt",
+                       Context(mode="fl2va", n_pictures=2, duration_s=8.0)),
                       ("ref2va.ir.txt", Context(mode="ref2va", n_pictures=0, n_videos=1,
                                                 n_audios=2, duration_s=5.167,
                                                 generation_task=False))):

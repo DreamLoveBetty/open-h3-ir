@@ -23,7 +23,7 @@ import re
 from typing import Any
 
 from .models import AssetCard, AssetKind, Brief, Mode, ShotPlan, SubjectPlan
-from .plan import ProfileOptions, build_plan
+from .plan import ProfileOptions, _lower_first, build_plan
 from .style import _tidy, resolve_style
 
 # A deterministic camera rotation: establish, then vary. Chosen from the closed vocabulary so
@@ -107,6 +107,42 @@ def _subject_clause(subjects: list[SubjectPlan], use_labels: bool) -> str:
     return ", and ".join([", ".join(bits[:-1]), bits[-1]]) if len(bits) > 2 else " and ".join(bits)
 
 
+def _anchor_path(subjects: list[SubjectPlan], brief: Brief, environment: str) -> list[str]:
+    """FL2VA's body: the path from the first frame to the last one.
+
+    Two plates are not two subjects standing in one frame, they are the same shot at its two ends,
+    and base-en.txt 3.2 rules out the alternative in as many words -- "The body should not repeat
+    two static image descriptions; instead, it should supply the motion path that connects them."
+    The floor used to open on both at once ("The frame holds <the showroom> and <the car>"), which
+    asserts the closing plate's content at 0.00 seconds, against a keyframe latent that pins the
+    opposite.
+
+    Still says only what is supported: each plate's content comes from its own card, and the change
+    between them is the request in the caller's own words. Structure per 3.2 -- first-frame state,
+    observable change, last-frame state -- with the camera in the middle where the spec's own
+    example puts it. <Picture N> is deliberately BARE here: that is this mode's notation (2.1) and
+    the form its published example uses throughout.
+    """
+    opening = [s for s in subjects if "<Picture 1>" in s.sources]
+    closing = [s for s in subjects if "<Picture 2>" in s.sources]
+    parts: list[str] = []
+
+    head = "The shot opens in the composition established by Picture 1"
+    clause = _subject_clause(opening, use_labels=False)
+    parts.append(f"{head}, holding {_lower_first(clause)}" if clause else head)
+    if environment:
+        parts.append(f"The setting is {_lower_first(environment)}")
+    parts.append("{{CAM}}")
+    intent = brief.intent.strip().rstrip(".")
+    if intent:
+        parts.append(f"Across the shot, {_lower_first(intent)}")
+    tail = ("The framing narrows toward the pose, spacing and composition established by "
+            "Picture 2, which the shot settles into at the end")
+    landing = _subject_clause(closing, use_labels=False)
+    parts.append(f"{tail}, holding {_lower_first(landing)}" if landing else tail)
+    return parts
+
+
 def draft_shot_body(shot: ShotPlan, subjects: list[SubjectPlan], brief: Brief,
                     environment: str, mode: Mode) -> str:
     """Says only what is supported. Placeholders are emitted so the renderer's substitution
@@ -115,7 +151,9 @@ def draft_shot_body(shot: ShotPlan, subjects: list[SubjectPlan], brief: Brief,
     use_labels = mode is Mode.REF2VA
     parts: list[str] = []
 
-    if shot.n == 1:
+    if mode is Mode.FL2VA and shot.n == 1:
+        parts += _anchor_path(present, brief, environment)
+    elif shot.n == 1:
         if present:
             parts.append(f"The frame holds {_subject_clause(present, use_labels)}")
         else:
@@ -123,14 +161,14 @@ def draft_shot_body(shot: ShotPlan, subjects: list[SubjectPlan], brief: Brief,
         if environment:
             env = environment[0].lower() + environment[1:] if environment else environment
             parts.append(f"The setting is {env}")
+        parts.append("{{CAM}}")
     else:
         if present:
             parts.append(f"The framing changes and {_subject_clause(present, use_labels)} "
                          "remains in shot")
         else:
             parts.append("The framing changes on the same scene")
-
-    parts.append("{{CAM}}")
+        parts.append("{{CAM}}")
 
     for snd in shot.sync_sound[:2]:
         parts.append(snd.rstrip("."))

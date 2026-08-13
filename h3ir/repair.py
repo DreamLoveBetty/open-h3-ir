@@ -93,6 +93,8 @@ def repair(text: str, *, target: Target, mode: Mode, labels: tuple[str, ...],
     #   * unicode hazards -- zero judgement, and a curly quote is a different token sequence
     res.text = _fix_unicode(res.text, res)
     res.text = _fix_labels(res.text, labels, res)
+    if mode is Mode.FL2VA:
+        res.text = _fix_fl2va_notation(res.text, res)
     res.text = _fix_dialogue(res.text, dialogue, res)
     if not res.text.endswith("\n"):
         res.text += "\n"
@@ -144,6 +146,31 @@ def _fix_labels(text: str, labels: tuple[str, ...], res: RepairResult) -> str:
             return f"<{kind} {top}>"
         text = re.sub(rf"<{kind}\s+(\d+)>", clamp, text)
     return text
+
+
+def _fix_fl2va_notation(text: str, res: RepairResult) -> str:
+    """FL2VA cites its pictures BARE, and it is the only mode that does.
+
+    base-en.txt 2.1 gives the mandated instruction line per mode: i2va and l2va bracket their
+    labels, fl2va writes `Picture 1 (from Shot 1)`, and the same bare form runs right through its
+    own published example's body. `render.instruction_line` copies that byte for byte, deliberately,
+    inconsistency included. A freely written brief did not: handed the exact line in its system
+    prompt, the model wrote `<Picture 1> (from [Shot 1])` anyway, and no rule looked -- so one mode
+    shipped two different notations depending on which path had won, which is the "near-miss label"
+    class of defect the whole label namespace is guarded against elsewhere.
+
+    Whether H3 itself prefers one form is an open measurement (design.md U3/E4). That both paths
+    must emit the same form is not open, and the spec decides which one.
+    """
+    fixed = re.sub(r"<(Picture\s+\d+)>", r"\1", text)
+    # `[Shot N]` is the mandated marker everywhere else in the document, so the brackets come off
+    # only inside the alignment instruction, the one place the spec writes `(from Shot N)`.
+    fixed = re.sub(r"\(from\s+\[Shot\s+(\d+)\]\)", r"(from Shot \1)", fixed)
+    if fixed != text:
+        res.repairs.append("rewrote the picture citations to fl2va's bare spec form "
+                           "(`Picture N`, `(from Shot N)`); this mode's mandated notation is bare "
+                           "and the deterministic renderer already emits it")
+    return fixed
 
 
 def _fix_timestamps(text: str, target: Target, res: RepairResult) -> str:

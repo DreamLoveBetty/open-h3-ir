@@ -12,7 +12,7 @@ Two neighbours, if one of them is the job instead:
 The project is `open-h3-ir`; the import package and the command are both `h3ir`.
 
 The checks to hold your work against, both reproducible with no model and no GPU: `h3ir controls` is
-20/20 in under a tenth of a second, and `pytest -q` is green. The control count is a gate and should
+21/21 in under a tenth of a second, and `pytest -q` is green. The control count is a gate and should
 only move when you deliberately add or remove a control. The test count is not pinned here, because it
 moves every time anyone adds a test and a stale number reads as a regression.
 
@@ -81,7 +81,7 @@ Prompt text lives in `h3ir/prompts/*.txt` as versioned files precisely so a chan
 can score. The loop is:
 
 ```bash
-h3ir controls                                  # must be 20/20 before anything else
+h3ir controls                                  # must be 21/21 before anything else
 h3ir eval --label my-change --prose prose_shot.v3.txt
 # read the gate; if SHIP-ABLE:
 h3ir baseline --label my-change

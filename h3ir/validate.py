@@ -323,6 +323,21 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
 
     used = {k: labels(text, k) for k in ("Subject", "Picture", "Video", "Audio")}
 
+    # FL2VA cites its pictures BARE. base-en.txt says so twice -- the mandated instruction line in
+    # 2.1 is `Picture 1 (from Shot 1) ...`, and its own published example in 5 keeps the bare form
+    # right through the body -- while every other mode brackets (ref-en.txt brackets all twelve of
+    # its citations, and the i2va and l2va instruction lines bracket too). Reading only the
+    # bracketed form made every legal FL2VA citation invisible: `used["Picture"]` came out empty on
+    # correct text, so L4 took its total-miss branch and the mode could not be compiled by either
+    # path. MiniMax's own published FL2VA example fails identically, which is what says the rule was
+    # wrong rather than the text.
+    #
+    # Read off the verbatim-stripped copy, unlike the bracketed scan above: nobody writes
+    # `<Picture 2>` in a line of dialogue, but "Picture 2" is ordinary English, and a picture named
+    # in the user's own words must not bind a conditioning image the brief never mentions.
+    if ctx.mode == "fl2va":
+        used["Picture"] |= {int(n) for n in re.findall(r"\bPicture\s+(\d+)", scrubbed_all)}
+
     bad_kinds = set(re.findall(r"<\s*([A-Za-z]+)\s+\d+\s*>", text)) - {
         "Subject", "Picture", "Video", "Audio"}
     for k in sorted(bad_kinds):

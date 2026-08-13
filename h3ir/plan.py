@@ -69,7 +69,18 @@ def build_manifest(brief: Brief, target: Target) -> list[ManifestEntry]:
     its paired soundtrack's <Audio j> label FIRST and then <Video k>, then standalone
     audios. Ordinals are 1-based per type in emission order.
     """
-    images = [a for a in brief.assets if a.kind is AssetKind.IMAGE]
+    # A frame anchor's ordinal is a fact about its ROLE, not about the order the caller listed the
+    # files in. `MiniMaxH3ImageToVideo.execute` appends first_frame and then last_frame, so the
+    # runtime emits "<Picture 1>: " before the opening plate and "<Picture 2>: " before the closing
+    # one, and the fl2va instruction line asserts exactly that alignment. A brief that listed its
+    # closing plate first therefore published a manifest whose <Picture 1> was the LAST frame,
+    # against text saying Picture 1 lands at 0.00 seconds -- the two anchors swapped, and silently,
+    # because a base mode has no retention_analysis in which any other line could disagree.
+    # Stable, and a no-op for every other role: reference images keep the caller's order, which for
+    # a reference brief IS the numbering they will wire.
+    anchor_rank = {Role.FRAME_ANCHOR_FIRST: 0, Role.FRAME_ANCHOR_LAST: 1}
+    images = sorted((a for a in brief.assets if a.kind is AssetKind.IMAGE),
+                    key=lambda a: anchor_rank.get(a.role, 2))
     videos = [a for a in brief.assets if a.kind is AssetKind.VIDEO]
     audios = [a for a in brief.assets if a.kind is AssetKind.AUDIO]
 
