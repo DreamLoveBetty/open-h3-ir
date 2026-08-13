@@ -39,7 +39,50 @@ SIZING = ("match", "max")
 
 
 class ServiceError(RuntimeError):
-    """Raised for every failure a node user can act on. The message is the user interface."""
+    """Raised for every failure a node user can act on. The message is the user interface.
+
+    `code` exists so callers can react to a class of failure without reading the prose. Sniffing the
+    message would break the moment the wording improved, and the wording is meant to keep improving.
+    """
+
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code
+
+
+ASSET_UNREADABLE = "asset-unreadable"
+
+
+def retranslate(error: Exception) -> bool:
+    """True when the failure was the service being unable to open an attachment.
+
+    That is the only failure a different spelling of the path could fix, so it is the only one worth
+    retrying. Retrying anything else would hide a real problem behind repeated attempts.
+    """
+    return getattr(error, "code", "") == ASSET_UNREADABLE
+
+
+def path_candidates(comfy_root: str, override: str = "") -> list[str]:
+    r"""Spellings of ComfyUI's folder to offer the service, best guess first.
+
+    ComfyUI's own location is known from ComfyUI, so nobody types it. What cannot be known is how a
+    service on another view of the same disk spells it, and the common case by far is ComfyUI on
+    Windows with the service in WSL or a container, where C:\ComfyUI becomes /mnt/c/ComfyUI. So that
+    form is offered and the service is asked to confirm it by actually opening the file. Nothing is
+    assumed: a candidate that does not work produces the next attempt, and running out produces an
+    error that lists what was tried.
+    """
+    if override.strip():
+        return [override.strip()]
+    if not comfy_root:
+        return [""]
+    out = [comfy_root]
+    norm = comfy_root.replace("\\", "/")
+    if len(norm) > 2 and norm[1] == ":":
+        drive, rest = norm[0].lower(), norm[2:].lstrip("/")
+        out.append(f"/mnt/{drive}/{rest}")
+        out.append(f"/{drive}/{rest}")
+    return out
 
 
 def _url(server: str, path: str) -> str:
@@ -129,14 +172,13 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
 # Sockets, in the order their contents get numbered, and the role each one means. The role is named
 # here rather than inferred by the service, because an inferred role can disagree with how the graph
 # is wired and nothing would say so.
-PICTURE_SOCKETS = ("reference_1", "reference_2", "reference_3", "reference_4")
+PICTURE_SOCKETS = tuple(f"reference_{i}" for i in range(1, 10))
 VIDEO_SOCKETS = ("video_to_edit", "video_to_continue")
 SOUND_SOCKETS = ("music", "sound_effect", "voice_to_match")
 ROLE_BY_SOCKET = {
     "opening_frame": "frame_anchor_first",
     "closing_frame": "frame_anchor_last",
-    "reference_1": "subject", "reference_2": "subject",
-    "reference_3": "subject", "reference_4": "subject",
+    **{f"reference_{i}": "subject" for i in range(1, 10)},
     "video_to_edit": "edit_source",
     "video_to_continue": "continuation_source",
     "music": "bgm",
@@ -250,12 +292,12 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
         code = det.get("code", "")
         if code in ("asset-no-path", "asset-missing"):
             raise ServiceError(
-                f"the service could not read a reference image: {det.get('message', code)}. "
+                f"the service could not read an attachment: {det.get('message', code)}. "
                 "ComfyUI and the service are looking at the same file through different paths. "
                 "Fill in this node's comfy_path_prefix and service_path_prefix so the path can be "
                 "translated, for example C:\\ComfyUI-Production and /mnt/c/ComfyUI-Production. If "
                 "the service runs on another machine entirely it cannot open ComfyUI's files at "
-                "all, and only text-only prompts will work.")
+                "all, and only text-only prompts will work.", ASSET_UNREADABLE)
         problems = body.get("errors") if isinstance(body, dict) else None
         if problems:
             lines = "\n  ".join(f"{p.get('rule')}: {p.get('message')}" for p in problems)

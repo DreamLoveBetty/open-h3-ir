@@ -244,8 +244,9 @@ could before: left to guess, the compiler can decide your picture is an opening 
 feeds it as a reference, and the render comes out wrong with nothing on screen to say why.
 
 There is one duration field, because H3's frame grid has to be snapped once and used for both the
-brief and the latent. Sounds and video attach through their own sockets too, each naming what it is:
-`music`, `sound_effect`, `voice_to_match`, `video_to_edit`, `video_to_continue`.
+brief and the latent. Sounds and video attach through their own sockets too, each named for what it
+is: music, a sound effect, a voice to match, footage to edit, footage to carry on from. The reference
+list grows a socket at a time up to H3's nine, and nothing asks you to type a filesystem path.
 
 The node adds no packages to ComfyUI's Python. It speaks HTTP to `h3ir serve` with the standard
 library, so the compiler can never break a ComfyUI install and the service can sit on another machine.

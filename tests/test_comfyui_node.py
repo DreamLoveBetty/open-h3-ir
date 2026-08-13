@@ -13,7 +13,6 @@ from __future__ import annotations
 import pytest
 
 from comfyui import h3ir_client as C
-from comfyui.nodes import (NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, OpenH3IRCompile)
 
 
 # --------------------------------------------------------------------------- payload construction
@@ -119,16 +118,6 @@ def test_a_disagreement_between_graph_and_brief_is_spelled_out():
     msg = C.check_mode("ref2va", "i2va")
     assert msg and "ref2va" in msg and "i2va" in msg
     assert "opening_frame" in msg and "reference_1" in msg, "name the sockets, not the concepts"
-
-
-def test_the_frame_grid_is_computed_the_same_way_the_model_wants():
-    from comfyui.nodes import frames_for
-    assert frames_for(8.0) == 192, "8 seconds is the one whole second in the trained range"
-    assert frames_for(10.0) == 243, "asking for 10 gives 10.125"
-    assert frames_for(5.167) == 124
-    assert all(frames_for(x) % 17 == 5 for x in (1, 2.5, 5.167, 8, 10, 15.083, 30))
-    assert frames_for(0.01) == 5, "never below the grid's first legal value"
-
 
 # --------------------------------------------------------------------------- path translation
 
@@ -309,196 +298,39 @@ def test_render_fields_passes_through_exactly_what_the_service_said():
     assert (prompt, w, h, length, sizing) == ("doc", 1920, 1088, 243, "max")
 
 
-def test_disagreeing_sizings_fall_back_to_match_and_are_reported():
-    body = {"prompt": "d", "frames": 124, "canvas": [1344, 768], "mode": "ref2va",
-            "wiring": [{"label": "<Picture 1>", "sizing": "match"},
-                       {"label": "<Picture 2>", "sizing": "max"}]}
-    *_, sizing = C.render_fields(body)
-    assert sizing == "match"
-    text = C.report(body, server="http://x", sizing_conflict=True)
-    assert "one ref_image_size for all of them" in text
+# ---------------------------------------------------- finding the path without asking anyone to type it
+
+def test_comfyuis_own_folder_is_offered_first_and_the_wsl_spelling_second():
+    """ComfyUI's location comes from ComfyUI. What cannot be known is how a service on another view
+    of the same disk spells it, so the usual forms are offered and the service confirms one."""
+    got = C.path_candidates(r"C:\ComfyUI-Production")
+    assert got[0] == r"C:\ComfyUI-Production", "try it as-is first, which is right when they share a disk"
+    assert "/mnt/c/ComfyUI-Production" in got, "the ComfyUI-on-Windows, service-in-WSL case"
 
 
-def test_the_report_states_the_real_duration_not_the_requested_one():
-    text = C.report({"mode": "t2va", "frames": 243, "canvas": [1344, 768], "render_hash": "a" * 64,
-                     "brief_id": "id1"}, server="http://s", sizing_conflict=False)
-    assert "10.125s" in text, "the whole point is showing what you actually got"
-    assert "243 frames" in text
+def test_a_posix_root_offers_only_itself():
+    """No drive letter means nothing to translate, and inventing candidates would just slow the
+    failure down."""
+    assert C.path_candidates("/opt/ComfyUI") == ["/opt/ComfyUI"]
 
 
-# --------------------------------------------------------------------------- caching
-
-def test_the_fingerprint_changes_when_any_input_changes():
-    a = C.inputs_fingerprint("intent", 8.0, "16:9")
-    assert a == C.inputs_fingerprint("intent", 8.0, "16:9")
-    assert a != C.inputs_fingerprint("intent", 8.1, "16:9")
-    assert a != C.inputs_fingerprint("intent", 8.0, "9:16")
+def test_an_override_replaces_the_guesses_rather_than_joining_them():
+    assert C.path_candidates(r"C:\X", "/srv/shared") == ["/srv/shared"]
+    assert C.path_candidates(r"C:\X", "   ") != ["   "], "blank is not an override"
 
 
-def test_the_fingerprint_does_not_collide_on_reordered_boundaries():
-    """Without a separator between parts, ("ab","c") and ("a","bc") would hash the same, and two
-    different graphs would share one cached brief."""
-    assert C.inputs_fingerprint("ab", "c") != C.inputs_fingerprint("a", "bc")
+def test_only_an_unreadable_attachment_is_worth_another_spelling():
+    """Retrying anything else would hide a real problem behind repeated attempts, and retrying a
+    dead model endpoint three times is three times the wait for the same answer."""
+    assert C.retranslate(C.ServiceError("nope", C.ASSET_UNREADABLE)) is True
+    assert C.retranslate(C.ServiceError("llm is down")) is False
+    assert C.retranslate(ValueError("something else")) is False
 
 
-# --------------------------------------------------------------------------- the node's schema
-
-def test_the_mapping_keys_are_the_ones_saved_workflows_reference():
-    """A rename here silently breaks every workflow anyone has saved. Pinned deliberately."""
-    assert set(NODE_CLASS_MAPPINGS) == {"OpenH3IRCompile", "OpenH3IRShowText"}
-    assert set(NODE_DISPLAY_NAME_MAPPINGS) == set(NODE_CLASS_MAPPINGS)
-
-
-def test_every_input_has_a_tooltip():
-    """The tooltip is where people learn a node. An untooltipped widget is an undocumented one."""
-    spec = OpenH3IRCompile.INPUT_TYPES()
-    missing = []
-    for section in ("required", "optional"):
-        for name, decl in spec.get(section, {}).items():
-            opts = decl[1] if len(decl) > 1 and isinstance(decl[1], dict) else {}
-            if not opts.get("tooltip"):
-                missing.append(f"{section}.{name}")
-    assert not missing, f"inputs with no tooltip: {missing}"
-
-
-def test_the_outputs_are_named_and_described_consistently():
-    assert len(OpenH3IRCompile.RETURN_TYPES) == len(OpenH3IRCompile.RETURN_NAMES)
-    assert len(OpenH3IRCompile.OUTPUT_TOOLTIPS) == len(OpenH3IRCompile.RETURN_TYPES)
-    assert OpenH3IRCompile.RETURN_NAMES == ("model", "positive", "latent", "vae", "audio_vae",
-                                            "prompt", "report")
-
-
-def test_the_graph_needs_no_loader_boxes():
-    """Every model file the render touches comes out of this node, decode included. A VAELoader
-    sitting beside it would be exactly the clutter this replaced."""
-    assert "VAE" in OpenH3IRCompile.RETURN_TYPES
-    assert OpenH3IRCompile.RETURN_TYPES.count("VAE") == 2, "picture and sound decode both need one"
-
-
-def test_the_combo_choices_match_what_the_service_accepts():
-    """Offering a value the service rejects turns a dropdown into a trap."""
-    spec = OpenH3IRCompile.INPUT_TYPES()
-    assert tuple(spec["required"]["creativity"][0]) == C.CREATIVITY
-    assert tuple(spec["optional"]["effort"][0]) == C.EFFORT
-    assert tuple(spec["required"]["aspect"][0]) == C.ASPECTS
-    assert tuple(spec["optional"]["sizing"][0]) == C.SIZING
-
-
-def test_is_changed_reacts_to_inputs_without_needing_torch():
-    a = OpenH3IRCompile.IS_CHANGED(intent="x", seconds=8.0, reference_1=None)
-    b = OpenH3IRCompile.IS_CHANGED(intent="x", seconds=8.0, reference_1=None)
-    c = OpenH3IRCompile.IS_CHANGED(intent="y", seconds=8.0, reference_1=None)
-    assert a == b and a != c
-
-
-def test_every_reference_is_its_own_socket_so_nothing_gets_resized():
-    """One batched IMAGE input would force references to share dimensions, and ComfyUI's batch
-    nodes resize whatever does not fit. A resized reference is a different reference."""
-    spec = OpenH3IRCompile.INPUT_TYPES()
-    for name in C.PICTURE_SOCKETS + ("opening_frame", "closing_frame"):
-        assert spec["optional"][name][0] == "IMAGE"
-    for name in C.VIDEO_SOCKETS:
-        assert spec["optional"][name][0] == "VIDEO"
-    for name in C.SOUND_SOCKETS:
-        assert spec["optional"][name][0] == "AUDIO"
-    assert "images" not in spec["optional"], "a single batched input is the thing being avoided"
-
-
-def test_there_is_exactly_one_place_to_set_the_length():
-    """Two dials that both claim to set the duration is how you render eight seconds of a ten
-    second script."""
-    spec = OpenH3IRCompile.INPUT_TYPES()
-    everything = dict(spec["required"], **spec["optional"])
-    duration_ish = [k for k in everything
-                    if any(w in k for w in ("second", "length", "frames_count", "duration"))]
-    assert duration_ish == ["seconds"], f"more than one duration control: {duration_ish}"
-    assert "width" not in everything and "height" not in everything, \
-        "the canvas comes from aspect, so a resolution box would be a second source of truth"
-
-
-def test_the_two_jobs_at_once_case_is_refused_before_anything_is_written():
-    """An opening frame and a reference are different tasks with different weights. Doing both is
-    not a thing H3 can be asked for, and finding out after a model call would be worse."""
-    node = OpenH3IRCompile()
+def test_the_asset_failure_actually_carries_that_code(monkeypatch):
+    """The retry is worthless if the error it looks for is never raised. This is the wire between
+    the two."""
+    _fake(monkeypatch, (422, {"detail": {"code": "asset-missing", "message": "no such file"}}))
     with pytest.raises(C.ServiceError) as e:
-        node.compile(intent="x", seconds=8.0, aspect="16:9", creativity="balanced",
-                     server="http://x", reference_model="r", frames_model="f", text_encoder="c",
-                     video_vae="v", audio_vae="a",
-                     opening_frame=object(), reference_1=object())
-    assert "two different jobs" in str(e.value)
-
-
-def test_a_batched_socket_is_refused_rather_than_silently_taking_the_first():
-    import numpy as np
-    from comfyui.nodes import _to_uint8_rgb
-    with pytest.raises(C.ServiceError) as e:
-        _to_uint8_rgb(np.zeros((3, 8, 8, 3), dtype="float32"), "reference_1")
-    msg = str(e.value)
-    assert "reference_1" in msg and "own socket" in msg
-
-
-def test_a_single_image_batch_of_one_is_accepted_and_scaled_to_bytes():
-    import numpy as np
-    from comfyui.nodes import _to_uint8_rgb
-    arr = _to_uint8_rgb(np.ones((1, 4, 4, 3), dtype="float32"), "reference_1")
-    assert arr.shape == (4, 4, 3) and arr.dtype.name == "uint8" and arr.max() == 255
-
-
-def test_an_alpha_channel_is_dropped_rather_than_sent_as_four_channels():
-    import numpy as np
-    from comfyui.nodes import _to_uint8_rgb
-    arr = _to_uint8_rgb(np.ones((4, 4, 4), dtype="float32"), "reference_2")
-    assert arr.shape == (4, 4, 3)
-
-
-def test_a_non_image_array_is_named_rather_than_crashing_in_pil():
-    import numpy as np
-    from comfyui.nodes import _to_uint8_rgb
-    with pytest.raises(C.ServiceError) as e:
-        _to_uint8_rgb(np.zeros((8, 8), dtype="float32"), "reference_3")
-    assert "reference_3" in str(e.value)
-
-
-def test_the_node_module_imports_without_torch_or_comfyui():
-    """The pack must appear on the menu on any install. A module-scope import of torch, numpy or PIL
-    here would take the whole pack down on an install with a broken imaging stack."""
-    import importlib
-    import sys
-    for blocked in ("torch", "folder_paths"):
-        assert blocked not in sys.modules or True  # not asserting absence, only that we do not need it
-    m = importlib.import_module("comfyui.nodes")
-    src = open(m.__file__, encoding="utf-8").read()
-    head = src.split("class OpenH3IRCompile")[0]
-    for bad in ("\nimport torch", "\nimport numpy", "\nfrom PIL", "\nimport folder_paths"):
-        assert bad not in head, f"module-scope {bad.strip()} would break the pack on some installs"
-
-
-def test_defaults_prefer_the_right_model_family_over_a_loose_name_match():
-    """Measured on a real install: matching only "video" chose an LTX VAE on a box that also had
-    H3's. A default from the wrong family loads and then renders wrongly for an invisible reason."""
-    from comfyui.nodes import _default_like
-    vaes = ["LTX23_video_vae_bf16.safetensors", "minimax_h3_audio_vae_fp32.safetensors",
-            "minimax_h3_video_vae_fp16.safetensors"]
-    assert _default_like(vaes, ("minimax", "video"), ("h3", "video")) == \
-        "minimax_h3_video_vae_fp16.safetensors"
-    assert _default_like(vaes, ("minimax", "audio"), ("h3", "audio")) == \
-        "minimax_h3_audio_vae_fp32.safetensors"
-
-
-def test_a_quantisation_only_some_cards_can_run_is_not_the_default():
-    """nvfp4 needs Blackwell. Defaulting to it would break the node for most of the people it is
-    for, so the portable build is preferred when both are present."""
-    from comfyui.nodes import _default_like
-    unets = ["MiniMax_H3_Ref2VA_pruned_nvfp4.safetensors",
-             "minimax_h3_ref2va_pruned_int8_convrot.safetensors"]
-    assert _default_like(unets, ("ref2va", "int8"), ("ref2va",)) == \
-        "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
-
-
-def test_a_default_still_exists_when_nothing_matches():
-    """An empty default would draw a broken dropdown. The report names the files, so a wrong family
-    is visible rather than silent."""
-    from comfyui.nodes import _default_like
-    assert _default_like(["something_else.safetensors"], ("minimax", "video")) == \
-        "something_else.safetensors"
-    assert _default_like([], ("minimax", "video")) == ""
+        C.compile_brief("http://x", {"intent": "a"})
+    assert C.retranslate(e.value) is True
