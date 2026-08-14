@@ -776,6 +776,32 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                 f"signal, and the brief claims {entry.group(2)!r} — that marker says the clip becomes "
                 "the target's audio. Use 'reference', or 'weak_reference' for broad similarity only")
 
+    # An <Audio N> asserted to BE a frame of the video. Measured on 4 of 50 recorded audio briefs,
+    # all of them audio-only: "anchored by <Audio 1> as the opening frame", "<Audio 1>, which serves
+    # as the first frame", and in retention_analysis the Picture-shaped parenthetical
+    # "<Audio 1> ([Shot 1] first frame): reference - the image serves as the exact starting frame".
+    # There is no image attached in any of them. This is the compiler telling H3 that a wav is a
+    # picture, in a document that reads perfectly well.
+    #
+    # M11 stops the `keyframe completion` claim in the prefix and does not stop this: blocking the
+    # task type moved the same invention into prose rather than ending it, which is why the claim
+    # needs its own rule. ERROR, and safe at that severity because an audio asset is never a frame
+    # under any reading: the deletion is unambiguous. Scoped to the assertion ("as the first frame",
+    # "is the opening frame", a frame parenthetical on an Audio line) so that ordinary prose about
+    # timing -- an <Audio N> continuing through the final frame -- is untouched.
+    for pat in (re.compile(r"<Audio\s+\d+>[^.\n]{0,80}?(?:as|is)\s+(?:the\s+)?(?:exact\s+)?"
+                           r"(?:opening|first|starting|final|last)\s+frame", re.I),
+                re.compile(r"^\s*<Audio\s+\d+>\s*\(\[?Shot\s+\d+\]?[^)]*\bframe\b[^)]*\)",
+                           re.M | re.I)):
+        m = pat.search(scrubbed_all)
+        if m:
+            add("R26-audio-described-as-a-frame", "ERROR",
+                f"an audio reference is described as a frame of the video ({m.group(0)[:70]!r}). An "
+                "<Audio N> is a sound signal and has no frames; only an image can be a concrete "
+                "frame, and this request has none attached. Delete the claim and say what the audio "
+                "IS and where it is heard")
+            break
+
     if len(re.findall(r":\s*fully_copy\b", ret)) > 1:
         add("R9-multiple-full-copies", "ERROR",
             "more than one <Audio N> claims fully_copy; only one audio can be the complete "

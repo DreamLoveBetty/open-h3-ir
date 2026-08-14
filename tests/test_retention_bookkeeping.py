@@ -232,3 +232,96 @@ def test_the_ask_licenses_the_merged_definition():
     ask = backend.asks[0]
     assert "whose appearance comes from <Picture 1> and whose walking motion comes from" in ask
     assert "never define the same person or object twice" in ask.lower()
+
+
+# ---------------------------------------------------------------- a wav is not a picture
+
+AUDIO_ONLY = ("subject_definitions:\n<Audio 1> is the complete and final audio track for the "
+              "target video.\n\nsummary:\n[audio reuse] The target video is a single-shot "
+              "sequence of a ferry pulling away from a jetty, {claim}. <Audio 1> is fully copied "
+              "as the complete final audio track.\n\nretention_analysis:\n{ret}\n\n"
+              "detailed_description:\nThe target video is in cinematic style.\n[Shot 1] The camera "
+              "pushes in with small amplitude at slow speed as the ferry pulls away from the "
+              "jetty.\n\noverall_soundscape:\nWater slaps the hull.\n\nnon_diegetic_music:\nN/A\n")
+GOOD_RET = "<Audio 1>: fully_copy - <Audio 1> is reused 1:1 as the target video's final track."
+
+
+def _audio_ctx(**kw) -> Context:
+    base = dict(mode="ref2va", n_pictures=0, n_audios=1, duration_s=8.0)
+    base.update(kw)
+    return Context(**base)
+
+
+def test_an_audio_asserted_to_be_a_frame_is_an_error():
+    """Measured on 4 of 50 recorded audio-only briefs, all of them `ready`: "anchored by <Audio 1>
+    as the opening frame", "<Audio 1>, which serves as the first frame". No image is attached in any
+    of them, so the brief tells H3 that a wav is a picture."""
+    for claim in ("anchored by <Audio 1> as the opening frame",
+                  "opening on <Audio 1>, which serves as the first frame",
+                  "closing on <Audio 1> as the last frame"):
+        text = AUDIO_ONLY.format(claim=claim, ret=GOOD_RET)
+        errs = {f.rule for f in validate(text, _audio_ctx()) if f.severity == "ERROR"}
+        assert "R26-audio-described-as-a-frame" in errs, (claim, errs)
+
+
+def test_the_picture_shaped_parenthetical_on_an_audio_line_is_an_error():
+    """The other half of the worst document in the corpus: an <Audio N> retention line carrying a
+    frame scope, with a note calling the wav "the image"."""
+    text = AUDIO_ONLY.format(
+        claim="a quiet crossing",
+        ret="<Audio 1> ([Shot 1] first frame): reference - the image serves as the exact starting "
+            "frame of the video.\n" + GOOD_RET)
+    errs = {f.rule for f in validate(text, _audio_ctx()) if f.severity == "ERROR"}
+    assert "R26-audio-described-as-a-frame" in errs, errs
+
+
+def test_ordinary_prose_about_when_an_audio_is_heard_is_untouched():
+    """ref-en.txt's own example writes "continues through the final frame" about a laugh track. A
+    rule that fired on that would be rejecting the spec's own sentence."""
+    text = AUDIO_ONLY.format(
+        claim="scored throughout",
+        ret=GOOD_RET).replace("Water slaps the hull.",
+                              "<Audio 1> continues through the final frame of the video.")
+    assert "R26-audio-described-as-a-frame" not in {
+        f.rule for f in validate(text, _audio_ctx())}
+
+
+def test_a_brief_with_no_picture_at_all_is_told_so():
+    """The statement was emitted only when a <Picture N> existed, so the brief that had none was
+    left to infer from the specification in its system prompt, which teaches the construct."""
+    from h3ir.analyse import analyse_audio
+    from h3ir.draft import deterministic_draft
+    from h3ir.models import AssetKind, AssetRef, Brief, Mode, Role
+    from h3ir.plan import ProfileOptions
+    from h3ir.prose import compose_brief
+
+    class Capture:
+        class _Cfg:
+            model = "capture"
+        cfg = _Cfg()
+
+        class _Reply:
+            content = "subject_definitions:\n"
+
+        def __init__(self) -> None:
+            self.asks: list[str] = []
+
+        def chat(self, messages, **kw):
+            c = messages[-1]["content"]
+            self.asks.append(c if isinstance(c, str) else c[0]["text"])
+            return self._Reply()
+
+    ref = AssetRef(kind=AssetKind.AUDIO, role=Role.BGM, sha256="wav", seconds=4.0,
+                   note="a slow piano loop")
+    cards = {"wav": analyse_audio(ref, "")}
+    brief = Brief(intent="Use this recording as the complete final audio of a ferry leaving a "
+                         "jetty.", seconds=8.0, assets=[ref])
+    plan = deterministic_draft(brief, Mode.REF2VA, cards, opts=ProfileOptions())
+    backend = Capture()
+    compose_brief(backend, brief, plan.subjects, cards, plan.target,
+                  tuple(m.label for m in plan.manifest), prompt_name="compose.v2.txt",
+                  mode=Mode.REF2VA, task_types=tuple(plan.task_types))
+    ask = backend.asks[0]
+    assert "No image is attached to this request." in ask
+    assert "never claim `keyframe completion`" in ask
+    assert "it has no frames and it is not an image" in ask

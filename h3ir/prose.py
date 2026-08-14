@@ -301,6 +301,17 @@ MERGE_SUBJECTS = (
     "provide several subjects, which is the same rule read the other way.")
 
 
+# What a brief with no image attached has to be told, because the specification in its system prompt
+# teaches a construct it cannot use. Four of fifty recorded audio-only briefs asserted that the wav
+# was a frame of the video, and seven claimed `keyframe completion` with nothing visual attached.
+NO_PICTURES_AT_ALL = (
+    "No image is attached to this request. Nothing in this brief is a frame of the target video, so "
+    "never write that anything `is the first frame of` or `is the last frame of` a shot, never give "
+    "an <Audio N> or a <Video N> a frame parenthetical, and never claim `keyframe completion`: that "
+    "task type is for an image serving as a concrete frame and there is no image here. An <Audio N> "
+    "is a sound signal; it has no frames and it is not an image.")
+
+
 def reference_audio_words(transcripts: tuple[tuple[str, str], ...]) -> str:
     """The words on an attached recording, handed to the stage that writes the document.
 
@@ -393,9 +404,15 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                 "For any <Audio N> in that list: you have NOT heard it and cannot describe what it "
                 "contains. Say only what its note above states, and never claim it came from a <Video N> "
                 "— the wiring decides that and you have not been told it.")
-        pics = reference_picture_facts()
-        if pics and any(lb.startswith("<Picture") for lb in labels):
-            label_facts += ("\n" if label_facts else "") + pics
+        if any(lb.startswith("<Picture") for lb in labels):
+            label_facts += ("\n" if label_facts else "") + reference_picture_facts()
+        else:
+            # The case nobody was told about, and it produced the sharpest fabrication in the corpus:
+            # on an audio-only brief the writer wrote "anchored by <Audio 1> as the opening frame" and
+            # claimed `keyframe completion` with no image attached anywhere. The picture statement was
+            # emitted only when a <Picture N> existed, so a brief with no pictures at all was left to
+            # infer from the specification in its system prompt, which teaches the construct.
+            label_facts += ("\n" if label_facts else "") + NO_PICTURES_AT_ALL
     dlg = "\n".join(f'- "{d.text}" ({d.language})'
                       + (f", spoken by {d.speaker_hint}" if d.speaker_hint else "")
                       + (" as an off-screen voiceover" if d.voiceover else "")
