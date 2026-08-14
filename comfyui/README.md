@@ -269,16 +269,10 @@ Re-queue with a different `brief seed`.
 
 ## The example graph
 
-`example/openh3ir_main.api.json` is a graph that actually ran, byte for byte as submitted. It
-renders 8 seconds at 1344x768 from two reference plates and writes an mp4 with H3's own audio.
-
-Its Setup node holds the five filenames from the machine it ran on, which is what a picked file looks
-like when it is written down. Yours will be different, so change them: that is the one thing you have
-to do to this graph before it runs anywhere else.
-
-It is in ComfyUI's API format, which is what the `/prompt` endpoint accepts, because that is the format
-that actually ran. A canvas workflow assembled by hand and never executed can display settings it never
-used, so there is not one here.
+`example/openh3ir_tray.api.json` is the first graph that ever rendered through the tray, byte for
+byte as submitted: two named pictures and a sound on the tray, a prompt that mentions them with @
+and locks one announcer line with @speaks, the full Turbo chain, and a save. Open it, or drag the
+video it produced onto the canvas, and the whole thing comes back.
 
 ## Known limits of this machine, not of the pack
 

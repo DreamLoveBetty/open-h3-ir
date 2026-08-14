@@ -13,33 +13,34 @@
   }
  },
  "20": {
-  "class_type": "LoadImage",
+  "class_type": "OpenH3IRMedia",
   "inputs": {
-   "image": "openh3ir/openh3ir_plate_car.jpg"
+   "tray": "[{\"kind\": \"picture\", \"label\": \"carguy\", \"file\": \"openh3ir/openh3ir_plate_car.jpg [input]\", \"role\": \"subject\", \"note\": \"the black sports car\"}, {\"kind\": \"picture\", \"label\": \"showroom\", \"file\": \"openh3ir/openh3ir_plate_showroom.jpg [input]\", \"role\": \"environment\", \"note\": \"the dark showroom\"}, {\"kind\": \"sound\", \"label\": \"rumble\", \"file\": \"openh3ir_sfx2s.wav [input]\", \"role\": \"sfx\", \"note\": \"a low engine rumble, close\"}]"
   }
  },
  "30": {
   "class_type": "OpenH3IRCompile",
   "inputs": {
-   "intent": "the car rolls through shallow water at night, city lights reflecting off the ripples",
+   "intent": "@carguy prowls across @showroom and stops under the ring light, and an unseen announcer @speaks(\"Nothing on this floor moves like it.\")",
    "seconds": 8.0,
    "aspect": "16:9",
    "creativity": "balanced",
    "silent": false,
    "shots": "auto",
-   "megapixels": 1.5,
-   "pictures.picture 1": [
-    "20",
-    0
-   ],
-   "picture_notes": "the car",
+   "megapixels": 0.0,
+   "spoken_language": "English",
+   "seed": 7,
    "setup": [
     "10",
+    0
+   ],
+   "media": [
+    "20",
     0
    ]
   }
  },
- "40": {
+ "41": {
   "class_type": "PreviewAny",
   "inputs": {
    "source": [
@@ -190,7 +191,7 @@
     "150",
     0
    ],
-   "filename_prefix": "OpenH3IR_main_15MP",
+   "filename_prefix": "OpenH3IR_tray_first",
    "format": "auto",
    "codec": "auto"
   }
