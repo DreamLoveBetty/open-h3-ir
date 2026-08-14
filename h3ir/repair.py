@@ -98,6 +98,7 @@ def repair(text: str, *, target: Target, mode: Mode, labels: tuple[str, ...],
         res.text = _fix_fl2va_notation(res.text, res)
     res.text = _fix_instruction_line(res.text, target, mode, res)
     res.text = _fix_dialogue(res.text, dialogue, res)
+    res.text = _fix_echoed_dialogue(res.text, dialogue, res)
     if not res.text.endswith("\n"):
         res.text += "\n"
     return res
@@ -339,6 +340,52 @@ def _fix_dialogue(text: str, expected: tuple[str, ...], res: RepairResult) -> st
         text = text[:target_block.start()] + f"<d>{lang}{want}</d>" + text[target_block.end():]
         res.repairs.append(f"replaced a paraphrase with the caller's exact line: {want[:40]!r}")
         blocks = list(re.finditer(r"<d>\s*(\[[^\]]*\]\s*)?(.*?)</d>", text, re.S))
+    return text
+
+
+def _fix_echoed_dialogue(text: str, expected: tuple[str, ...], res: RepairResult) -> str:
+    """One line, whole in one block and echoed in a later one, divided at the cut instead.
+
+    base-en.txt 4.4's construct for a line that keeps sounding across a cut is ONE line divided at
+    the cut, marked at both connecting points. What the writer produces instead, reproducibly, is the
+    whole line in the first shot and a tail of it repeated after the cut, which schedules those words
+    twice. Making that an ERROR was measured against the live service and did not converge: five of
+    seven runs came back on the same shape after both correction rounds and lost the written brief.
+
+    It is derivable, which is what makes it a repair rather than a rejection. The caller's line is a
+    fact this layer holds; the echoed fragment is a suffix of it; the writer has already decided where
+    the cut falls and has already marked both sides. Deleting the duplicated words from the first
+    block leaves exactly the mandated construct, in the caller's own words, each half spoken once.
+
+    Deliberately narrow. The fragment must be a real suffix of the line, at least three words long, in
+    a block AFTER the one holding the whole line, and the remaining head must still be a phrase. Any
+    other shape is left to D10 to report, because rearranging it would be inventing a split rather
+    than carrying out the one the writer chose.
+    """
+    if not expected:
+        return text
+    for want in expected:
+        blocks = list(re.finditer(r"<d>(\s*\[[^\]]*\]\s*)?(.*?)</d>", text, re.S))
+        idx = next((i for i, b in enumerate(blocks) if want in b.group(2)), None)
+        if idx is None:
+            continue
+        for j in range(idx + 1, len(blocks)):
+            frag = re.sub(r"^[\s.…]+", "", blocks[j].group(2)).strip()
+            if len(frag.split()) < 3 or not want.endswith(frag):
+                continue
+            head = want[:len(want) - len(frag)].rstrip()
+            if len(head.split()) < 2:
+                continue
+            later, earlier = blocks[j], blocks[idx]
+            lang_l = (later.group(1) or " ").strip()
+            lang_e = (earlier.group(1) or " ").strip()
+            text = (text[:later.start()] + f"<d>{lang_l} {frag}</d>" + text[later.end():])
+            text = (text[:earlier.start()] + f"<d>{lang_e} {head}</d>" + text[earlier.end():])
+            res.repairs.append(
+                "the caller's line was written in full and then echoed after the cut, so those "
+                "words were scheduled twice; divided it at the cut instead, per base-en.txt 4.4: "
+                f"{head[-40:]!r} then {frag[:40]!r}")
+            break
     return text
 
 

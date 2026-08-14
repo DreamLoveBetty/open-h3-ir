@@ -804,6 +804,12 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
         n = int(num)
         nums.append(n)
         head = body[:70]
+        # A leading `<scenetrans>` is skipped rather than treated as missing time. base-en.txt 4.4
+        # puts the marker "at the connecting points in both parts", and the connecting point of the
+        # SECOND part is its start, so `[Shot 2] <scenetrans> At 00:06.000, ...` is the two rules
+        # meeting. The cut time is there and unambiguous; reading it as absent cost a whole written
+        # brief on the one request that asked for the join to be marked on both sides.
+        head = re.sub(r"^\s*(?:<scenetrans>\s*)+", " ", head)
         ts = re.match(r"\s*,?\s*At\s+(\d{2}):(\d{2})\.(\d{3})", head)
         loose = re.match(r"\s*,?\s*At\s+(\d+)[.:](\d+)", head)
         if n == 1:

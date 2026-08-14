@@ -124,6 +124,71 @@ def test_the_whole_line_then_a_recap_of_its_tail_is_the_same_defect():
     assert "again" in errs[0].msg and "ellipsis" in errs[0].msg
 
 
+def test_the_echo_is_repaired_into_the_split_the_spec_asks_for():
+    """Measured, not guessed: with the echo made an ERROR, the writer did not converge. Five of
+    seven M8 runs came back on the same shape after both correction rounds and lost the whole
+    written brief to the draft, and a finding that survives being stated plainly is a signal about
+    the finding rather than about the model.
+
+    The construct it was reaching for is derivable, so it is a substitution rather than a re-roll:
+    the caller's line is a fact this layer holds, the echoed fragment is a suffix of it, and the
+    writer has already chosen where the cut falls and marked both sides. Removing the duplicated
+    words from the first block leaves exactly base-en.txt 4.4's construct, in the caller's own words,
+    each half spoken once.
+    """
+    from h3ir.grid import Target
+    from h3ir.repair import repair
+
+    written = _doc(f"{SHOT1}<d>[English] {LINE}</d> <scenetrans> {CONTINUITY}\n"
+                   f"{SHOT2}<scenetrans> he continues: <d>[English] and not the whole lock.</d>")
+    out = repair(written, target=Target.build(12.0), mode=Mode.T2VA, labels=(),
+                 dialogue=(LINE,))
+    blocks = [b for b in __import__("re").findall(r"<d>(.*?)</d>", out.text)]
+    assert blocks == ["[English] If it turns halfway and stops, the pin is worn, so you change "
+                      "the pin", "[English] and not the whole lock."], blocks
+    assert any("divided" in r for r in out.repairs), out.repairs
+    # And the result is legal: the halves rejoin into the caller's exact line, both sides marked.
+    assert not [f for f in validate(out.text, _ctx()) if f.severity == "ERROR"], \
+        [str(f) for f in validate(out.text, _ctx())]
+
+
+def test_the_repair_keeps_an_ellipsis_out_of_the_words():
+    """The other form the echo arrived in: "<d>[English] ...and not the whole lock.</d>"."""
+    from h3ir.grid import Target
+    from h3ir.repair import repair
+
+    written = _doc(f"{SHOT1}<d>[English] {LINE}</d> <scenetrans> {CONTINUITY}\n"
+                   f"{SHOT2}<scenetrans> <d>[English] ...and not the whole lock.</d>")
+    out = repair(written, target=Target.build(12.0), mode=Mode.T2VA, labels=(), dialogue=(LINE,))
+    assert "..." not in out.text
+    assert "<d>[English] and not the whole lock.</d>" in out.text
+
+
+def test_the_repair_refuses_a_fragment_that_is_not_part_of_the_line():
+    """It carries out the writer's own construct with the caller's words; it does not invent a
+    split. A second block that is not a tail of the line is left for the rule to report."""
+    from h3ir.grid import Target
+    from h3ir.repair import repair
+
+    written = _doc(f"{SHOT1}<d>[English] {LINE}</d>\n{SHOT2}the apprentice answers: "
+                   f"<d>[English] the pin is worn out then.</d>")
+    out = repair(written, target=Target.build(12.0), mode=Mode.T2VA, labels=(), dialogue=(LINE,))
+    assert not [r for r in out.repairs if "divided" in r], out.repairs
+
+
+def test_the_repair_will_not_reverse_playback_order():
+    """A fragment BEFORE the block holding the whole line is not the construct: the words would be
+    spoken after they had already been spoken. Reported, not rearranged."""
+    from h3ir.grid import Target
+    from h3ir.repair import repair
+
+    written = _doc(f"{SHOT1}<d>[English] and not the whole lock.</d> <scenetrans>\n"
+                   f"{SHOT2}<scenetrans> <d>[English] {LINE}</d>")
+    out = repair(written, target=Target.build(12.0), mode=Mode.T2VA, labels=(), dialogue=(LINE,))
+    assert not [r for r in out.repairs if "divided" in r], out.repairs
+    assert "D10-dialogue-line-duplicated" in {f.rule for f in validate(out.text, _ctx())}
+
+
 def test_a_second_unrelated_line_is_not_an_echo():
     """The threshold is four consecutive words of the caller's own line, which two different
     utterances do not share by accident."""
@@ -193,6 +258,39 @@ def test_a_line_broken_inside_one_shot_is_an_error_of_its_own():
                 f"<d>[English] {HALF_B}</d>")
     errs = [f for f in validate(text, _ctx()) if f.severity == "ERROR"]
     assert [f.rule for f in errs] == ["D13-line-split-without-a-cut"], [str(f) for f in errs]
+
+
+def test_the_marker_at_the_start_of_the_second_part_does_not_hide_the_cut_time():
+    """Real output from the live service, trimmed. The writer put the marker where base-en.txt 4.4
+    says the second part's connecting point is -- immediately after `[Shot 2]` -- and
+    `T4-missing-cut-time` read the cut time as absent, so the one request that asked for the join to
+    be marked on both sides lost its whole written brief to the draft after two correction passes.
+
+    The time is present and the reading is unambiguous, so this was the check being stricter than the
+    spec rather than the text being wrong.
+    """
+    text = _doc(
+        f"{SHOT1}<d>[English] {HALF_A}</d> <scenetrans> {CONTINUITY}\n"
+        f"[Shot 2] <scenetrans> At 00:06.000, the camera cuts to a medium shot of the shop door as "
+        f"the locksmith's voice continues from off-screen: <d>[English] {HALF_B}</d>")
+    found = validate(text, _ctx())
+    assert not [f for f in found if f.severity == "ERROR"], [str(f) for f in found]
+
+
+def test_a_shot_with_a_marker_and_no_time_at_all_is_still_an_error():
+    """Skipping the marker must not skip the requirement behind it."""
+    text = _doc(f"{SHOT1}<d>[English] {HALF_A}</d> <scenetrans> {CONTINUITY}\n"
+                f"[Shot 2] <scenetrans> the camera cuts to the shop door: "
+                f"<d>[English] {HALF_B}</d>")
+    assert "T4-missing-cut-time" in {f.rule for f in validate(text, _ctx())
+                                     if f.severity == "ERROR"}
+
+
+def test_a_marker_does_not_license_a_timestamp_on_the_first_shot():
+    text = _doc(f"[Shot 1] <scenetrans> At 00:00.000, the locksmith leans over the vice. The camera "
+                f"holds a static shot as he says: <d>[English] {LINE}</d>")
+    assert "T2-shot1-timestamp" in {f.rule for f in validate(text, _ctx())
+                                    if f.severity == "ERROR"}
 
 
 def test_a_line_split_across_three_shots_needs_the_marker_at_both_joins():
