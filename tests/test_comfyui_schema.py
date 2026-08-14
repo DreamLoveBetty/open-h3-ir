@@ -107,8 +107,7 @@ TEMPLATE_IDS = _template_input_ids()
 # The compile node's own inputs, which is where "how many boxes is this" is decided.
 COMPILE = _inputs_in(SCHEMAS["OpenH3IRCompile"])
 SETUP = _inputs_in(SCHEMAS["OpenH3IRSetup"])
-FOOTAGE = _inputs_in(SCHEMAS["OpenH3IRFootage"])
-SOUND = _inputs_in(SCHEMAS["OpenH3IRSound"])
+MEDIA = _inputs_in(SCHEMAS["OpenH3IRMedia"])
 ALL = [(node_id, *rest) for node_id, call in SCHEMAS.items() for rest in _inputs_in(call)]
 
 
@@ -348,367 +347,6 @@ def test_no_path_prefix_is_something_people_have_to_type():
     for gone in ("comfy_path_prefix", "service_path_prefix", "service_sees_comfy_at"):
         assert gone not in ids, f"{gone} is not a question for the user"
     assert "service sees" not in TEXT, "nor a field named in a message, since it is not on any node"
-
-
-# --------------------------------------------------------------------------- what is on which node
-
-def test_the_compile_node_holds_no_plumbing_at_all():
-    """Its one rule: this is what I want, and this is what it should look at. Nine fields that
-    describe a machine were nine of its rows, five of them drawing an unreadable 48-character
-    filename against a long label in a 38-character row."""
-    for machine in ("server", "reference_model", "frames_model", "text_encoder", "video_vae",
-                    "audio_vae", "weight_dtype", "timeout_s"):
-        assert machine not in _ids(COMPILE), f"{machine} is a fact about a machine, not a shot"
-        assert machine in _ids(SETUP), f"{machine} has to still exist somewhere"
-
-
-def test_the_compile_node_is_small_enough_to_read_at_rest():
-    """Countable rather than a matter of taste: it was 29 inputs, of which a clean queue needed one.
-    The satellites are what brought it down to 16, and this is the number that must not creep back.
-
-    It moved to 19 once, by three inputs the owner ruled in by name: the spoken lines and the language
-    they are spoken in, which are the only route to a line H3 is checked against, and the storyboard,
-    which is the only way to say a picture plans the shots rather than appearing in them. Each ceiling
-    below is the count after those three and not a round number with room in it, so the next thing
-    that arrives without a ruling behind it fails here.
-    """
-    rows = [i for k, i, kw in COMPILE if k in NEEDS_TOOLTIP and not _multiline(kw)]
-    boxes = [i for k, i, kw in COMPILE if _multiline(kw)]
-    sockets = [i for k, i, _kw in COMPILE
-               if k not in NEEDS_TOOLTIP and i and i not in TEMPLATE_IDS]
-    # 9 was the designed budget; the tenth is the size knob the owner ordered by name ("Where's
-    # the quality knob in the node"), so the budget moved rather than the knob.
-    assert len(rows) <= 10, f"{len(rows)} widget rows on the compile node: {rows}"
-    assert boxes == ["intent", "spoken_lines", "picture_notes"], \
-        f"the text boxes are the sentence, the lines and the picture notes: {boxes}"
-    assert len(sockets) <= 7, f"{len(sockets)} sockets on the compile node: {sockets}"
-    declared = [i for _k, i, _kw in COMPILE if i and i not in TEMPLATE_IDS]
-    # 19 was the count after the redesign; the twentieth is the owner-ordered size knob.
-    assert len(declared) <= 20, f"{len(declared)} inputs; it was 29 and one of them was needed"
-
-
-def test_every_satellite_but_setup_is_optional_on_the_compile_node():
-    """A satellite that is absent until you need it is not lying around, it is absent, and that is the
-    whole argument for moving things off this node."""
-    for socket in ("sound", "footage", "first_frame", "last_frame", "pictures"):
-        kw = next(kw for _k, i, kw in COMPILE if i == socket)
-        assert isinstance(kw.get("optional"), ast.Constant) and kw["optional"].value is True, \
-            f"{socket} must be optional"
-
-
-def test_the_setup_socket_is_required_because_nothing_else_can_choose_the_files():
-    """The one satellite that is not optional, and the consequence the picker was worth. Nothing in
-    this pack decides which of two H3 checkpoints somebody meant, so a graph with no Setup node has no
-    files to load and says so instead of rendering with something it picked itself."""
-    kw = next(kw for _k, i, kw in COMPILE if i == "setup")
-    assert kw.get("optional") is None, "an optional setup socket is a node that guesses again"
-    assert "Required" in _str(kw.get("tooltip")), "and the socket says so where it is read"
-    # The same refusal in this pack's own words, for the graph that arrives with the socket empty.
-    execute = TEXT[TEXT.index("    def execute(cls, intent"):TEXT.index("helpers", TEXT.index(
-        "    def execute(cls, intent"))]
-    assert "if not setup:" in execute, "checked before anything is written or loaded"
-    for said in ("OpenH3-IR Setup node", "five H3 files", "setup socket"):
-        assert said in execute, f"the refusal has to say {said!r}"
-
-
-def _execute_source() -> str:
-    start = TEXT.index("    def execute(cls, intent")
-    return TEXT[start:TEXT.index("helpers", start)]
-
-
-def test_a_board_on_a_frame_anchor_job_is_refused_before_the_call_rather_than_after_it():
-    """H3's frame node takes the two frames and no reference picture, so a board on that route would
-    be described in the brief, numbered in the report, and never handed to H3: the sound refusal
-    beside it exists for the same reason. Refused before the files are written and before the model
-    call is spent."""
-    execute = _execute_source()
-    assert "if anchored and storyboard is not None:" in execute
-    for said in ("storyboard cannot ride along", "no reference picture",
-                 "Unplug the frame sockets"):
-        assert said in execute, f"the refusal has to say {said!r}"
-
-
-def test_which_picture_is_picture_1_is_decided_in_exactly_one_place():
-    """THE control on the board. The order is read twice: once to tell the service what to number, and
-    once to fill H3's ref_image sockets. Two derivations of it is how <Picture 3> in the brief becomes
-    ref_image_1 in the graph, which describes one picture while handing the model another."""
-    assert TEXT.count("images_in_numbering_order(") == 1, \
-        "one call site, because a second one is a second answer"
-    execute = _execute_source()
-    assert "images = images_in_numbering_order(first_frame, last_frame, pics, storyboard)" in execute
-    assert "images=images" in execute, "and the same list is what the conditioning is built from"
-    # Unparsed rather than read as text, so the rule is about the code and not about a comment that
-    # happens to name the socket.
-    condition = next(n for n in ast.walk(TREE)
-                     if isinstance(n, ast.FunctionDef) and n.name == "_condition")
-    code = ast.unparse(condition)
-    assert "enumerate(images, 1)" in code
-    assert "storyboard" not in code, "the conditioning must not re-derive where the board goes"
-
-
-def test_a_clips_three_facts_travel_together():
-    """A clip is frames plus a soundtrack plus what it is for. An autogrow item holds exactly one
-    input, so the pairing has to be structural on its own node or it goes back to being positional
-    and silently wrong."""
-    assert _ids(FOOTAGE) == ["frames", "its_sound", "job"]
-    kinds = {i: k for k, i, _kw in FOOTAGE}
-    assert kinds == {"frames": "Image", "its_sound": "Audio", "job": "Combo"}
-
-
-def test_each_sound_note_sits_with_its_own_socket():
-    """One positional block across three differently named roles was silently wrong the moment a
-    socket was skipped: fill only the effect and line one described the music."""
-    assert _ids(SOUND) == ["music", "music_note", "music_job", "effect", "effect_note", "voice",
-                           "voice_note", "voice_words"]
-    for clip, note in (("music", "music_note"), ("effect", "effect_note"), ("voice", "voice_note")):
-        assert _ids(SOUND).index(note) == _ids(SOUND).index(clip) + 1, \
-            f"{note} has to read as belonging to {clip}"
-
-
-def test_what_the_music_is_for_reads_as_part_of_the_music_block():
-    """The third row of the music block and never further down the node: it is the row that decides
-    whether the brief claims the recording is the finished soundtrack, and a control that changes what
-    a document says about the socket above it has to be read next to that socket. Last within its own
-    block, which is where the Footage node puts the same question about a clip."""
-    ids = _ids(SOUND)
-    assert ids.index("music_job") == ids.index("music_note") + 1
-    assert ids.index("music_job") < ids.index("effect"), \
-        "it describes the music, so it cannot sit past the next socket"
-    job = next(kw for _k, i, kw in SOUND if i == "music_job")
-    footage_job = next(kw for _k, i, kw in FOOTAGE if i == "job")
-    assert _str(job.get("display_name")) == _str(footage_job.get("display_name")) == \
-        "what it is for", "one label for one question, whatever the attachment is"
-
-
-def test_the_music_job_is_a_choice_in_the_users_words_with_no_role_token_on_it():
-    """The whole point of the row: three roles the service knows by name, offered as three things a
-    person would say about their own track. A dropdown of `bgm`, `music_style`, `beat_reference` would
-    have been the same feature with the service's vocabulary on the canvas."""
-    from comfyui.h3ir_client import MUSIC_JOBS
-
-    assert list(MUSIC_JOBS) == ["play this track", "match its style", "cut to its beat"]
-    assert list(MUSIC_JOBS.values()) == ["bgm", "music_style", "beat_reference"]
-    kw = next(kw for _k, i, kw in SOUND if i == "music_job")
-    assert isinstance(kw["options"], ast.Call), "the options come from the shared table"
-    assert _str(kw.get("default")) == "" and isinstance(kw.get("default"), ast.Call), \
-        "the default is the table's first entry rather than a second copy of the string"
-
-
-def test_no_role_token_the_service_uses_is_printed_on_the_canvas():
-    """`P9-role-token-in-prose` is the service's own rule against this: a snake_case wiring token is
-    not language anybody was trained on, on a canvas or in a brief. Only the underscore-bearing role
-    values are checked, which is what keeps the ordinary words a tooltip needs -- subject, style,
-    storyboard -- out of it."""
-    from h3ir.models import Role
-
-    tokens = sorted(r.value for r in Role if "_" in r.value)
-    assert tokens, "the guard is worthless if the set is empty"
-    shown = []
-    for node_id, _k, ident, kw in ALL:
-        for field in ("display_name", "placeholder", "tooltip"):
-            text = _str(kw.get(field))
-            shown.extend(f"{node_id}.{ident}.{field} says {t!r}" for t in tokens if t in text)
-    assert not shown, f"service vocabulary on the canvas: {shown}"
-
-
-def test_the_sound_notes_say_they_are_the_only_description_there_will_be():
-    """`analyse.py` makes no model call for audio by design, because nothing in the chain can hear
-    and H3's tokenizer emits only `<Audio j>: `. A picture gets looked at; a sound does not."""
-    tip = next(_str(kw.get("tooltip")) for _k, i, kw in SOUND if i == "music_note")
-    assert "cannot hear" in tip or "can hear" in tip
-    assert "only thing the model will ever learn" in tip
-
-
-def test_the_transcript_field_says_it_is_not_dialogue():
-    """It was labelled `what the voice says`, which invites someone to type the lines they want in
-    their video. It is a transcript of an attached recording, and typing it into the wrong box used
-    to do nothing at all."""
-    kw = next(kw for _k, i, kw in SOUND if i == "voice_words")
-    tip = _str(kw.get("tooltip"))
-    assert "not dialogue for your video" in tip
-    # It has to name where the lines DO go, and there are two places now. Naming only the sentence
-    # would send someone past the box that is checked to the one that is not.
-    assert "spoken lines box on the compile node" in tip and "sentence" in tip
-    box = next(kw for _k, i, kw in COMPILE if i == "spoken_lines")
-    assert "spoken line" in _str(box.get("placeholder")), \
-        "and the box it points at has to be findable by the words that point at it"
-
-
-# --------------------------------------------------------------------------- order and grouping
-
-def _index(ident: str) -> int:
-    return _ids(COMPILE).index(ident)
-
-
-def test_silence_sits_with_the_rest_of_what_you_are_asking_for():
-    """It was buried among the advanced settings. Silence is a creative decision, not a tuning knob:
-    H3 writes sound in the same pass as the picture, so asking for none is part of the request."""
-    assert _index("silent") < _index("first_frame"), \
-        "silent belongs in the group with what happens, how long and how much it may invent"
-    for earlier in ("intent", "seconds", "aspect", "creativity"):
-        assert _index(earlier) < _index("silent")
-
-
-def test_the_ask_comes_first_and_then_what_it_looks_at():
-    """Nodes 2.0 honours schema order exactly; the legacy canvas draws all sockets above all widgets.
-    The order is chosen to read correctly under both: the ask first, then the machine it runs on, then
-    the attachments."""
-    for attachment in ("first_frame", "last_frame", "pictures", "footage", "sound"):
-        assert _index("intent") < _index(attachment)
-    for advanced in ("sizing", "seed", "effort"):
-        assert _index("silent") < _index(advanced)
-
-
-def test_the_words_read_with_the_ask_and_not_with_the_attachments():
-    """The lines are part of what you are asking for, so they read before the sockets that say what to
-    look at. They cannot be declared beside the sentence, because they have to stay optional -- a
-    required input is missing from every API-format graph written before it existed, and /prompt
-    refuses that outright -- and ComfyUI publishes every required input ahead of every optional one."""
-    for attachment in ("first_frame", "last_frame", "pictures", "storyboard", "footage", "sound"):
-        assert _index("spoken_lines") < _index(attachment)
-    assert _index("setup") < _index("spoken_lines"), "which is where the optional half begins"
-    assert _index("spoken_language") == _index("spoken_lines") + 1, \
-        "the language describes the box above it and has to be read with it"
-    for advanced in ("sizing", "seed", "effort"):
-        assert _index("spoken_lines") < _index(advanced)
-
-
-def test_the_language_list_is_the_one_the_service_publishes():
-    """Duplicated for the same reason ASPECTS is: a combo has to be populated before any server has
-    been contacted. Duplicated means it can drift, so it is checked against the endpoint that
-    publishes it."""
-    from h3ir.service import capabilities
-
-    from comfyui.h3ir_client import DIALOGUE_LANGUAGES
-
-    assert set(DIALOGUE_LANGUAGES) == set(capabilities()["dialogue_languages"])
-    assert DIALOGUE_LANGUAGES[0] == "English", "the default opens on the service's own default"
-    kw = next(kw for _k, i, kw in COMPILE if i == "spoken_language")
-    assert isinstance(kw["options"], ast.Call), "the options come from the shared constant"
-
-
-def test_the_spoken_lines_box_says_which_of_the_two_routes_is_checked():
-    """It is not a second sentence, and the difference is not cosmetic: a line in this box is enforced
-    verbatim by the compiler and a line quoted in the sentence reaches no rule at all. If the box
-    stopped saying that, the two would look interchangeable."""
-    kw = next(kw for _k, i, kw in COMPILE if i == "spoken_lines")
-    tip = _str(kw.get("tooltip"))
-    assert "word for word" in tip and "refused" in tip
-    assert "sentence" in tip, "and it has to say what the sentence is still for"
-    assert "off screen" in tip, "the two fields it does NOT replace are named rather than implied"
-
-
-def test_the_board_socket_says_it_does_not_appear_in_the_video():
-    """The one claim that makes the socket safe to plug into. Its role is `weak_reference`: the
-    planning information is followed and the drawing itself is never reproduced, so a socket that did
-    not say so would read as one more picture reference."""
-    kw = next(kw for _k, i, kw in COMPILE if i == "storyboard")
-    tip = _str(kw.get("tooltip"))
-    assert "does not appear in the video" in tip
-    assert "order" in tip and "viewpoint" in tip, "and what it DOES decide"
-
-
-def test_the_notes_box_names_every_picture_socket_that_takes_no_line_from_it():
-    """`plan_assets` binds notes to the `picture N` sockets only, so every other IMAGE socket on the
-    node is outside that count and has to be named where the rule is stated. Derived from the schema
-    rather than typed here, so a fourth picture socket fails this until the box mentions it."""
-    tip = _str(next(kw for _k, i, kw in COMPILE if i == "picture_notes").get("tooltip"))
-    others = [_str(kw.get("display_name")) for k, i, kw in COMPILE
-              if k == "Image" and i and i not in TEMPLATE_IDS]
-    assert others, "the guard is worthless if it found no sockets"
-    for label in others:
-        assert label in tip, f"{label} takes no note line and the box does not say so"
-
-
-def test_the_declared_order_is_the_order_comfyui_publishes():
-    """MEASURED on the live instance: `/object_info` puts every required input ahead of every optional
-    one, whatever order they were declared in, and the canvas reads that. So an order that read better
-    in the source than on the canvas would be describing a node nobody is looking at. The required
-    `setup` socket is what made this visible: declared last, it was published seventh."""
-    declared = [i for _k, i, kw in COMPILE if i and i not in TEMPLATE_IDS]
-    optional = [bool(isinstance(kw.get("optional"), ast.Constant) and kw["optional"].value)
-                for _k, i, kw in COMPILE if i and i not in TEMPLATE_IDS]
-    assert optional == sorted(optional), \
-        f"required and optional inputs are interleaved in the source: {list(zip(declared, optional))}"
-    assert _index("shots") < _index("setup") < _index("first_frame"), \
-        "the machine is required, so it reads between the ask and the attachments"
-
-
-def test_the_rarely_touched_settings_are_marked_as_such():
-    """A bonus for Nodes 2.0 users, never a hide: under the legacy renderer `advanced` does nothing
-    at all, so the surface is designed to be correct with all of it visible."""
-    advanced = {i for _n, _k, i, kw in ALL if kw.get("advanced") is not None}
-    for expected in ("seed", "effort", "sizing", "weight_dtype", "timeout_s"):
-        assert expected in advanced, f"{expected} should not be in the way of ordinary use"
-    for never in ("reference_model", "frames_model", "text_encoder", "video_vae", "audio_vae"):
-        assert never not in advanced, "a pick nobody can see is the guess it replaced"
-    for never in ("intent", "seconds", "aspect", "creativity", "silent", "shots", "first_frame",
-                  "last_frame", "pictures", "footage", "sound", "setup", "spoken_lines",
-                  "spoken_language", "storyboard", "music_job"):
-        assert never not in advanced
-
-
-# --------------------------------------------------------------------------- the sockets
-
-def test_the_lists_grow_instead_of_showing_every_empty_socket():
-    """Nine fixed picture sockets is too many to look at when the graph is idle, and one was too few
-    for what H3 takes. `min=0` yields exactly one socket at rest."""
-    grow = [(i, kw) for _n, kind, i, kw in ALL if kind == "Autogrow"]
-    assert [i for i, _ in grow] == ["pictures", "footage"]
-    for _i, kw in grow:
-        template = kw["template"]
-        assert isinstance(template, ast.Call) and template.func.attr == "TemplateNames", \
-            "TemplatePrefix labels the grown sockets prefix+ordinal, zero-based, and overwrites the "
-        assert _kw(template, "min").value == 0
-
-
-def test_the_grown_sockets_are_named_the_way_the_brief_names_them():
-    """`autogrowOrdinalToName` overwrites the template's display_name with `names[ordinal]`, or with
-    `prefix + ordinal` zero-based. So the old sockets read `reference_0` while the notes block under
-    them said <Picture 1>: raw ids on the canvas and an off-by-one against the text. `TemplateNames`
-    is the only way to get one-based readable labels, and one-based is what makes the notes rule
-    ("line one describes picture 1") true without explaining anything."""
-    from comfyui.h3ir_client import CLIP_NAMES, MAX_CLIPS, MAX_PICTURES, PICTURE_NAMES
-
-    assert PICTURE_NAMES == tuple(f"picture {i}" for i in range(1, MAX_PICTURES + 1))
-    assert CLIP_NAMES == tuple(f"clip {i}" for i in range(1, MAX_CLIPS + 1))
-    assert PICTURE_NAMES[0] == "picture 1", "one-based, the same number the brief prints"
-    assert MAX_PICTURES == 9 and MAX_CLIPS == 3, "H3's own limits, not invented ones"
-
-
-def test_the_frame_sockets_use_the_stock_h3_nodes_own_names():
-    """`first_frame` and `last_frame` are what `MiniMaxH3ImageToVideo` calls them, so they are
-    already the vocabulary in the user's head. `opening_frame` was this pack's invention."""
-    kinds = {i: k for k, i, _kw in COMPILE}
-    assert kinds["first_frame"] == "Image" and kinds["last_frame"] == "Image"
-    assert "opening_frame" not in kinds and "closing_frame" not in kinds
-
-
-def test_footage_arrives_as_a_bundle_rather_than_a_video_object():
-    """`VIDEO` was unreachable for the loader people actually use: `VHS_LoadVideo` outputs
-    IMAGE + AUDIO, and ComfyUI's own H3 node takes frames and a soundtrack separately. Footage is
-    frames plus a soundtrack, not one object."""
-    kinds = {i: k for _n, k, i, _kw in ALL}
-    assert "Video" not in kinds.values(), "no VIDEO socket can be fed by the normal graph"
-    assert "video_to_edit" not in kinds and "video_to_continue" not in kinds
-    template = next(kw["template"] for _k, i, kw in COMPILE if i == "footage")
-    inner = next(a for a in ast.walk(template) if _is_input_call(a))
-    assert _kind(inner) == "Footage", "the grown clip socket takes the bundle, not raw frames"
-
-
-def test_a_clips_job_is_a_choice_the_user_makes_per_clip():
-    """H3 takes three clips and the old node offered one of each of two roles, with the role fixed by
-    which socket you found. Three different jobs in the brief, so the wrong one renders something
-    plausible and wrong."""
-    from comfyui.h3ir_client import FOOTAGE_JOBS
-
-    assert list(FOOTAGE_JOBS) == ["copy what is in it", "edit it", "carry on from it"]
-    assert list(FOOTAGE_JOBS.values()) == ["subject", "edit_source", "continuation_source"]
-    kw = next(kw for _k, i, kw in FOOTAGE if i == "job")
-    assert _str(kw.get("default")) == "copy what is in it", \
-        "the default must not claim the render is an edit of the source"
-
-
 def test_the_model_combos_are_a_picker_and_nothing_else():
     """The five files are a question only the user can answer: a filename says what a file is called,
     not what somebody intended it to be. So each combo lists what this install has and opens on one of
@@ -737,13 +375,6 @@ def test_the_pick_is_the_file_that_loads_and_no_table_second_guesses_it():
 
 
 # --------------------------------------------------------------------------- identity and outputs
-
-def test_the_node_ids_are_the_ones_saved_workflows_reference():
-    """A rename silently breaks every workflow anyone saved. Pinned deliberately."""
-    assert sorted(SCHEMAS) == ["OpenH3IRCompile", "OpenH3IRFootage", "OpenH3IRSetup",
-                               "OpenH3IRSound"]
-
-
 def test_the_compile_node_is_findable_by_the_words_a_user_types():
     """`OpenH3-IR` alone tells a stranger nothing, and the siblings they already know are called
     "MiniMax H3 Image to Video" and "MiniMax H3 Reference to Video"."""
@@ -766,8 +397,72 @@ def test_the_graph_needs_no_loader_boxes():
     assert labels == ["model", "positive", "latent", "vae", "audio_vae", "prompt", "report"]
 
 
-def test_each_satellite_hands_over_exactly_one_bundle():
-    for node_id, label in (("OpenH3IRSetup", "setup"), ("OpenH3IRFootage", "clip"),
-                           ("OpenH3IRSound", "sound")):
-        outs = _outputs_of(node_id)
-        assert len(outs) == 1 and outs[0][1] == label, f"{node_id} outputs {outs}"
+
+# --------------------------------------------------------------------------- the tray-era surface
+
+def test_the_node_set_is_three_and_the_ids_are_frozen():
+    """A rename silently breaks every workflow anyone saved and every video anyone rendered, which
+    the owner hit in person. Pinned."""
+    assert sorted(SCHEMAS) == ["OpenH3IRCompile", "OpenH3IRMedia", "OpenH3IRSetup"]
+
+
+def test_main_is_one_sentence_a_tray_a_setup_and_the_knobs():
+    ids = [i for _k, i, _kw in COMPILE]
+    assert ids == ["intent", "seconds", "aspect", "creativity", "silent", "shots", "setup",
+                   "megapixels", "spoken_language", "media", "sizing", "seed", "effort"], ids
+
+
+def test_the_only_text_box_left_is_the_sentence():
+    boxes = [i for _k, i, kw in COMPILE if _multiline(kw)]
+    assert boxes == ["intent"], \
+        "the notes went to the tray's slots and the locked lines went inline as @speaks"
+
+
+def test_the_sentence_teaches_both_at_constructs_where_the_user_types():
+    kw = next(kw for _k, i, kw in COMPILE if i == "intent")
+    ph, tip = _str(kw.get("placeholder")), _str(kw.get("tooltip"))
+    assert "@" in ph.splitlines()[0], "the placeholder's first line must show the @ exists"
+    assert '@speaks("' in tip and "word for word" in tip
+    assert "no such check" in tip, "say what a plain quote does NOT get, or the box reads as magic"
+
+
+def test_the_language_choice_says_it_binds_to_the_locked_lines():
+    kw = next(kw for _k, i, kw in COMPILE if i == "spoken_language")
+    tip = _str(kw.get("tooltip"))
+    assert "@speaks" in tip and "decides nothing" in tip
+
+
+def test_the_media_socket_names_the_tray_and_the_at_sign():
+    kind, _i, kw = next(t for t in COMPILE if t[1] == "media")
+    assert kind == "Media"
+    tip = _str(kw.get("tooltip"))
+    assert "OpenH3-IR Media" in tip and "@" in tip
+    assert "empty" in tip.lower(), "no media is a legal piece and the tooltip must say so"
+
+
+def test_the_tray_node_is_one_field_and_one_output():
+    ids = [i for _k, i, _kw in MEDIA]
+    assert ids == ["tray"], "the panel is rendering; the string is the node"
+    kw = next(kw for _k, i, kw in MEDIA if i == "tray")
+    tip = _str(kw.get("tooltip"))
+    assert "drag" in tip.lower() or "rendered video" in tip, \
+        "the tooltip carries the reimport promise"
+    outs = _outputs_of("OpenH3IRMedia")
+    assert [k for k, _l in outs] == ["Media"]
+
+
+def test_the_tray_state_survives_a_rendered_video():
+    """The owner's rule: drag the mp4 back in and the tray comes back. That only works if the tray
+    is an ordinary widget value, because those are what land in the embedded graph."""
+    kind, _i, kw = next(t for t in MEDIA if t[1] == "tray")
+    assert kind == "String", "widget state is what a rendered video's embedded graph carries"
+    assert _str(kw.get("default")) == "[]"
+
+
+def test_the_pack_ships_its_frontend_and_names_the_folder():
+    import comfyui
+    assert getattr(comfyui, "WEB_DIRECTORY", None) == "web"
+    web = SRC.parent / "web"
+    assert web.is_dir(), "WEB_DIRECTORY points at a folder that must exist"
+    names = {p.name for p in web.glob("*.js")}
+    assert names, "an empty web folder ships a pack with no panel and no picker"

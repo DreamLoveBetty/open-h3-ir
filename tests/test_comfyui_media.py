@@ -106,40 +106,54 @@ def test_the_same_sound_keeps_its_path_so_the_services_hash_stays_stable(tmp_pat
 
 # --------------------------------------------------------------------------- pictures
 
-def test_a_socket_holding_several_pictures_is_an_error_and_not_a_silent_first_one():
-    """The order decides which subject binds to which picture label, so picking one out of a batch
-    would renumber the brief against the graph with nothing to say so."""
+def test_a_missing_file_names_the_slot_and_says_what_to_do(tmp_path):
+    """A workflow carries the names of its media rather than the media, so a workflow from another
+    machine arrives with slots pointing at files that are not there. The error is the interface."""
     with pytest.raises(ServiceError) as e:
-        M.to_uint8_rgb(np.zeros((3, 8, 8, 3), dtype="float32"), "picture 1")
+        M.load_image("openh3ir/not_there_at_all.png [input]", "hero")
     msg = str(e.value)
-    assert "3 pictures in one batch" in msg
-    assert "its own socket" in msg, "say what to do instead"
+    assert "'hero'" in msg and "no such file" in msg
+    assert "Drop the file" in msg, "say the remedy, not just the fact"
 
 
-def test_a_single_picture_batch_is_unwrapped():
-    got = M.to_uint8_rgb(np.zeros((1, 4, 6, 3), dtype="float32"), "picture 1")
-    assert got.shape == (4, 6, 3) and got.dtype == np.uint8
+def test_a_real_picture_loads_as_the_tensor_shape_h3_conditioning_takes(tmp_path):
+    pytest.importorskip("torch")  # ComfyUI-side dependency; the shape is re-proven live in ComfyUI
+    from PIL import Image as PILImage
+
+    f = tmp_path / "plate.png"
+    PILImage.new("RGB", (64, 32), (200, 10, 10)).save(f)
+    img = M.load_image(str(f), "plate")
+    assert tuple(img.shape) == (1, 32, 64, 3), "batch of one, height, width, rgb"
+    assert float(img.max()) <= 1.0 and float(img.min()) >= 0.0
 
 
-def test_an_alpha_channel_is_dropped_and_a_two_channel_image_is_refused():
-    assert M.to_uint8_rgb(np.zeros((1, 2, 2, 4), dtype="float32"), "p").shape == (2, 2, 3)
-    with pytest.raises(ServiceError) as e:
-        M.to_uint8_rgb(np.zeros((1, 2, 2, 2), dtype="float32"), "picture 1")
-    assert "2 channels" in str(e.value)
+def test_resolve_strips_the_annotation_outside_comfyui():
+    """Outside ComfyUI there is no folder_paths, and the fallback must still hand back a usable
+    path rather than a string with ' [input]' glued on."""
+    assert M.resolve("sub/name.png [input]").endswith("sub/name.png")
+    assert M.resolve("/abs/name.png") == "/abs/name.png"
 
 
-def test_a_mask_shaped_array_is_refused_rather_than_reinterpreted():
-    with pytest.raises(ServiceError) as e:
-        M.to_uint8_rgb(np.zeros((8, 8), dtype="float32"), "picture 1")
-    assert "not a picture" in str(e.value)
+def test_stamp_changes_when_the_file_changes(tmp_path):
+    """The tray names files, and a file can be replaced on disk under the same name. The cache key
+    has to see that, or a re-queue serves a brief written about the picture that used to be there."""
+    import os as _os
+    f = tmp_path / "a.png"
+    f.write_bytes(b"one")
+    first = M.stamp(str(f))
+    f.write_bytes(b"three!!")
+    _os.utime(f, ns=(1, 1))
+    assert M.stamp(str(f)) != first
+    assert M.stamp(str(tmp_path / "gone.png")).endswith(":missing")
 
 
-def test_pixel_values_are_scaled_and_clamped_rather_than_wrapped():
-    got = M.to_uint8_rgb(np.array([[[-1.0, 0.5, 2.0]]], dtype="float32"), "p")
-    assert list(got[0][0]) == [0, 128, 255]
+def test_probe_never_raises_on_garbage(tmp_path):
+    f = tmp_path / "junk.mp4"
+    f.write_bytes(b"this is not a video")
+    info = M.probe(str(f))
+    assert info["duration"] is None and info["has_audio"] is False
+    assert M.probe("nowhere/at/all.mp4")["duration"] is None
 
-
-# --------------------------------------------------------------------------- names and hashes
 
 def test_a_socket_name_with_a_space_does_not_leak_a_space_into_a_path():
     """The sockets are called `picture 1` and `clip 1 sound` on purpose, because the brief says
@@ -189,15 +203,6 @@ def test_nothing_connected_hashes_to_nothing():
 
 
 # --------------------------------------------------------------------------- footage
-
-def test_a_still_is_not_footage():
-    """H3 reads 2 to 15 seconds at 24 fps. A one-frame IMAGE in the frames socket is somebody using
-    the wrong node, and it has to say so before anything is encoded."""
-    with pytest.raises(ServiceError) as e:
-        M.write_footage(np.zeros((1, 8, 8, 3), dtype="float32"), None, "clip 1", "/tmp")
-    msg = str(e.value)
-    assert "1 frames" in msg and "24 fps" in msg
-
 
 def test_footage_reports_its_length_at_the_rate_h3_reads_it():
     """Relabelling to 24 fps is deliberate: it makes the duration the service probes the same

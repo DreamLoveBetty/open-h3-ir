@@ -36,21 +36,74 @@ It adds nothing to ComfyUI's Python. The nodes speak HTTP to the service with th
 only, so the compiler's dependencies can never break your install and the service can live on
 another machine.
 
-## The five nodes
+## The three nodes
 
-**OpenH3-IR Main** is the one you always add, and **OpenH3-IR Setup** is the one it needs: it
-carries the service address and the five H3 files to load. Search for `h3`, `minimax` or `ref2va` and
-both come up.
+**OpenH3-IR Main** is the sentence and the knobs. **OpenH3-IR Media** is the tray: everything the
+piece looks at or listens to, dropped on one panel. **OpenH3-IR Setup** carries the service address
+and the five H3 files. Search for `h3`, `minimax` or `tray` and they come up.
 
-The other two are optional and neither is needed for a render.
+A text-only piece needs Main and Setup. The moment there is a picture, a clip or a sound, add one
+Media node and wire its `media` output into Main.
 
-| Node | When you add it | What it replaces |
-| --- | --- | --- |
-| **OpenH3-IR Setup** | always, once per graph | the service address and five loader boxes |
-| **OpenH3-IR Footage** | you have a reference clip | one node per clip, up to H3's three |
-| **OpenH3-IR Sound** | you have reference music, an effect or a voice | seven rows most renders never use |
+Wire `report` into ComfyUI's own **Preview as Text** node to read what happened on the canvas.
 
-Wire `report` into ComfyUI's own **Preview as Text** node to read it on the canvas.
+## The tray
+
+Drop files on the OpenH3-IR Media panel, or click it to pick them. Pictures, clips and sounds sort
+themselves into their sections, up to H3's own capacities: nine pictures, three clips, three sounds,
+twelve files in all.
+
+Every slot carries three things:
+
+**A name.** Auto-given (`picture1`, `video1`, `audio1`) and yours to change, letters, digits and
+dashes. The name is how the prompt refers to the file.
+
+**What it is.** A choice in plain words, defaulting to the ordinary reading:
+
+| Kind | The choices |
+| --- | --- |
+| picture | something in the shot · the setting · a style to copy · first frame · last frame · staging sketch |
+| clip | copy what is in it · edit it · carry on from it |
+| sound | play it · match its style · cut to its beat · sound effect · voice to match |
+
+These decide the books mechanically. A clip set to "edit it" produces an editing brief whatever the
+sentence says; a track set to "match its style" can never be claimed as copied. First and last frame
+switch the job to H3's frame weights, which take no references at all, so mixing them with reference
+slots is refused before any model call, with the reason.
+
+**A line about it.** Optional for pictures, which get looked at. Nearly essential for sounds, which
+do not: nothing in this chain can hear, so the line you type is the only thing that will ever know
+what a track sounds like. A voice slot also takes the words already spoken inside the recording,
+since the system cannot hear those either.
+
+A clip with its own soundtrack gets one more choice: **off** sends none of it, **paired** sends it
+as that clip's own sound, **alone** sends it as a track in its own right.
+
+The tray's whole state is one ordinary field on the node, so a saved workflow and a rendered video
+carry it: drag the mp4 back onto the canvas and the slots come back, names, roles and notes intact.
+The files themselves live in ComfyUI's input folder; a workflow opened on another machine names
+them and asks you to drop them again.
+
+## The @ prompt
+
+The sentence on Main is plain prose, and `@` is how it points at the tray. Type `@` and a picker
+pops up with every slot, thumbnails included; keep typing to filter, Enter to insert.
+
+*"@carguy walks onto the wet gantry and stops when he sees @the-city"*
+
+A mention becomes that slot's description in the document, bound mechanically to the file, so the
+compiler never guesses which words mean which picture. A mention that names no slot is refused
+before any model call, listing the names that exist. Files you never mention still get used, the
+compiler weaves them in, and the report tells you they went unmentioned.
+
+Dialogue that must be said exactly is locked inline:
+
+*"the guard turns and @speaks("The gate stays shut tonight.")"*
+
+Whatever is inside `@speaks("...")` comes back in the brief word for word and mark for mark, because
+a brief that rewords it is refused and rewritten. Words merely quoted in the sentence stay free for
+signs and flavor, and the writer may polish them. The `spoken in` choice names the language of every
+locked line. There is no other syntax: mentions, locked lines, prose, nothing else.
 
 ## The five files are yours to pick
 
@@ -92,82 +145,9 @@ Required input is missing: setup
 That is ComfyUI refusing the graph at validation. Queue one with the socket connected to nothing and
 the node says it in its own words: add an OpenH3-IR Setup node, pick the five files, wire it in.
 
-## The socket you plug into is the job
-
-This is the part worth reading, because it is the difference between a good render and a puzzling one.
-
-A picture in **first frame** is the frame the video starts on. A picture in **picture 1** is something
-that should appear in it. Those are two different jobs, they use two different sets of H3 weights, and
-they produce two different briefs. So the socket you choose is the answer, and the node tells the
-compiler rather than letting it guess.
-
-That matters because guessing can be wrong quietly. Attach one picture with no role and the compiler
-may decide it is your opening frame while your graph feeds it as a reference. The brief then describes
-a first frame that H3 is never given, the render comes out wrong, and nothing on screen says why. Here
-the wiring cannot disagree with the brief, and if the service still reports a different job than the
-sockets describe, the node says so in its report and in the console.
-
-| Socket | What it means |
-| --- | --- |
-| first frame | the video starts on this picture |
-| last frame | the video ends on this picture |
-| picture 1 … picture 9 | a person, a car, a room. The next socket appears once this one is filled |
-| storyboard | a sketch showing how the shots are laid out. It plans the shots and never appears in the video |
-| clip 1 … clip 3 | reference footage, from an OpenH3-IR Footage node |
-| sound | reference music, an effect or a voice, from an OpenH3-IR Sound node |
-| setup | the service address and the five model files, from an OpenH3-IR Setup node. Required |
-
-The frame sockets and the picture sockets are different jobs, so filling both is refused before
-anything runs rather than after a model call. So is a sound on a frame-anchor job: H3's frame
-checkpoint takes no reference audio at all, so the brief would name a clip H3 never receives. A
-storyboard on a frame-anchor job is refused for the same reason: the frame checkpoint takes no
-reference picture, so the brief would lay the shots out from a board H3 never sees.
-
-**picture 1** is one-based on purpose. The brief calls it `<Picture 1>`, so the canvas and the brief
-say the same words, and the notes box under the sockets needs no explaining: line one describes
-picture 1. The frame sockets are visibly outside that count, because they are not called "picture".
-
-## Notes, and the one thing that cannot hear
-
-The picture notes box takes one short line per connected picture, in order. It is never required and
-it is often what makes the right subject get described.
-
-Sounds are different, and it is worth knowing why. The service never asks a model what a sound is,
-because nothing in the chain can hear and a model asked about a waveform invents a plausible answer
-instead of admitting it cannot listen. H3's own tokenizer emits nothing but `<Audio j>: `. So the note
-you type beside a sound is the **only** thing that will ever learn what that sound is: timbre, tempo
-and instruments belong there. A picture gets looked at. A sound does not.
-
-That is why each sound socket on the Footage and Sound nodes has its own note field rather than one
-shared block. A block matched lines by position across three differently named roles, and skipping one
-socket silently moved every line onto the wrong sound.
-
-**the words in the voice clip** is a transcript of the recording you attached, not dialogue for your
-video. Lines you want spoken go in the spoken lines box on the compile node, or quoted in its
-sentence. Typing words with no voice clip connected is an error rather than a no-op, because it used
-to be silently discarded.
-
-## Exact spoken lines
-
-The sentence can carry dialogue, and the writer may reshape it. The **spoken lines** box on the
-compile node cannot be reshaped: one line per spoken line, and each comes back in the brief word for
-word and mark for mark, because a brief that rewords one is refused. **spoken in** names their
-language, which becomes the tag H3 reads, so Spanish words tagged English are spoken wrong. Who
-speaks, and whether a line is heard off screen, still belong in the sentence. An empty box asks for
-nothing.
-
-## What an attached music track is for
-
-One track can mean three different things, and only you know which, so the Sound node's **what it is
-for** asks: **play this track** puts the recording itself in the video as its score. **match its
-style** asks for new music that sounds like it, and nothing of the recording is used. **cut to its
-beat** times the cuts and the action to its rhythm, and nothing of the recording is used. The books
-follow the choice: the first claims a copy, the other two claim a reference, and the wrong one has
-the brief promise H3 that your file is the finished soundtrack.
-
 ## Wiring the graph
 
-Five sockets out, and no loaders anywhere.
+Setup into Main's `setup`. Media into Main's `media` when there is media. Then five outputs:
 
 | Out | Into |
 | --- | --- |
@@ -177,26 +157,10 @@ Five sockets out, and no loaders anywhere.
 | `vae` | VAE Decode |
 | `audio_vae` | VAE Decode Audio |
 
-`prompt` is the brief if you want to read or keep it, and `report` is what happened in plain words.
-Feed `report` into ComfyUI's own **Preview as Text** to see it on the canvas: the job it ran, the real length,
-which socket became which picture label, which loader read which file, and every choice it made that
-you cannot otherwise check.
-
-What stays on your canvas is what you actually tune: the Turbo LoRA, the sigma shift, the step count,
-the sampler, the decode and the save.
-
-### The attachment block is the thing to read
-
-```
-attachments
-  clip 1 sound   ->  <Audio 1>  ref_video_audio_1  sha256=ce1a96cc9b89
-  clip 1         ->  <Video 1>  ref_video_1  fully_preserved  sha256=d4920a666e25
-```
-
-Your socket name, the label the brief uses for it, the input slot on H3's own node that it rides, and
-the marker the brief asserts about it. The service hashes the same bytes the node wrote, so this is not
-a restatement of what the node intended: it is the service's own manifest with your socket names put
-back on it. If a label ever lands on the wrong socket, that is where you see it.
+`prompt` is the compiled brief if you want to keep it, and `report` is what happened in plain words:
+the job it ran, the real length, every file loaded, what each mention became, and which files went
+unmentioned. What stays on your canvas is what you actually tune: the LoRAs, the sigma shift, steps,
+the sampler, decode and save.
 
 ## Length lives in one place
 
@@ -331,3 +295,9 @@ its adaln patch receives three timestep entries where it expects two and raises.
 ComfyUI's own `MiniMaxH3ReferenceToVideo` node with the same inputs, so it is that accelerator's limit
 rather than this pack's. Footage renders fine without the Turbo LoRA, and a clip with no soundtrack
 renders with it.
+
+## Borrowed technique
+
+The tray panel's widget and upload idioms follow ComfyUI-Fantastic-MiniMaxH3-PromptBuilder (MIT),
+and the prompt editor's state handling follows ComfyUI-MiniMaxH3-Easy (MIT). Both are credited here
+because reading working frontends beats inventing broken ones.
