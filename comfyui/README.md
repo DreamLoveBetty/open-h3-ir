@@ -38,7 +38,7 @@ another machine.
 
 ## The five nodes
 
-**H3 from a Sentence** is the one you always add, and **OpenH3-IR Setup** is the one it needs: it
+**OpenH3-IR Main** is the one you always add, and **OpenH3-IR Setup** is the one it needs: it
 carries the service address and the five H3 files to load. Search for `h3`, `minimax` or `ref2va` and
 both come up.
 
@@ -50,7 +50,7 @@ The other two are optional and neither is needed for a render.
 | **OpenH3-IR Footage** | you have a reference clip | one node per clip, up to H3's three |
 | **OpenH3-IR Sound** | you have reference music, an effect or a voice | seven rows most renders never use |
 
-**OpenH3-IR Show Text** puts a text output on the canvas. Wire `report` into it.
+Wire `report` into ComfyUI's own **Preview as Text** node to read it on the canvas.
 
 ## The five files are yours to pick
 
@@ -178,7 +178,7 @@ Five sockets out, and no loaders anywhere.
 | `audio_vae` | VAE Decode Audio |
 
 `prompt` is the brief if you want to read or keep it, and `report` is what happened in plain words.
-Feed `report` into **OpenH3-IR Show Text** to see it on the canvas: the job it ran, the real length,
+Feed `report` into ComfyUI's own **Preview as Text** to see it on the canvas: the job it ran, the real length,
 which socket became which picture label, which loader read which file, and every choice it made that
 you cannot otherwise check.
 
@@ -305,7 +305,7 @@ Re-queue with a different `brief seed`.
 
 ## The example graph
 
-`example/openh3ir_ref2va.api.json` is a graph that actually ran, byte for byte as submitted. It
+`example/openh3ir_main.api.json` is a graph that actually ran, byte for byte as submitted. It
 renders 8 seconds at 1344x768 from two reference plates and writes an mp4 with H3's own audio.
 
 Its Setup node holds the five filenames from the machine it ran on, which is what a picked file looks

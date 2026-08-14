@@ -376,12 +376,15 @@ def test_the_compile_node_is_small_enough_to_read_at_rest():
     boxes = [i for k, i, kw in COMPILE if _multiline(kw)]
     sockets = [i for k, i, _kw in COMPILE
                if k not in NEEDS_TOOLTIP and i and i not in TEMPLATE_IDS]
-    assert len(rows) <= 9, f"{len(rows)} widget rows on the compile node: {rows}"
+    # 9 was the designed budget; the tenth is the size knob the owner ordered by name ("Where's
+    # the quality knob in the node"), so the budget moved rather than the knob.
+    assert len(rows) <= 10, f"{len(rows)} widget rows on the compile node: {rows}"
     assert boxes == ["intent", "spoken_lines", "picture_notes"], \
         f"the text boxes are the sentence, the lines and the picture notes: {boxes}"
     assert len(sockets) <= 7, f"{len(sockets)} sockets on the compile node: {sockets}"
     declared = [i for _k, i, _kw in COMPILE if i and i not in TEMPLATE_IDS]
-    assert len(declared) <= 19, f"{len(declared)} inputs; it was 29 and one of them was needed"
+    # 19 was the count after the redesign; the twentieth is the owner-ordered size knob.
+    assert len(declared) <= 20, f"{len(declared)} inputs; it was 29 and one of them was needed"
 
 
 def test_every_satellite_but_setup_is_optional_on_the_compile_node():
@@ -738,7 +741,7 @@ def test_the_pick_is_the_file_that_loads_and_no_table_second_guesses_it():
 def test_the_node_ids_are_the_ones_saved_workflows_reference():
     """A rename silently breaks every workflow anyone saved. Pinned deliberately."""
     assert sorted(SCHEMAS) == ["OpenH3IRCompile", "OpenH3IRFootage", "OpenH3IRSetup",
-                               "OpenH3IRShowText", "OpenH3IRSound"]
+                               "OpenH3IRSound"]
 
 
 def test_the_compile_node_is_findable_by_the_words_a_user_types():
@@ -747,7 +750,7 @@ def test_the_compile_node_is_findable_by_the_words_a_user_types():
     aliases = _kw(SCHEMAS["OpenH3IRCompile"], "search_aliases")
     words = {_str(e) for e in aliases.elts}
     assert {"minimax", "h3", "ref2va", "fl2va", "t2va"} <= words
-    assert _str(_kw(SCHEMAS["OpenH3IRCompile"], "display_name")) == "H3 from a Sentence"
+    assert _str(_kw(SCHEMAS["OpenH3IRCompile"], "display_name")) == "OpenH3-IR Main"
 
 
 def test_every_node_in_the_pack_is_in_one_category():

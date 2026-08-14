@@ -156,6 +156,7 @@ class Brief:
     seconds: float = 5.0
     aspect: str = "16:9"
     canvas: tuple[int, int] | None = None   # pin the exact canvas; else derived from aspect
+    megapixels: float | None = None         # size ask in MP; None = H3's native 768 short edge
     dialogue: list[DialogueLine] = field(default_factory=list)
     onscreen_text: list[str] = field(default_factory=list)
     shots: int | None = None          # caller constraint, not the plan

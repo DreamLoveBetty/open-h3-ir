@@ -104,11 +104,26 @@ def adapt_canvas(width: int, height: int) -> tuple[int, int]:
             max(CANVAS_MULTIPLE, round(nom_h / CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
 
 
-def canvas_for_aspect(aspect: str) -> tuple[int, int]:
-    """'16:9' -> (1344, 768). Accepts 'W:H' or 'WxH'."""
+def canvas_for_aspect(aspect: str, megapixels: float | None = None) -> tuple[int, int]:
+    """'16:9' -> (1344, 768). Accepts 'W:H' or 'WxH'.
+
+    `megapixels` is the caller's size ask, the knob a ComfyUI user turns as "1.5" on a resolution
+    picker. None keeps H3's native geometry exactly: 768 on the short edge, area capped at
+    768*1344, which is what every render before the field existed used. A stated value sizes the
+    canvas to that pixel area at the same aspect, each axis rounded to the /32 the latent needs,
+    and the 768-era cap deliberately does not apply: the cap exists to keep the DEFAULT inside the
+    trained budget, and a caller stating 1.5 has stated the budget.
+    """
     sep = ":" if ":" in aspect else "x"
     a, b = aspect.split(sep, 1)
-    return adapt_canvas(int(float(a) * 1000), int(float(b) * 1000))
+    if megapixels is None:
+        return adapt_canvas(int(float(a) * 1000), int(float(b) * 1000))
+    import math
+    ratio = float(a) / float(b)
+    h = math.sqrt(megapixels * 1_000_000 / ratio)
+    w = h * ratio
+    return (max(CANVAS_MULTIPLE, round(w / CANVAS_MULTIPLE) * CANVAS_MULTIPLE),
+            max(CANVAS_MULTIPLE, round(h / CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
 
 
 @dataclass(frozen=True)
@@ -149,9 +164,12 @@ class Target:
 
     @classmethod
     def build(cls, seconds: float, aspect: str = "16:9",
-              canvas: tuple[int, int] | None = None) -> "Target":
+              canvas: tuple[int, int] | None = None,
+              megapixels: float | None = None) -> "Target":
         """`canvas` pins an exact size. Needed when matching another render's geometry, where
-        the derived 768-short-edge canvas would silently differ and invalidate the comparison."""
+        the derived 768-short-edge canvas would silently differ and invalidate the comparison.
+        `megapixels` sizes the canvas to a pixel area at the aspect's ratio; `canvas` wins when
+        both are given, because an exact size is the stronger statement."""
         if canvas is not None:
             w, h = int(canvas[0]), int(canvas[1])
             if w % CANVAS_MULTIPLE or h % CANVAS_MULTIPLE:
@@ -160,7 +178,7 @@ class Target:
                        canvas=(w, h))
         return cls(nominal_seconds=float(seconds),
                    frames=frames_for_seconds(seconds),
-                   canvas=canvas_for_aspect(aspect))
+                   canvas=canvas_for_aspect(aspect, megapixels))
 
 
 def s_ss_text(seconds: float) -> str:

@@ -258,6 +258,7 @@ def dialogue_lines(text: str, language: str) -> list[dict[str, Any]]:
 
 
 def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, effort: str,
+                  megapixels: float = 0.0,
                   seed: int, silent: bool, shots: Any, assets: list[dict[str, Any]],
                   transcripts: dict[str, str], spoken_lines: str = "",
                   spoken_language: str = DIALOGUE_LANGUAGES[0]) -> dict[str, Any]:
@@ -293,6 +294,11 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
         payload["shots"] = n
     if transcripts:
         payload["transcripts"] = dict(transcripts)
+    # 0 is the node's "H3 decides": the field is omitted and the service renders at the model's
+    # native 768 short edge, exactly as every graph before the knob existed. A stated value is the
+    # caller stating the budget, and the report's canvas line shows what it bought.
+    if megapixels and float(megapixels) > 0:
+        payload["megapixels"] = round(float(megapixels), 2)
     # Empty means absent. An empty box is not "no lines were asked for" stated in a field, it is the
     # same request the node made before the box existed, so the key is dropped rather than sent as an
     # empty list: the writer is then free to put a line in a mouth exactly as far as `invention`

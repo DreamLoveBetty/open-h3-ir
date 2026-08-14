@@ -126,7 +126,7 @@ class OpenH3IRCompile(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="OpenH3IRCompile",
-            display_name="H3 from a Sentence",
+            display_name="OpenH3-IR Main",
             category="OpenH3-IR",
             search_aliases=["minimax", "h3", "openh3", "ir", "brief", "prompt", "ref2va", "fl2va",
                             "t2va"],
@@ -193,6 +193,13 @@ class OpenH3IRCompile(io.ComfyNode):
                 # because ComfyUI publishes every required input ahead of every optional one and this
                 # one has to stay optional: a required input is missing from every API-format graph
                 # that was written before it existed, and that is a hard refusal at /prompt.
+                io.Float.Input(
+                    "megapixels", display_name="size, in megapixels", default=0.0, min=0.0,
+                    max=2.5, step=0.05, optional=True,
+                    tooltip="How many pixels the frame gets, the same number a resolution picker "
+                            "calls 1.5. Zero means H3's native size, 768 on the short edge, which "
+                            "is what it was trained at. Bigger is sharper, slower, and eats VRAM "
+                            "in proportion; the report shows the exact canvas it bought."),
                 io.String.Input(
                     "spoken_lines", multiline=True, optional=True, default="",
                     placeholder="one line per spoken line, exactly as it should be said\nThe gate "
@@ -314,7 +321,7 @@ class OpenH3IRCompile(io.ComfyNode):
 
     @classmethod
     def execute(cls, intent: str, seconds: float, aspect: str, creativity: str, silent: bool,
-                shots: str, spoken_lines: str = "",
+                shots: str, megapixels: float = 0.0, spoken_lines: str = "",
                 spoken_language: str = DIALOGUE_LANGUAGES[0], first_frame=None, last_frame=None,
                 pictures=None, picture_notes: str = "", storyboard=None, footage=None, sound=None,
                 setup=None, sizing: str = "match", seed: int = 7,
@@ -374,7 +381,7 @@ class OpenH3IRCompile(io.ComfyNode):
             server=machine["server"], written=written, picture_notes=picture_notes, sizing=sizing,
             transcripts=transcripts, timeout=float(machine["timeout_s"]),
             brief=dict(intent=intent, seconds=seconds, aspect=aspect, creativity=creativity,
-                       effort=effort, seed=seed, silent=silent, shots=shots,
+                       effort=effort, seed=seed, silent=silent, shots=shots, megapixels=megapixels,
                        spoken_lines=spoken_lines, spoken_language=spoken_language))
 
         prompt, width, height, length, ref_sizing = render_fields(body)
@@ -801,31 +808,14 @@ class OpenH3IRSound(io.ComfyNode):
             effect_note=effect_note, voice=voice, voice_note=voice_note, voice_words=voice_words))
 
 
-class OpenH3IRShowText(io.ComfyNode):
-    """Show a text output on the canvas, so the report can be read without a detour."""
-
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(
-            node_id="OpenH3IRShowText",
-            display_name="OpenH3-IR Show Text",
-            category="OpenH3-IR",
-            description="Show a text output, such as the report or the brief itself.",
-            inputs=[io.String.Input(
-                "text", display_name="text to show", force_input=True,
-                tooltip="Any text output. Wire the report here to read what the compile did.")],
-            outputs=[],
-            is_output_node=True,
-        )
-
-    @classmethod
-    def execute(cls, text: str) -> io.NodeOutput:
-        return io.NodeOutput(ui={"text": [text if isinstance(text, str) else str(text)]})
-
+# There is deliberately no text-preview node in this pack any more. One existed, and it drew an
+# empty box on the canvas: the frontend never rendered its executed text, and a display node that
+# displays nothing is worse than none. Core ComfyUI ships "Preview as Text" (PreviewAny), which
+# accepts any input including our report string and renders it. Use that.
 
 class OpenH3IRExtension(ComfyExtension):
     async def get_node_list(self):
-        return [OpenH3IRCompile, OpenH3IRSetup, OpenH3IRFootage, OpenH3IRSound, OpenH3IRShowText]
+        return [OpenH3IRCompile, OpenH3IRSetup, OpenH3IRFootage, OpenH3IRSound]
 
 
 async def comfy_entrypoint() -> OpenH3IRExtension:
@@ -833,4 +823,4 @@ async def comfy_entrypoint() -> OpenH3IRExtension:
 
 
 __all__ = ["OpenH3IRCompile", "OpenH3IRSetup", "OpenH3IRFootage", "OpenH3IRSound",
-           "OpenH3IRShowText", "OpenH3IRExtension", "comfy_entrypoint", "ServiceError"]
+           "OpenH3IRExtension", "comfy_entrypoint", "ServiceError"]

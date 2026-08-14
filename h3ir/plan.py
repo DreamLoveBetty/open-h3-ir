@@ -493,7 +493,7 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
                loras: list | None = None,
                mode_decision=None) -> Plan:
     opts = opts or ProfileOptions()
-    target = Target.build(brief.seconds, brief.aspect, brief.canvas)
+    target = Target.build(brief.seconds, brief.aspect, brief.canvas, brief.megapixels)
     manifest = build_manifest(brief, target)
     subjects = build_subjects(manifest, cards)
     speakers = build_speakers(brief, subjects, manifest)
