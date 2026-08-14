@@ -193,3 +193,49 @@ def test_both_composer_prompts_state_the_cut_vocabulary():
         tail = (prompts / name).read_text(encoding="utf-8").split("=== END SPECIFICATION ===")[-1]
         assert "the shot cuts to" in tail, name
         assert "the shot switches to" in tail, name
+
+
+# ---------------------------------------------------------------- the floor obeys it too
+
+def test_the_deterministic_draft_opens_its_cuts_with_the_spec_phrase():
+    """The floor was the biggest single source of the drift, and it is the one place that cannot
+    blame a model: "The framing changes and <Subject 1> remains in shot" is our own sentence, and
+    every fallback shipped a shot boundary off the closed set. 22 of the 152 timestamped openings in
+    the re-fired corpus missed the vocabulary and all but a handful were this line."""
+    from h3ir.compile import _assess
+    from h3ir.draft import deterministic_draft
+    from h3ir.models import AssetCard, AssetKind, AssetRef, Brief, Mode, Role
+    from h3ir.plan import ProfileOptions
+
+    ref = AssetRef(kind=AssetKind.IMAGE, role=Role.SUBJECT, sha256="plate", px=(1024, 576))
+    cards = {"plate": AssetCard(sha256="plate", kind=AssetKind.IMAGE, style="Live-action, cinematic",
+                                summary="a black car",
+                                subjects=[{"kind": "object", "descriptor": "the black car",
+                                           "attributes": ["carbon fibre body"]}])}
+    brief = Brief(intent="the car pulls out of the bay and onto a wet street", seconds=12.0,
+                  shots=3, assets=[ref])
+    plan = deterministic_draft(brief, Mode.REF2VA, cards, opts=ProfileOptions())
+    assert len(plan.shots) == 3
+    result, findings, _ = _assess(plan, brief, Mode.REF2VA, ProfileOptions(), [])
+    assert "The framing changes" not in result.prompt
+    # Lower-cased by the renderer, as every published example writes it: after
+    # "At MM:SS.mmm," the sentence continues.
+    assert result.prompt.count("the shot cuts to") == 2, result.prompt
+    assert "P7-cut-phrase-off-vocabulary" not in {f.rule for f in findings}, \
+        [str(f) for f in findings]
+    assert not [f for f in findings if f.severity == "ERROR"], [str(f) for f in findings]
+
+
+def test_the_floor_still_reads_as_one_sentence_with_no_subjects_to_name():
+    """The branch with nothing to carry over: a t2va draft has no labels at all."""
+    from h3ir.compile import _assess
+    from h3ir.draft import deterministic_draft
+    from h3ir.models import Brief, Mode
+    from h3ir.plan import ProfileOptions
+
+    brief = Brief(intent="rain runs down a shop window and the light shifts", seconds=12.0, shots=2)
+    plan = deterministic_draft(brief, Mode.T2VA, {}, opts=ProfileOptions())
+    result, findings, _ = _assess(plan, brief, Mode.T2VA, ProfileOptions(), [])
+    assert "the shot cuts to another view of the same scene" in result.prompt
+    assert "P7-cut-phrase-off-vocabulary" not in {f.rule for f in findings}
+    assert not [f for f in findings if f.severity == "ERROR"], [str(f) for f in findings]

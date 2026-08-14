@@ -163,11 +163,16 @@ def draft_shot_body(shot: ShotPlan, subjects: list[SubjectPlan], brief: Brief,
             parts.append(f"The setting is {env}")
         parts.append("{{CAM}}")
     else:
+        # base-en.txt 4.2 closes the cut phrase to five forms and "the framing changes" is not one of
+        # them. It is our own floor's wording, so every fallback shipped a shot boundary off the
+        # vocabulary the model was trained on: 22 of the 152 timestamped openings measured across the
+        # re-fired corpus, and all but a handful were this sentence. The draft is the product floor,
+        # which makes it the last place that should be paraphrasing a closed set.
         if present:
-            parts.append(f"The framing changes and {_subject_clause(present, use_labels)} "
-                         "remains in shot")
+            parts.append(f"The shot cuts to {_subject_clause(present, use_labels)}, "
+                         "still in frame")
         else:
-            parts.append("The framing changes on the same scene")
+            parts.append("The shot cuts to another view of the same scene")
         parts.append("{{CAM}}")
 
     for snd in shot.sync_sound[:2]:
