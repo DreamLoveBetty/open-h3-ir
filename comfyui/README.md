@@ -112,13 +112,16 @@ sockets describe, the node says so in its report and in the console.
 | first frame | the video starts on this picture |
 | last frame | the video ends on this picture |
 | picture 1 … picture 9 | a person, a car, a room. The next socket appears once this one is filled |
+| storyboard | a sketch showing how the shots are laid out. It plans the shots and never appears in the video |
 | clip 1 … clip 3 | reference footage, from an OpenH3-IR Footage node |
 | sound | reference music, an effect or a voice, from an OpenH3-IR Sound node |
 | setup | the service address and the five model files, from an OpenH3-IR Setup node. Required |
 
 The frame sockets and the picture sockets are different jobs, so filling both is refused before
 anything runs rather than after a model call. So is a sound on a frame-anchor job: H3's frame
-checkpoint takes no reference audio at all, so the brief would name a clip H3 never receives.
+checkpoint takes no reference audio at all, so the brief would name a clip H3 never receives. A
+storyboard on a frame-anchor job is refused for the same reason: the frame checkpoint takes no
+reference picture, so the brief would lay the shots out from a board H3 never sees.
 
 **picture 1** is one-based on purpose. The brief calls it `<Picture 1>`, so the canvas and the brief
 say the same words, and the notes box under the sockets needs no explaining: line one describes
@@ -140,8 +143,27 @@ shared block. A block matched lines by position across three differently named r
 socket silently moved every line onto the wrong sound.
 
 **the words in the voice clip** is a transcript of the recording you attached, not dialogue for your
-video. Lines you want spoken go in the sentence on the compile node. Typing words with no voice clip
-connected is an error rather than a no-op, because it used to be silently discarded.
+video. Lines you want spoken go in the spoken lines box on the compile node, or quoted in its
+sentence. Typing words with no voice clip connected is an error rather than a no-op, because it used
+to be silently discarded.
+
+## Exact spoken lines
+
+The sentence can carry dialogue, and the writer may reshape it. The **spoken lines** box on the
+compile node cannot be reshaped: one line per spoken line, and each comes back in the brief word for
+word and mark for mark, because a brief that rewords one is refused. **spoken in** names their
+language, which becomes the tag H3 reads, so Spanish words tagged English are spoken wrong. Who
+speaks, and whether a line is heard off screen, still belong in the sentence. An empty box asks for
+nothing.
+
+## What an attached music track is for
+
+One track can mean three different things, and only you know which, so the Sound node's **what it is
+for** asks: **play this track** puts the recording itself in the video as its score. **match its
+style** asks for new music that sounds like it, and nothing of the recording is used. **cut to its
+beat** times the cuts and the action to its rhythm, and nothing of the recording is used. The books
+follow the choice: the first claims a copy, the other two claim a reference, and the wrong one has
+the brief promise H3 that your file is the finished soundtrack.
 
 ## Wiring the graph
 
@@ -248,12 +270,14 @@ The frame sockets and the picture list are mutually exclusive, and the schema ca
 it is an error message after a queue rather than a greyed-out socket. A small frontend extension in a
 `web/` folder could grey the other group when one is connected. Not built.
 
-A per-picture role is not offered. The service also has `environment`, `style` and `storyboard` roles,
-but exposing them would need a wrapper node per picture, and a wrapper node means a plain `IMAGE` from
-a Load Image node would refuse to connect to the picture list. That is the worst possible first
+A per-picture role is not offered. The service also has `environment` and `style` roles, but
+exposing them would need a wrapper node per picture, and a wrapper node means a plain `IMAGE` from a
+Load Image node would refuse to connect to the picture list. That is the worst possible first
 impression for a node whose whole pitch is that it removes boxes. Write "the empty showroom" in the
-notes line instead. The frontend can already grow several inputs per item; the Python side takes one
-template input, so this is reachable if that changes.
+notes line instead. The storyboard role earned its own socket because a staging sketch is a different
+job, not a different description: a picture that must never appear in the video cannot ride a socket
+that means "put this in the video". The frontend can already grow several inputs per item; the Python
+side takes one template input, so per-picture roles stay reachable if that changes.
 
 ## When something goes wrong
 

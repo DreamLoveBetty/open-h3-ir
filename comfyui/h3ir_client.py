@@ -38,6 +38,13 @@ EFFORT = ("fast", "standard", "max")
 ASPECTS = ("16:9", "21:9", "4:3", "1:1", "3:4", "9:16")
 SIZING = ("match", "max")
 WEIGHT_DTYPES = ("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
+# The languages GET /v1/capabilities publishes for dialogue, duplicated for the same reason ASPECTS
+# is: a combo has to be populated before any server has been contacted. It is the service's own
+# published list and not a limit the compiler enforces -- it writes whatever language it is given
+# into the `[tag]` H3 reads -- so the field's own tooltip says what to do about a language that is
+# not here rather than the surface pretending none exists.
+DIALOGUE_LANGUAGES = ("English", "Spanish", "Portuguese", "French", "German", "Italian", "Russian",
+                      "Arabic", "Chinese", "Japanese", "Korean")
 
 FPS = 24
 # h3ir/shots.py MAX_SHOTS. The compiler clamps to this, so offering more would promise a cut count
@@ -64,6 +71,23 @@ FOOTAGE_JOBS = {
     "copy what is in it": "subject",
     "edit it": "edit_source",
     "carry on from it": "continuation_source",
+}
+
+# What an attached music track is for, in the user's words, and the role each one means. The same
+# grammar as FOOTAGE_JOBS and for the same reason: the role is a decision the user makes about their
+# own material, and no socket name can carry three answers.
+#
+# The first plays the track: its signal becomes the video's score, which is what `bgm` means and what
+# this socket has always meant, so it stays the default and an older graph that names no job keeps the
+# behaviour it had. The other two take nothing from the recording at all -- the score is newly written
+# in the track's style, or the track's beat times the cuts -- and the service derives `reference` plus
+# an `audio reference` task type from them, where `bgm` derives a copy claim the request cannot
+# overturn. Wired as `bgm`, "score this like the attached track but do not copy it" shipped a brief
+# promising H3 the file was the finished soundtrack.
+MUSIC_JOBS = {
+    "play this track": "bgm",
+    "match its style": "music_style",
+    "cut to its beat": "beat_reference",
 }
 
 # Which loader owns a file, decided by its extension because that is the one fact the file itself
@@ -203,9 +227,40 @@ def shot_count(shots: Any) -> int:
     return n
 
 
+def dialogue_lines(text: str, language: str) -> list[dict[str, Any]]:
+    """The spoken-lines box as the service's `dialogue` list: one line of the box per spoken line.
+
+    Nothing here rewrites a word. The box exists because the service checks these against the
+    document it wrote -- the exact text has to come back inside `<d>`, word for word and mark for
+    mark, or the brief is refused -- and a field that trimmed a quote mark or fixed a capital would
+    break the one guarantee it is for. So the only edit is stripping the whitespace a text box
+    collects at the ends of a line, and a line that is nothing but whitespace is dropped rather than
+    sent as a line with no words in it.
+
+    The language is per line in the service's model and one control here, because it becomes the
+    `[tag]` H3 reads and a Spanish line tagged English is spoken wrong. Mixed languages in one piece
+    stay reachable the way they always were, by quoting inside the sentence, which is what the
+    field's tooltip says.
+    """
+    said = [stripped for stripped in ((raw or "").strip() for raw in (text or "").splitlines())
+            if stripped]
+    # Checked where it is used and not before: with no lines in the box the language decides nothing,
+    # and a combo cannot be mistyped from the canvas anyway. This is for the graph that arrives over
+    # /prompt with a language nobody offered, which would otherwise be written into the brief as H3's
+    # tag exactly as spelled.
+    if said and language not in DIALOGUE_LANGUAGES:
+        raise ServiceError(
+            f"{language!r} is not one of the languages this field offers, and it would be written "
+            "into the brief as H3's language tag exactly as spelled, so the lines would be spoken "
+            "wrong. Pick one of: " + ", ".join(DIALOGUE_LANGUAGES) + ". For a language that is not "
+            "there, quote the line in the sentence instead and name the language there.")
+    return [{"text": t, "language": language} for t in said]
+
+
 def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, effort: str,
                   seed: int, silent: bool, shots: Any, assets: list[dict[str, Any]],
-                  transcripts: dict[str, str]) -> dict[str, Any]:
+                  transcripts: dict[str, str], spoken_lines: str = "",
+                  spoken_language: str = DIALOGUE_LANGUAGES[0]) -> dict[str, Any]:
     """Turn the node's state into the service's BriefIn.
 
     Assets arrive already shaped, with their role named, because the node knows the role from the
@@ -238,18 +293,28 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
         payload["shots"] = n
     if transcripts:
         payload["transcripts"] = dict(transcripts)
+    # Empty means absent. An empty box is not "no lines were asked for" stated in a field, it is the
+    # same request the node made before the box existed, so the key is dropped rather than sent as an
+    # empty list: the writer is then free to put a line in a mouth exactly as far as `invention`
+    # allows, which is the behaviour every saved workflow has.
+    spoken = dialogue_lines(spoken_lines, spoken_language)
+    if spoken:
+        payload["dialogue"] = spoken
     return payload
 
 
-# Sockets whose role is a fact about the socket itself. Footage carries its own role instead,
-# because a clip's job is chosen on the Footage node and no socket name could say it.
+# Sockets whose role is a fact about the socket itself. Footage and music carry their own role
+# instead, because what a clip or a track is FOR is chosen on its own node and no socket name could
+# say it: one music socket answers three different questions about the same file, so `music` is
+# deliberately absent from this table and a music asset arriving here with no role recorded is an
+# internal error rather than a quiet `bgm`.
 FRAME_SOCKETS = ("first frame", "last frame")
 SOUND_SOCKETS = ("music", "sound effect", "voice to match")
 ROLE_BY_SOCKET = {
     "first frame": "frame_anchor_first",
     "last frame": "frame_anchor_last",
     **{name: "subject" for name in PICTURE_NAMES},
-    "music": "bgm",
+    "storyboard": "storyboard",
     "sound effect": "sfx",
     "voice to match": "voice_timbre",
 }
@@ -266,6 +331,30 @@ def ordered(grown: dict[str, Any] | None, names: tuple[str, ...]) -> list[tuple[
     if unknown:
         raise ServiceError(f"internal: unexpected grown socket(s) {unknown!r}; expected {names!r}")
     return [(n, d[n]) for n in names if d.get(n) is not None]
+
+
+def images_in_numbering_order(first: Any, last: Any, pics: list[tuple[str, Any]],
+                              storyboard: Any) -> list[tuple[str, Any]]:
+    """Every attached picture as (socket name, image), in the order its label is assigned.
+
+    One list, computed once, and it is what both halves read: the order the service is told about in
+    `plan_assets`, and the order `ref_image_N` is filled in for H3. Deriving it twice is how
+    `<Picture 3>` in the brief becomes `ref_image_1` in the graph, which is a document describing one
+    picture while the model is handed another, with nothing on screen to say so.
+
+    The storyboard is last on purpose. `picture 1` has to be `<Picture 1>` whether or not a board is
+    attached: that identity is what the notes box relies on, and a board that took the first number
+    would silently renumber every picture a saved workflow already described.
+    """
+    out: list[tuple[str, Any]] = []
+    if first is not None:
+        out.append(("first frame", first))
+    if last is not None:
+        out.append(("last frame", last))
+    out.extend(pics)
+    if storyboard is not None:
+        out.append(("storyboard", storyboard))
+    return out
 
 
 def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]], picture_notes: list[str],
@@ -314,7 +403,7 @@ def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]], picture_not
 
 
 def expected_mode(has_first: bool, has_last: bool, n_pictures: int, n_clips: int,
-                  n_sounds: int = 0) -> str:
+                  n_sounds: int = 0, has_storyboard: bool = False) -> str:
     """Which H3 task the wiring describes, decided by the sockets rather than by prose.
 
     The user plugged a picture into `first frame` or into `picture 1`, and those are different jobs
@@ -334,7 +423,10 @@ def expected_mode(has_first: bool, has_last: bool, n_pictures: int, n_clips: int
         return "l2va"
     if has_first:
         return "i2va"
-    if n_pictures or n_clips or n_sounds:
+    # A storyboard counts as a reference for the same reason a sound does: it is an attached file the
+    # reference route carries and the frame route cannot, so a graph holding nothing but a board is a
+    # ref2va job and saying t2va here would print a warning about a correct graph.
+    if n_pictures or n_clips or n_sounds or has_storyboard:
         return "ref2va"
     return "t2va"
 
@@ -482,15 +574,21 @@ def footage_bundle(frames: Any, its_sound: Any, job: str) -> dict[str, Any]:
 
 
 def sound_bundle(*, music: Any, music_note: str, effect: Any, effect_note: str, voice: Any,
-                 voice_note: str, voice_words: str) -> dict[str, Any]:
-    """Three sounds, each with its own note, and the transcript of the voice clip.
+                 voice_note: str, voice_words: str,
+                 music_job: str = next(iter(MUSIC_JOBS))) -> dict[str, Any]:
+    """Three sounds, each with its own note, what the music is for, and the voice clip's transcript.
 
     Each note sits with its own socket, which is what kills matching lines by position across three
     differently named roles: skip one socket and every line after it described the wrong sound.
 
     A transcript with no clip to transcribe is refused here rather than dropped, which is the whole
     argument for this node existing: the check has a natural home beside the socket it is about.
+
+    The music job defaults to the first entry of MUSIC_JOBS, which is the copy role this socket has
+    always meant, so a graph that names no job asks for exactly what it asked for before.
     """
+    if music_job not in MUSIC_JOBS:
+        raise ServiceError(f"{music_job!r} is not one of {tuple(MUSIC_JOBS)}.")
     words = (voice_words or "").strip()
     if words and voice is None:
         raise ServiceError(
@@ -498,7 +596,8 @@ def sound_bundle(*, music: Any, music_note: str, effect: Any, effect_note: str, 
             "nothing and would be silently dropped. This field is a transcript of an attached "
             "recording, not dialogue for your video: lines you want spoken go in the sentence on "
             "the compile node.")
-    out: dict[str, Any] = {"voice_words": words}
+    out: dict[str, Any] = {"voice_words": words, "music_job": music_job,
+                           "music_role": MUSIC_JOBS[music_job]}
     for key, clip, note in (("music", music, music_note), ("effect", effect, effect_note),
                             ("voice", voice, voice_note)):
         out[key] = clip
@@ -510,11 +609,13 @@ def sound_bundle(*, music: Any, music_note: str, effect: Any, effect_note: str, 
     return out
 
 
-# The Sound node's three sockets, in the order their contents get numbered, with the canvas name
-# each one shows and the note field that describes it.
-SOUND_PARTS = (("music", "music", "music_note"),
-               ("effect", "sound effect", "effect_note"),
-               ("voice", "voice to match", "voice_note"))
+# The Sound node's three sockets, in the order their contents get numbered, with the canvas name each
+# one shows, the note field that describes it, and the bundle key holding its role where the socket's
+# own name cannot say it. Only the music socket has one: its role is the user's choice between three
+# jobs, and the other two mean one thing each, which ROLE_BY_SOCKET states.
+SOUND_PARTS = (("music", "music", "music_note", "music_role"),
+               ("effect", "sound effect", "effect_note", ""),
+               ("voice", "voice to match", "voice_note", ""))
 
 
 def _detail(body: Any) -> dict[str, Any]:

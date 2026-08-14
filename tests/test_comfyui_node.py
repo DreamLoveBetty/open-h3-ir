@@ -68,6 +68,104 @@ def test_transcripts_are_only_sent_when_there_are_some():
     assert C.build_payload("a", transcripts={"ab": "hello"}, **kw)["transcripts"] == {"ab": "hello"}
 
 
+# --------------------------------------------------------------------------- the words, kept
+
+def _brief(**over):
+    """The payload for a text-only job, which is all the dialogue box needs to be measured."""
+    base = dict(seconds=8.0, aspect="16:9", creativity="balanced", effort="standard", seed=7,
+                silent=False, shots="auto", assets=[], transcripts={})
+    base.update(over)
+    return C.build_payload("the guard turns at the barrier", **base)
+
+
+def test_a_line_typed_in_the_box_reaches_the_service_with_nothing_edited():
+    """The box's only guarantee. Every mark is the caller's: the service checks the document against
+    this string, so a field that tidied a quote, a capital or an ellipsis would break the one thing it
+    is for."""
+    said = '"The gate stays shut," he said... didn\'t he?'
+    assert _brief(spoken_lines=said)["dialogue"] == [{"text": said, "language": "English"}]
+
+
+def test_the_lines_stay_in_the_order_they_were_typed():
+    got = _brief(spoken_lines="The gate stays shut tonight.\nNot for me.")["dialogue"]
+    assert [d["text"] for d in got] == ["The gate stays shut tonight.", "Not for me."]
+
+
+def test_an_empty_box_asks_for_nothing_rather_than_asking_for_no_dialogue():
+    """Empty means absent, which is not the same request as an empty list: the writer may still put a
+    line in a mouth exactly as far as `invention` allows, which is what every workflow saved before
+    this box existed asked for."""
+    assert "dialogue" not in _brief()
+    assert "dialogue" not in _brief(spoken_lines="   \n\n  ")
+
+
+def test_a_blank_line_between_two_lines_is_not_a_line_with_no_words_in_it():
+    got = _brief(spoken_lines="  The gate stays shut. \n\n\n  Not for me.  ")["dialogue"]
+    assert [d["text"] for d in got] == ["The gate stays shut.", "Not for me."]
+
+
+def test_every_line_carries_the_language_that_was_chosen_for_them():
+    got = _brief(spoken_lines="La puerta queda cerrada.\nNo para mí.",
+                 spoken_language="Spanish")["dialogue"]
+    assert {d["language"] for d in got} == {"Spanish"}
+
+
+def test_a_language_nobody_offered_is_refused_instead_of_becoming_the_tag():
+    """The language is written into the brief as H3's `[tag]` exactly as spelled, so a graph arriving
+    over /prompt with a language off the list would have the lines spoken wrong rather than refused."""
+    with pytest.raises(C.ServiceError) as e:
+        _brief(spoken_lines="Hei, kuule.", spoken_language="Finnish")
+    msg = str(e.value)
+    assert "'Finnish' is not one of the languages" in msg
+    assert "Spanish" in msg, "list what is on offer"
+    assert "quote the line in the sentence" in msg, "and the way out, since the compiler takes any tag"
+
+
+def test_a_language_that_decides_nothing_is_not_worth_refusing():
+    """With no lines in the box the field decides nothing, and a refusal about an inert widget is
+    noise. It is checked where it is used."""
+    assert "dialogue" not in _brief(spoken_lines="", spoken_language="Finnish")
+
+
+def test_the_box_lands_in_the_field_the_service_checks_the_document_against():
+    """The seam, driven against the service's own wire model rather than against a fake of it. Both
+    keys are silent when wrong: pydantic ignores a key it does not know, so `lang` instead of
+    `language` would have every line tagged English and nothing would say so."""
+    from h3ir.service import BriefIn, _to_brief
+
+    payload = _brief(spoken_lines="La puerta queda cerrada.", spoken_language="Spanish")
+    brief = _to_brief(BriefIn(**payload))
+    assert [d.text for d in brief.dialogue] == ["La puerta queda cerrada."]
+    assert [d.language for d in brief.dialogue] == ["Spanish"]
+    assert [d.voiceover for d in brief.dialogue] == [False], \
+        "the box says nothing about voiceover, so it must not assert one"
+    assert [d.speaker_hint for d in brief.dialogue] == [None]
+
+
+def test_a_line_from_the_box_is_enforced_where_a_quoted_one_is_not():
+    """Why the box exists at all, in the compiler's own words rather than in prose here: the same
+    document is legal with no dialogue asked for and an ERROR once a line has been. Quoting inside the
+    sentence reaches no rule, which is why row 9 held up by luck rather than by a check."""
+    from h3ir.service import BriefIn, _to_brief
+    from h3ir.validate import Context, validate
+
+    said = "The gate stays shut tonight."
+    doc = ("integrated_multimodal_description: [Shot 1] The guard turns at the barrier and talks "
+           "about the gate.\n\noverall_soundscape: Rain on metal.\n\nnon_diegetic_music: N/A\n")
+    lines = _to_brief(BriefIn(**_brief(spoken_lines=said))).dialogue
+    base = dict(mode="t2va", n_pictures=0, duration_s=192 / 24)
+    without = {f.rule for f in validate(doc, Context(**base)) if f.severity == "ERROR"}
+    with_line = {f.rule for f in validate(doc, Context(
+        **base, expected_dialogue=tuple(d.text for d in lines))) if f.severity == "ERROR"}
+    assert not [r for r in without if r.startswith("D")], f"legal with nothing asked: {without}"
+    assert [r for r in with_line if r.startswith("D")], \
+        "a line the box asked for and the document never speaks has to be an ERROR"
+    spoken = doc.replace("about the gate.", f'and says: <d>[English] {said}</d>')
+    kept = {f.rule for f in validate(spoken, Context(
+        **base, expected_dialogue=tuple(d.text for d in lines))) if f.severity == "ERROR"}
+    assert not [r for r in kept if r.startswith("D")], f"and the same line inside <d> passes: {kept}"
+
+
 # ------------------------------------------------------- the socket decides the role and the job
 
 def test_each_socket_carries_the_role_it_means():
@@ -81,6 +179,60 @@ def test_each_socket_carries_the_role_it_means():
     assert [a["role"] for a in got] == ["frame_anchor_first", "subject", "edit_source",
                                         "voice_timbre"]
     assert [a["kind"] for a in got] == ["image", "image", "video", "audio"]
+
+
+def test_the_board_socket_says_the_picture_plans_the_shots_rather_than_appearing_in_them():
+    """The role the node had no way to state. Attached as a picture, a two panel board was described
+    three times over as a thing to put in the shot, twice under one label; the role is what makes it
+    shot-planning information instead."""
+    got = C.plan_assets([("picture 1", "image", "/a.png", {}),
+                         ("storyboard", "image", "/b.png", {})], [], "match", "", "")
+    assert [a["role"] for a in got] == ["subject", "storyboard"]
+
+
+def test_a_board_is_numbered_after_the_pictures_so_picture_1_stays_picture_1():
+    """The identity the notes box rests on: the socket says `picture 1` and the brief says
+    <Picture 1>. A board taking the first number would renumber every picture in a workflow that was
+    already written against those numbers, and every note beside a socket with it."""
+    order = C.images_in_numbering_order(None, None, [("picture 1", "A"), ("picture 2", "B")], "BOARD")
+    assert order == [("picture 1", "A"), ("picture 2", "B"), ("storyboard", "BOARD")]
+    assert C.images_in_numbering_order(None, None, [], "BOARD") == [("storyboard", "BOARD")], \
+        "a board on its own is the only picture there is, and it is the first label"
+    assert C.images_in_numbering_order(None, None, [], None) == []
+
+
+def test_the_frame_anchors_still_come_before_everything_they_can_share_a_graph_with():
+    """They cannot share one with a picture or a board, and the order is asserted anyway: the
+    numbering rule is one function, so it has to be right for every list it can be handed."""
+    assert C.images_in_numbering_order("F", "L", [], None) == [("first frame", "F"),
+                                                              ("last frame", "L")]
+
+
+def test_the_music_socket_has_no_role_of_its_own_to_fall_back_on():
+    """A falsification control on the change that made three jobs possible. `music` used to map to
+    `bgm` in the socket table, so any path that forgot to carry the user's choice would quietly claim
+    a copy. With the entry gone, forgetting is an error that names the socket."""
+    assert "music" not in C.ROLE_BY_SOCKET
+    with pytest.raises(C.ServiceError) as e:
+        C.plan_assets([("music", "audio", "/m.wav", {})], [], "match", "", "")
+    assert "no role recorded for socket 'music'" in str(e.value)
+
+
+def test_each_music_job_sends_the_role_the_service_knows_it_by():
+    """The three roles are the service's, spelled its way, because an unknown role is a 422 after the
+    files are written and the call is made. The closed set is the service's own enum."""
+    from h3ir.models import AUDIO_REFERENCE_ROLES, Role
+
+    known = {r.value for r in Role}
+    for job, role in C.MUSIC_JOBS.items():
+        assert role in known, f"{job!r} sends {role!r}, which the service would refuse"
+        written = [("music", "audio", "/m.wav", {"role": role})]
+        assert C.plan_assets(written, [], "match", "", "")[0]["role"] == role
+    reference_only = {r.value for r in AUDIO_REFERENCE_ROLES}
+    assert C.MUSIC_JOBS["match its style"] in reference_only
+    assert C.MUSIC_JOBS["cut to its beat"] in reference_only
+    assert C.MUSIC_JOBS["play this track"] not in reference_only, \
+        "the copy job is the one that is NOT reference-only, which is the whole distinction"
 
 
 def test_a_picture_note_binds_to_a_picture_socket_and_never_to_a_frame_anchor():
@@ -111,7 +263,8 @@ def test_a_sound_note_arrives_with_its_own_socket_rather_than_by_position():
     """The old block matched lines by position across three differently named roles, so filling only
     the effect attached line one to it and adding music later shifted everything."""
     written = [("sound effect", "audio", "/s.wav", {"note": "a heavy door slamming"}),
-               ("music", "audio", "/m.wav", {"note": "slow synth score, no drums"})]
+               ("music", "audio", "/m.wav", {"note": "slow synth score, no drums",
+                                             "role": "bgm"})]
     got = C.plan_assets(written, [], "match", "", "")
     assert got[0]["note"] == "a heavy door slamming" and got[0]["role"] == "sfx"
     assert got[1]["note"] == "slow synth score, no drums" and got[1]["role"] == "bgm"
@@ -127,7 +280,7 @@ def test_a_blank_note_line_does_not_become_an_empty_note():
 
 def test_only_pictures_carry_sizing():
     got = C.plan_assets([("picture 1", "image", "/a.png", {}),
-                         ("music", "audio", "/m.wav", {})], [], "max", "", "")
+                         ("music", "audio", "/m.wav", {"role": "bgm"})], [], "max", "", "")
     assert got[0]["sizing"] == "max"
     assert "sizing" not in got[1], "sizing is a picture idea; sending it for audio is noise"
 
@@ -204,6 +357,15 @@ def test_the_job_is_read_off_the_sockets(first, last, pics, clips, sounds, expec
     assert C.expected_mode(first, last, pics, clips, sounds) == expect
 
 
+def test_a_board_on_its_own_is_a_reference_job_too():
+    """The same trap the music socket fell into. A board is an attached picture the reference route
+    carries and the frame route has no socket for, so a graph holding nothing but a board is ref2va;
+    reading it as t2va would print a warning about a correct graph, which is how people learn to
+    ignore warnings."""
+    assert C.expected_mode(False, False, 0, 0, 0, has_storyboard=True) == "ref2va"
+    assert C.expected_mode(False, False, 0, 0, 0, has_storyboard=False) == "t2va"
+
+
 def test_a_sound_on_its_own_is_a_reference_job_and_not_a_text_only_one():
     """FOUND BY RENDERING. A graph with only a music clip declared t2va while the service correctly
     wrote ref2va, so the node printed a warning saying the render would come out wrong. It would
@@ -258,6 +420,45 @@ def test_each_sound_keeps_the_note_that_was_typed_beside_it():
     assert got["music_note"] == "slow synth" and got["voice_note"] == "hoarse"
     assert got["voice_words"] == "the words"
     assert got["effect"] is None
+
+
+def test_a_music_track_carries_the_role_its_job_means():
+    """The Sound node's half of the ruling: one attached track answers three different questions, and
+    only the person who attached it knows which."""
+    for job, role in C.MUSIC_JOBS.items():
+        got = C.sound_bundle(music="M", music_note="a slow synth drone", music_job=job, effect=None,
+                             effect_note="", voice=None, voice_note="", voice_words="")
+        assert got["music_role"] == role and got["music_job"] == job
+
+
+def test_a_graph_that_names_no_music_job_asks_for_what_it_asked_for_before():
+    """A required input is missing from every API-format graph written before it existed, so this one
+    is optional and its default is the role this socket has always meant. An older graph that attaches
+    a track and says nothing still gets the track played."""
+    got = C.sound_bundle(music="M", music_note="", effect=None, effect_note="", voice=None,
+                         voice_note="", voice_words="")
+    assert got["music_role"] == "bgm"
+    assert next(iter(C.MUSIC_JOBS)) == "play this track", \
+        "the default is the table's first entry, so the table's order is the compatibility promise"
+
+
+def test_an_unknown_music_job_is_refused():
+    with pytest.raises(C.ServiceError):
+        C.sound_bundle(music="M", music_note="", music_job="make it sadder", effect=None,
+                       effect_note="", voice=None, voice_note="", voice_words="")
+
+
+def test_the_role_travels_in_the_bundle_key_the_parts_table_names():
+    """`SOUND_PARTS` is what the node reads to turn filled sockets into assets, so the role column has
+    to name a key the bundle actually has, and only for the socket whose name cannot say its role."""
+    got = C.sound_bundle(music="M", music_note="", music_job="cut to its beat", effect="E",
+                         effect_note="", voice=None, voice_note="", voice_words="")
+    for key, shown, note_key, role_key in C.SOUND_PARTS:
+        assert note_key in got
+        if role_key:
+            assert key == "music" and got[role_key] == "beat_reference"
+        else:
+            assert shown in C.ROLE_BY_SOCKET, f"{shown} has no role from its socket name either"
 
 
 def test_a_clip_carries_the_role_its_job_means():
