@@ -112,6 +112,27 @@ def test_the_whole_line_on_both_sides_of_the_cut_is_an_error():
     assert "twice" in errs[0].msg
 
 
+def test_the_whole_line_then_a_recap_of_its_tail_is_the_same_defect():
+    """The shape the writer moved to once the whole-line duplicate was rejected, measured live:
+    the complete line in [Shot 1], then "<d>[English] ...and not the whole lock.</d>" after the cut.
+    Fewer words duplicated, same instruction to say them twice."""
+    text = _doc(f"{SHOT1}<d>[English] {LINE}</d> <scenetrans> {CONTINUITY}\n"
+                f"{SHOT2}<scenetrans> his sentence finishes: <d>[English] ...and not the whole "
+                f"lock.</d>")
+    errs = [f for f in validate(text, _ctx()) if f.severity == "ERROR"]
+    assert [f.rule for f in errs] == ["D10-dialogue-line-duplicated"], [str(f) for f in errs]
+    assert "again" in errs[0].msg and "ellipsis" in errs[0].msg
+
+
+def test_a_second_unrelated_line_is_not_an_echo():
+    """The threshold is four consecutive words of the caller's own line, which two different
+    utterances do not share by accident."""
+    text = _doc(f"{SHOT1}<d>[English] {LINE}</d>\n{SHOT2}the apprentice (S2) answers: "
+                f"<d>[English] I will change it in the morning.</d>")
+    assert not [f for f in validate(text, _ctx()) if f.severity == "ERROR"], \
+        [str(f) for f in validate(text, _ctx())]
+
+
 def test_the_duplicate_rule_only_counts_lines_the_caller_supplied():
     """A repeated shout the caller wrote as one line ("Pull it! Pull it!") lives inside one block
     and is none of this rule's business."""
@@ -229,7 +250,8 @@ def test_the_ask_states_how_a_line_crossing_a_cut_is_written():
     assert "spoken once" in ask.lower()
     assert "<scenetrans>" in ask
     assert "<cutoff>" in ask
-    assert "twice" in ask
+    assert "no word appears in both" in ask
+    assert "says them" in ask, "the consequence of a repeat has to be stated, not just forbidden"
 
 
 def test_a_brief_with_no_dialogue_is_not_given_the_dialogue_rules():

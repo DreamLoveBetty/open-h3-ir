@@ -340,12 +340,14 @@ def reference_audio_words(transcripts: tuple[tuple[str, str], ...]) -> str:
 # line inside <d> on both sides of the cut in 7 of 7 runs, which instructs H3 to say it twice. This
 # states the format's rule and invents nothing about the request: the caller supplied the line once.
 DIALOGUE_PLACEMENT = (
-    "Each line above is spoken ONCE in the target video. If a line is still running when you cut, "
-    "divide it at the cut: the first part closes one <d> block, the rest opens the next one, and "
-    "both connecting points carry <scenetrans> with a sentence saying the audio continues across "
-    "the cut. Never write the whole line twice, once on each side: two <d> blocks holding the same "
-    "words tell the model to speak it twice. If a line is still being spoken when the render ends, "
-    "stop it where the video stops and mark that with <cutoff>.")
+    "Each line above is spoken ONCE in the target video, and every word of it appears in exactly one "
+    "<d> block. If a line is still running when you cut, divide it at the cut: the words before the "
+    "cut close one <d> block, the words after it open the next one, no word appears in both, and both "
+    "connecting points carry <scenetrans> with a sentence saying the audio continues across the cut. "
+    "Do not write the whole line and then repeat part of it after the cut, and do not stand an "
+    "ellipsis in for the half you left out. Repeated words are repeated speech: the model says them "
+    "again. If a line is still being spoken when the render ends, stop it where the video stops and "
+    "mark that with <cutoff>.")
 
 
 def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],

@@ -526,7 +526,19 @@ def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = Tru
                 transcripts: dict[str, str] | None = None) -> dict[str, AssetCard]:
     out: dict[str, AssetCard] = {}
     for ref in refs:
-        if use_cache:
+        # An AUDIO card is never cached, in either direction, and that is not a performance
+        # trade: `analyse_audio` makes no model call and reads no bytes, so there is nothing to
+        # save. Every field in it comes from the REQUEST -- the role picks the summary sentence,
+        # the note becomes `characterisation` (the only channel the encoder has for how the audio
+        # sounds), the caller's recogniser supplies the transcript -- and none of those is in the
+        # cache key, which is `sha256|version|model|kind`. So the first request to attach a wav
+        # decided what every later request attaching the same wav would say about it: the live
+        # cache entry for one probe's voice reference held `transcript: ''` plus a note from an
+        # unrelated request, and that is what reached the writer on seven runs whose caller had
+        # supplied the words. Content-addressing is right for an image or a video, where the card
+        # IS derived from the bytes; here it addresses content that contributes nothing to the card.
+        cacheable = use_cache and ref.kind is not AssetKind.AUDIO
+        if cacheable:
             hit = load_cached(ref, backend.cfg.model)
             if hit is not None:
                 log.info("card cache hit %s", ref.sha256[:12])
@@ -542,7 +554,7 @@ def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = Tru
         except AssetAnalysisError as e:
             raise _name_the_asset(e, ref) from e
         out[ref.sha256] = card
-        if use_cache:
+        if cacheable:
             save_cached(ref, card, backend.cfg.model)
     return out
 

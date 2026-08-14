@@ -1141,6 +1141,23 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                     "is spoken once: if it runs across a cut, divide it at the cut and mark both "
                     "connecting points with <scenetrans> (base-en.txt 4.4) rather than repeating "
                     "the whole line on both sides")
+            else:
+                # The same defect in a smaller coat, and the shape the writer moved to once the
+                # whole-line duplicate was rejected: the complete line in one shot, then a TAIL of it
+                # spoken again after the cut ("<d>[English] ...and not the whole lock.</d>"). The
+                # words in that fragment are still scheduled twice. Four consecutive words is the
+                # threshold because it is well past coincidence between two different utterances.
+                echo = next(((i, p) for i, s in enumerate(spoken) if i != whole[0]
+                             for p in [_shared_phrase(w, s, 4)] if p), None)
+                if echo:
+                    add("D10-dialogue-line-duplicated", "ERROR",
+                        f"the line {w[:40]!r} is spoken in full in one <d> block and part of it is "
+                        f"spoken again in another ({echo[1]!r}), so those words are scheduled twice. "
+                        "Either the line belongs to one shot and is not repeated after the cut, or it "
+                        "runs across the cut and is DIVIDED at it: the first part closes one <d> "
+                        "block, the remaining words open the next, each half appearing exactly once, "
+                        "with <scenetrans> at both connecting points. An ellipsis standing in for the "
+                        "missing half is not the construct either")
             continue
         run = _consecutive_run(spoken, w)
         if run is None:
