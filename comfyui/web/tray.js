@@ -214,7 +214,9 @@ class Tray {
 
 const CSS = `
 .oh3-tray{display:flex;flex-direction:column;gap:6px;padding:6px;font-family:system-ui,sans-serif;
-  font-size:11px;color:#dde2ea;height:460px;min-height:460px;overflow-y:auto;box-sizing:border-box;}
+  font-size:11px;color:#dde2ea;width:100%;max-width:100%;height:460px;min-height:460px;
+  overflow:hidden;overflow-y:auto;box-sizing:border-box;position:relative;contain:content;}
+.oh3-tray *{box-sizing:border-box;min-width:0;max-width:100%;}
 .oh3-drop{border:1px dashed #4a5262;border-radius:6px;padding:10px;text-align:center;color:#8b93a5;
   cursor:pointer;}
 .oh3-drop.oh3-over{border-color:#e8873a;color:#e8873a;}
@@ -255,6 +257,8 @@ app.registerExtension({
       // The string stays the node's real field; the panel is its editor, so the raw text row
       // shrinks out of the way rather than showing the same fact twice.
       state.computeSize = () => [0, -4];
+      state.hidden = true;
+      if (state.options) state.options.hidden = true;
       const tray = new Tray(this, state);
       this._oh3Tray = tray;
       const panel = this.addDOMWidget("oh3_panel", "div", tray.root, { serialize: false });
@@ -262,7 +266,7 @@ app.registerExtension({
       // nothing by default: without these two lines the panel gets zero rows and its content piles
       // over the node's other widgets. The recipe follows the reference loader verbatim.
       panel.computedHeight = PANEL_H;
-      panel.computeSize = () => [NODE_W, PANEL_H];
+      panel.computeSize = (w) => [w || this.size?.[0] || NODE_W, PANEL_H];
       const min = this.computeSize?.();
       this.size[0] = Math.max(NODE_W, this.size?.[0] || 0);
       this.size[1] = Math.max(min?.[1] || 0, PANEL_H + 130, this.size?.[1] || 0);
