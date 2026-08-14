@@ -40,9 +40,12 @@ def test_ten_seconds_is_really_ten_point_one_two_five():
     t = Target.build(10, "16:9")
     assert t.frames == 243
     assert round(t.effective_seconds, 3) == 10.125
-    # S.SS follows the nominal request, cut times follow the real length -- deliberately split.
-    assert t.s_ss("nominal") == "10.00"
+    # S.SS is the EFFECTIVE duration (base-en.txt 2.1), which is also what the cut times are
+    # measured against. `nominal` remains expressible as a profile flag and is no longer the
+    # default: it made the deterministic draft and the written brief disagree about the number.
+    assert t.s_ss() == "10.13"
     assert t.s_ss("snapped") == "10.13"
+    assert t.s_ss("nominal") == "10.00"
 
 
 def test_latent_and_row_math():

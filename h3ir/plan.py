@@ -49,7 +49,11 @@ class ProfileOptions:
     """Every belief we have not yet settled by measurement is a field here, not a branch."""
 
     name: str = "h3ir/2026-08-a"
-    s_ss_policy: str = "nominal"          # nominal | snapped
+    # base-en.txt 2.1: "`S.SS` is the effective video duration formatted to exactly two decimal
+    # places". `nominal` stays expressible so the old behaviour can be measured rather than argued
+    # about, but it is not what anyone gets by default -- it made the draft and the written brief
+    # disagree about which number the instruction line carries.
+    s_ss_policy: str = "snapped"          # snapped (effective, per the spec) | nominal
     camera_style: str = "canonical"       # canonical | prose
     field_separator: str = "\n\n"
     word_target_override: int | None = None

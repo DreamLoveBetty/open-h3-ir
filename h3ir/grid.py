@@ -8,10 +8,16 @@ Node-stated trained range is ~124..362 frames, i.e. 5.167 s .. 15.083 s.
 
 Two different second-values matter and are routinely conflated:
   * `effective_seconds` = frames/24  -> the real length of the render. Cut times must
-    fall strictly inside it.
-  * `nominal_seconds`   = what was asked for -> what the instruction line's S.SS says,
-    because the hosted API takes integer durations and the spec's own L2VA example
-    uses 6.00, which is not on this grid at all.
+    fall strictly inside it, and it is what the instruction line's S.SS says.
+  * `nominal_seconds`   = what was asked for -> reported to the caller (X19) and nothing else.
+
+S.SS used to be the NOMINAL duration here, on the grounds that the hosted API takes integer
+durations and the spec's own L2VA example uses 6.00, which is not on this grid at all. base-en.txt
+2.1 settles it the other way in one sentence -- "`S.SS` is the effective video duration formatted
+to exactly two decimal places" -- and the cost of the old reading was two paths disagreeing about
+which number belongs there: for a 13.3 s request the draft said the closing plate lands at 13.30
+and the written brief said 13.667, and neither was checked. The example's 6.00 is the hosted
+service quoting a duration its own grid then snaps; it is not a second definition of S.SS.
 """
 from __future__ import annotations
 
@@ -135,15 +141,11 @@ class Target:
         """Informational. Outside this band still renders; it is not a supported/unsupported line."""
         return TRAINED_MIN_FRAMES <= self.frames <= TRAINED_MAX_FRAMES
 
-    def s_ss(self, policy: str = "nominal") -> str:
-        """The instruction line's S.SS value. See module docstring for why nominal is default.
-
-        Rounded half-UP explicitly: Python's default formatting is round-half-even, so
-        f"{10.125:.2f}" is "10.12" -- not what anyone reading the spec would write.
-        """
-        from decimal import ROUND_HALF_UP, Decimal
-        v = self.nominal_seconds if policy == "nominal" else self.effective_seconds
-        return str(Decimal(repr(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    def s_ss(self, policy: str = "snapped") -> str:
+        """The instruction line's S.SS value. `snapped` is the effective duration, which is what
+        base-en.txt 2.1 asks for; `nominal` is kept as a profile flag so the old behaviour is still
+        expressible and measurable, not as a default anyone gets by accident."""
+        return s_ss_text(self.nominal_seconds if policy == "nominal" else self.effective_seconds)
 
     @classmethod
     def build(cls, seconds: float, aspect: str = "16:9",
@@ -159,6 +161,44 @@ class Target:
         return cls(nominal_seconds=float(seconds),
                    frames=frames_for_seconds(seconds),
                    canvas=canvas_for_aspect(aspect))
+
+
+def s_ss_text(seconds: float) -> str:
+    """The instruction line's `S.SS`: exactly two decimal places, rounded half-UP.
+
+    Explicitly half-up because Python's default formatting is half-even, so f"{10.125:.2f}" is
+    "10.12" -- not what anyone reading the spec would write.
+    """
+    from decimal import ROUND_HALF_UP, Decimal
+    return str(Decimal(repr(float(seconds))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+# The mandated first line, verbatim from base-en.txt 2.1, including the em dash and the per-mode
+# bracket convention. The spec is inconsistent here -- fl2va cites its pictures and shots BARE while
+# i2va and l2va bracket them -- and that inconsistency is preserved deliberately rather than tidied.
+#
+# ONE implementation, called by the renderer, the repair pass and the validator. Two implementations
+# of a mandated string is exactly how fl2va ended up shipping two different notations depending on
+# which path had won (repair._fix_fl2va_notation records that episode).
+def instruction_line_for(mode: str, last_shot: int, s_ss: str) -> str:
+    """`mode` is the Mode's value. Returns "" for the two modes that have no instruction line."""
+    if mode == "i2va":
+        return ("For the target video, at 0.00 seconds into the target video, "
+                "<Picture 1> (from [Shot 1]) is fully referenced.")
+    if mode == "fl2va":
+        return ("How the reference pictures align with the target video — Picture 1 (from Shot 1) "
+                "aligns with the 0.00-second mark of the target video; Picture 2 "
+                f"(from Shot {last_shot}) aligns with the {s_ss}-second mark of the target video.")
+    if mode == "l2va":
+        return ("How the reference pictures align with the target video — <Picture 1> "
+                f"(from [Shot {last_shot}]) aligns with the {s_ss}-second mark of the target video.")
+    return ""
+
+
+# What an instruction line looks like before it is known to be correct. Used to tell "the model
+# wrote one and got it wrong" from "the model wrote none at all", which are different repairs.
+INSTRUCTION_OPENINGS = ("For the target video, at 0.00 seconds",
+                        "How the reference pictures align with the target video")
 
 
 def ms_to_timestamp(ms: int) -> str:

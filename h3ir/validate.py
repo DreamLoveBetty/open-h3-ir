@@ -17,7 +17,9 @@ from typing import Iterable
 
 from .creativity import (COMMITS_CAMERA, MAXIMAL_CAMERA, ONSCREEN_TEXT, SCORE, SPEECH,
                          Scope)
-from .models import AUDIO_MARKERS, CAMERA_TYPES, Finding, TASK_TYPES, VISUAL_MARKERS
+from .grid import INSTRUCTION_OPENINGS, instruction_line_for, s_ss_text
+from .models import (AMPLITUDES, AUDIO_MARKERS, CAMERA_TYPES, Finding, SPEEDS, TASK_TYPES,
+                     VISUAL_MARKERS)
 
 REF_SECTIONS = ["subject_definitions", "summary", "retention_analysis",
                 "detailed_description", "overall_soundscape", "non_diegetic_music"]
@@ -122,6 +124,24 @@ CAMERA_MOTION_PHRASE = re.compile(
     r"|holds?\s+(?:a\s+)?static|static\s+shot|shakes?\s+(?:slightly|strongly)"
     r"|rolls?\s+(?:clock|counter)|point\s+of\s+view|\bPOV\b)", re.I)
 
+# base-en.txt 4.2's closed set for an ordinary cut, plus the three it allows only on an explicit
+# request. Written as the spec writes them, because the trained token is the point: a synonym
+# ("the framing changes and", "the scene cuts to", "the whip-pan resolves onto") is a near miss in
+# exactly the way <Image 1> is a near miss for <Picture 1>.
+CUT_PHRASES = ("the camera cuts to", "the shot cuts to", "the shot transitions to",
+               "the shot changes to", "the shot switches to")
+CUT_PHRASE_PRESENT = re.compile(
+    "|".join([re.escape(p) for p in CUT_PHRASES]
+             + [r"cross[- ]dissolve", r"\bfades?\s+(?:to|into|out)\b", r"\bwipes?\s+(?:to|across)\b",
+                r"\bwipe reveals\b", r"\bwipe\b[^.]{0,20}\breveals?\b"]), re.I)
+
+# The two dimensions base-en.txt 4.3 closes, checked for what is written rather than for what is
+# missing. The old detector asked whether a LEGAL value was present, so an illegal one sitting beside
+# it was invisible and a document carrying only an illegal one got an INFO saying the idiom was
+# absent rather than that the value was wrong.
+AMPLITUDES_WRITTEN = re.compile(r"\bwith\s+(\w+)\s+amplitude\b", re.I)
+SPEEDS_WRITTEN = re.compile(r"\bat\s+(?:a\s+)?(\w+)\s+speed\b", re.I)
+
 # A bare stem, but only counted inside a clause that is talking about the camera.
 CAMERA_STEM_IN_CONTEXT = re.compile(
     r"\b(?:zoom|push|pull|pan|truck|tilt|pedestal|arc|track|static|shake|roll|drift|glide|"
@@ -163,8 +183,41 @@ _SEQUENCE = re.compile(r"\b(?:then|before|after|until|once|later|afterwards?|fir
 def _contradiction_is_real(gap: str) -> bool:
     return not (_NEW_ACTOR.search(gap) or _SEQUENCE.search(gap))
 
+# "Do not use abstract mood words or explain the emotional function of the score" (base-en.txt 4.7).
+# Two shapes: a word that names a feeling instead of a sound, and a clause that explains what the
+# music is FOR. Words that describe the signal are deliberately absent from this list -- sparse,
+# minimal, restrained, driving, sustained, muted are all properties of what is played.
+MOOD_WORDS = re.compile(
+    r"\b(?:melanchol(?:y|ic)|wistful|nostalgic|hopeful|hopeless|uplifting|triumphant|heroic|"
+    r"epic|romantic|joyful|cheerful|sad|happy|tense|ominous|foreboding|sinister|menacing|eerie|"
+    r"haunting|mysterious|dreamy|whimsical|playful|somber|sombre|brooding|serene|tranquil|"
+    r"melodramatic|emotional|poignant|bittersweet|triumphal|"
+    r"(?:creating|evoking|conveying|suggesting|underscoring|reinforcing|heightening)\s+"
+    r"(?:a|an|the)?\s*[\w\s-]{0,30}?(?:mood|atmosphere|feeling|emotion|tension|sense)|"
+    r"(?:mood|atmosphere|emotional\s+\w+)\s+of\s+the\s+(?:scene|video|piece))\b", re.I)
+
 VOICEOVER_PHRASE = "says in an off-screen voiceover"
 LIPS_CLOSED = re.compile(r"lips?\b[^.]*\b(closed|shut)", re.I)
+
+# base-en.txt 4.4 mandates the statement and then offers four phrasings for it ("Continuity may be
+# expressed with ..."), so the wording is open. Matched loosely for that reason: the four listed
+# forms, plus the verbs they are built from, so a competent rewording still counts.
+CONTINUITY_STATED = re.compile(
+    r"\b(?:continue[sd]?|continuing|carries over|carrying over|carried over|remains audible|"
+    r"uninterrupted|unbroken|seamlessly)\b", re.I)
+
+
+def _consecutive_run(spoken: list[str], want: str) -> tuple[int, int] | None:
+    """The shortest run of consecutive <d> blocks whose contents join back into `want`.
+
+    Consecutive, not any subset: a line divided at a cut is divided in playback order, and allowing
+    an arbitrary combination would let two unrelated blocks satisfy a line neither of them says.
+    """
+    for i in range(len(spoken)):
+        for j in range(i + 1, len(spoken)):
+            if want in " ".join(spoken[i:j + 1]):
+                return i, j
+    return None
 
 
 @dataclass
@@ -190,6 +243,10 @@ class Context:
     # Audio labels the wiring KNOWS are attached standalone rather than as a video's soundtrack. A
     # positive assertion on purpose: an empty tuple means "not stated", never "none are paired".
     standalone_audio: tuple[str, ...] = ()
+    # (audio_label, transcript) for every attached recording the CALLER transcribed with a real
+    # recogniser. Nothing here listens, so this is the only channel by which the words on a
+    # recording are known, and ref-en.txt 5.4 governs where they may and may not appear.
+    audio_transcripts: tuple[tuple[str, str], ...] = ()
     forbid_keyframe_refs: bool = False
     require_start_at_zero: bool = True
     # True only when a reference plate IS a frame of the video (a frame anchor), which is the one
@@ -307,6 +364,39 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             add("S9-section-empty", "ERROR",
                 f"'{name}:' is present but empty; every section H3 expects has to be populated"
                 + (" (only non_diegetic_music may be 'N/A')" if name != "non_diegetic_music" else ""))
+
+    # ---------------------------------------------------------------- the instruction line
+    # base-en.txt 2.1 prints it verbatim per mode and states two facts about it: it is the FIRST
+    # line, followed by exactly one blank line, and its `S.SS` is "the effective video duration
+    # formatted to exactly two decimal places". Nothing checked either, in any mode -- the one part
+    # of the document the spec hands over as a literal string was the only part with no rule.
+    #
+    # ERROR, and safe at that severity because there is no legal variation to be wrong about: the
+    # spec says "always uses" and prints the template, so the expected line is computable and the
+    # message can simply show it. It is also repaired mechanically before this runs
+    # (repair._fix_instruction_line), so reaching here means a path that skipped the repair.
+    if ctx.mode in ("i2va", "fl2va", "l2va"):
+        lines = text.strip().splitlines()
+        first = lines[0].strip() if lines else ""
+        last_shot = max((int(n) for n in re.findall(r"\[Shot\s+(\d+)\]", text)), default=1)
+        if not first.startswith(INSTRUCTION_OPENINGS):
+            add("I1-instruction-line-missing", "ERROR",
+                f"a {ctx.mode} brief must open with the mandated alignment instruction, then one "
+                f"blank line, then the core fields (base-en.txt 2.1). Expected:\n"
+                + instruction_line_for(ctx.mode, last_shot,
+                                       s_ss_text(ctx.duration_s) if ctx.duration_s else "S.SS"))
+        else:
+            if ctx.duration_s is not None:
+                want = instruction_line_for(ctx.mode, last_shot, s_ss_text(ctx.duration_s))
+                if first != want:
+                    add("I2-instruction-line-not-exact", "ERROR",
+                        f"the instruction line differs from the mandated one. Expected:\n{want}\n"
+                        f"Got:\n{first}\n(`S.SS` is the effective duration to exactly two decimal "
+                        "places, and `N` is the index of the actual final shot)")
+            if len(lines) > 1 and lines[1].strip():
+                add("I3-instruction-line-no-blank-line", "ERROR",
+                    "the instruction line must be followed by one blank line before the core "
+                    f"fields (base-en.txt 2.1); the next line is {lines[1][:60]!r}")
 
     defs = sec.get("subject_definitions", "")
     ret = sec.get("retention_analysis", "")
@@ -466,6 +556,31 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             # video's soundtrack as a separate wired input, so with none wired the signal never
             # reaches the model and the target's audio is generated. Claiming reuse promises
             # something the render cannot do.
+            # The same guard the other three task types have had, for the two that did not.
+            # `M5-editing-without-video` protects `video editing`, M7 and M8 protect the two audio
+            # types, and `keyframe completion` and `video continuation` protected nothing: seven
+            # documents in the corpus claimed `keyframe completion` with only a wav attached, so the
+            # prefix asserted a frame relationship to an asset that has no frames.
+            #
+            # Deliberately NOT a comparison against the types the wiring derives. A brief whose
+            # caller declared a frame anchor on a ref2va route has that role downgraded (X10) and
+            # loses `keyframe completion` from the derivation, so a full derived-versus-shipped check
+            # would fire on the downgrade rather than on a defect. This fires only when the claim has
+            # no asset of the right KIND anywhere, which the downgrade cannot produce.
+            for claimed, kind, rule in (
+                    ("keyframe completion", "Picture", "M11-keyframe-without-picture"),
+                    ("video continuation", "Video", "M12-continuation-without-video")):
+                if claimed in parts and not used[kind]:
+                    add(rule, "ERROR",
+                        f"the summary claims {claimed!r} and no <{kind} N> is referenced anywhere in "
+                        f"the brief. That task type is a statement about "
+                        + ("an image serving as a concrete frame of the target video"
+                           if kind == "Picture" else
+                           "a source video the target continues from")
+                        + f", and there is no {kind.lower()} here to play that part. Remove "
+                        f"{claimed!r} from the task-type prefix and keep only the types the attached "
+                        "references actually support")
+
             for claimed, rule in (("audio reuse", "M7-audio-reuse-without-audio"),
                                   ("audio reference", "M8-audio-reference-without-audio")):
                 if claimed in parts and not used["Audio"]:
@@ -505,6 +620,54 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
         for n in sorted(defined_subj - analysed):
             add("R5-unanalysed-subject", "WARN",
                 f"<Subject {n}> defined but absent from retention_analysis")
+
+        # ref-en.txt 4: "Use one line for each reference label." R5 catches the opposite case, a
+        # label defined and never analysed, at WARN; nothing caught a label analysed twice, and the
+        # worst single document in the corpus is one of those. It shipped `ready` with two lines for
+        # <Audio 1>, the first calling the wav "the image" and giving it a first-frame parenthetical
+        # on a request with no picture attached at all.
+        #
+        # ERROR: counting lines is a fact, and the repair is unambiguous -- keep the line that states
+        # the label's actual reference role and delete the other, since both cannot be true of one
+        # label whose meaning is fixed in subject_definitions.
+        seen_labels: dict[str, int] = {}
+        for line in [l for l in ret.splitlines() if l.strip()]:
+            m = re.match(r"\s*<((?:Subject|Picture|Video|Audio)\s+\d+)>", line)
+            if m:
+                seen_labels[m.group(1)] = seen_labels.get(m.group(1), 0) + 1
+        for label, n_lines in seen_labels.items():
+            if n_lines > 1:
+                add("R24-label-analysed-twice", "ERROR",
+                    f"<{label}> has {n_lines} lines in retention_analysis and ref-en.txt 4 gives "
+                    "each reference label exactly one. A label's meaning is fixed in "
+                    "subject_definitions, so two lines about it state two different relationships "
+                    "for one asset: keep the one that matches its defined role and delete the rest")
+
+        # ref-en.txt 2.1: "One subject may be defined by multiple reference assets ... When the same
+        # subject comes from multiple assets, combine the sources and state what each asset
+        # provides." The corpus contains 0 merged definitions and one shipped document defining the
+        # same man twice, once from a picture and once from a video, with the second subject appearing
+        # in no shot and no retention line.
+        #
+        # WARN, because which two descriptors are the same person is a judgement and the descriptor
+        # is all the text gives: two men in one video legitimately both read as "the man". A false
+        # ERROR here would rewrite a correct cast list.
+        by_descriptor: dict[str, list[tuple[str, str]]] = {}
+        for m in re.finditer(r"^\s*(<Subject\s+\d+>)\s+is\s+(?:the|a|an)\s+([^,.]+?)\s+"
+                             r"(?:in|from)\s+(<(?:Picture|Video|Audio)\s+\d+>)\s*[,.]",
+                             defs, re.M):
+            by_descriptor.setdefault(m.group(2).strip().lower(), []).append((m.group(1), m.group(3)))
+        for descriptor, entries in by_descriptor.items():
+            sources = {src for _, src in entries}
+            if len(entries) > 1 and len(sources) == len(entries):
+                add("R25-subject-defined-twice", "WARN",
+                    f"{' and '.join(lb for lb, _ in entries)} are both defined as "
+                    f"{descriptor!r}, each from a different asset ({', '.join(sorted(sources))}). "
+                    "If that is one subject drawn from several references, ref-en.txt 2.1 combines "
+                    "them into one definition that says what each asset provides: '<Subject 1> is "
+                    "the woman whose appearance comes from <Picture 1> and whose walking motion "
+                    "comes from <Video 1>.' Two labels for one person split the identity the render "
+                    "is supposed to hold")
 
     # ---------------------------------------------------------------- pose contamination
     # A reference plate licenses APPEARANCE, not POSE. Scoped to subject_definitions and
@@ -855,6 +1018,52 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             "a motion type appears but without the 'with <small|large> amplitude at "
             "<slow|fast> speed' idiom the spec defines")
 
+    # The same vocabulary, checked in the other direction: what was WRITTEN, not what is missing.
+    #
+    # ERROR, and narrow enough to deserve it. Only two positions count: the spec's own idiom slot
+    # (`with X amplitude`, `... amplitude at X speed`) and an `at X speed` that follows a canonical
+    # camera phrase closely enough to be modifying it. A looser rule was tried against the corpus and
+    # rejects correct prose -- "As the train rushes past her at high speed ... without breaking eye
+    # contact with the camera" is a train, in a sentence that mentions the camera. The repair is two
+    # words either way, so a true positive converges immediately and a false one would not.
+    off_amp = [m.group(1) for m in AMPLITUDES_WRITTEN.finditer(desc)
+               if m.group(1).lower() not in AMPLITUDES]
+    off_speed = [m.group(1) for m in SPEEDS_WRITTEN.finditer(desc)
+                 if m.group(1).lower() not in SPEEDS
+                 and (desc[max(0, m.start() - 12):m.start()].rstrip().lower().endswith("amplitude")
+                      or any(0 <= m.start() - c.end() <= 50
+                             for c in CAMERA_MOTION_PHRASE.finditer(desc)))]
+    if off_amp or off_speed:
+        add("P8-camera-modifier-off-vocabulary", "ERROR",
+            "the camera carries a modifier outside the closed vocabulary: "
+            + ", ".join(sorted({f"{w!r}" for w in off_amp + off_speed}))
+            + ". base-en.txt 4.3 closes both dimensions: amplitude is 'with small amplitude' or "
+              "'with large amplitude', speed is 'at slow speed' or 'at fast speed', and medium "
+              "amplitude and normal speed are omitted rather than written. Use one of those four or "
+              "drop the modifier")
+
+    # The cut phrase itself. base-en.txt 4.2 gives a closed set for an ordinary cut and 34 of 169
+    # timestamped shot openings in the corpus used none of it, most often by stating no transition at
+    # all and opening on a camera move instead.
+    #
+    # WARN, and that is a decision rather than caution: `shipped_repeated_shot.txt` is a control that
+    # MUST pass on legality, its [Shot 2] opens without a cut phrase, and a human judged that prose
+    # on taste rather than on rules. An ERROR here would send a legitimate edit back through the fix
+    # loop and, failing twice, would lose the whole written brief over a phrase. The prompt is where
+    # this is reduced; the rule is how the drift stays visible.
+    for num, body in shots:
+        if int(num) == 1:
+            continue
+        opening = re.sub(r"^\s*,?\s*At\s+\d{2}:\d{2}\.\d{3},?\s*", "", body)[:160]
+        if not CUT_PHRASE_PRESENT.search(opening):
+            add("P7-cut-phrase-off-vocabulary", "WARN",
+                f"[Shot {num}] is a cut and its opening states no transition from base-en.txt 4.2's "
+                "closed set: " + ", ".join(f"`{p}`" for p in CUT_PHRASES)
+                + " (a cross-dissolve, fade or wipe only if the request asked for one). A synonym "
+                  "is a near miss in the same way a wrong label is: "
+                + f"{opening[:60]!r}")
+            break
+
     # Three defects the write-first path produced that no rule caught. All three are the same
     # family: something that looks like an instruction but is not one.
     #
@@ -894,7 +1103,8 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             add("D5-marker-not-byte-exact", "ERROR",
                 f"{variant!r} is not the marker; it must be exactly '<d>' / '</d>' or the "
                 "token sequence changes")
-    blocks = re.findall(r"<d>(.*?)</d>", desc, re.S)
+    spans = list(re.finditer(r"<d>(.*?)</d>", desc, re.S))
+    blocks = [m.group(1) for m in spans]
     for blk in blocks:
         m = re.match(r"\s*\[([A-Za-z][^\]]*)\]", blk)
         if not m:
@@ -908,10 +1118,104 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
         if re.search(r"[~•…]|[!?.]{2,}|[\U0001F300-\U0001FAFF]", blk):
             add("D7-decorative-punctuation", "WARN",
                 f"<d> content should carry only basic punctuation: {blk[:40]!r}")
+    # The caller's words, and how they may be arranged. D4 used to demand the whole line inside ONE
+    # <d> block, which made base-en.txt 4.4's own construct illegal: a line crossing a cut is
+    # DIVIDED at the cut, so neither half matches and the correct document was an ERROR. The
+    # compiler's way out was to write the whole line inside <d> on both sides of the cut, 7 of 7 on
+    # an explicit request, which passed every rule and instructs H3 to speak the line twice.
+    #
+    # So the arrangement is now checked instead of forbidden. Verbatim is still verbatim: the line
+    # has to be present, word for word and punctuation mark for punctuation mark, either inside one
+    # block or as the concatenation of consecutive ones.
+    spoken = [re.sub(r"\s+", " ", re.sub(r"^\s*\[[^\]]*\]\s*", "", b)).strip() for b in blocks]
     for want in ctx.expected_dialogue:
-        if want and not any(want in b for b in blocks):
+        if not want:
+            continue
+        w = re.sub(r"\s+", " ", want).strip()
+        whole = [i for i, s in enumerate(spoken) if w in s]
+        if whole:
+            if len(whole) > 1:
+                add("D10-dialogue-line-duplicated", "ERROR",
+                    f"the line {w[:48]!r} appears in full inside {len(whole)} separate <d> blocks, "
+                    "which tells the model to speak it twice. The caller supplied it once, so it "
+                    "is spoken once: if it runs across a cut, divide it at the cut and mark both "
+                    "connecting points with <scenetrans> (base-en.txt 4.4) rather than repeating "
+                    "the whole line on both sides")
+            continue
+        run = _consecutive_run(spoken, w)
+        if run is None:
             add("D4-dialogue-not-verbatim", "ERROR",
-                f"user line is missing or altered inside <d>: {want[:60]!r}")
+                f"user line is missing or altered inside <d>: {want[:60]!r}. It may be divided "
+                "across a cut, in which case the parts must join back into the caller's exact "
+                "words, including punctuation")
+            continue
+        # Divided across consecutive blocks. Legal, and base-en.txt 4.4 says how it is marked: at
+        # the connecting points in BOTH parts, which is one marker at the end of the earlier part
+        # and one at the start of the later one.
+        i, j = run
+        for k in range(i, j):
+            gap = desc[spans[k].end():spans[k + 1].start()]
+            if not re.search(r"\[Shot\s+\d+\]", gap):
+                add("D13-line-split-without-a-cut", "ERROR",
+                    f"the line {w[:48]!r} is divided into separate <d> blocks with no cut between "
+                    "them, so a continuity marker is not the remedy: inside one shot a supplied "
+                    "line is spoken once, in one block")
+                continue
+            n_marks = gap.count("<scenetrans>")
+            if n_marks < 2:
+                add("D11-split-line-no-scenetrans", "ERROR",
+                    f"the line {w[:48]!r} runs across the cut into [Shot "
+                    + (re.search(r"\[Shot\s+(\d+)\]", gap).group(1))
+                    + "] and "
+                    + ("only one side of the join is marked"
+                       if n_marks == 1 else "neither side of the join is marked")
+                    + ". base-en.txt 4.4 puts <scenetrans> at the connecting points in both parts: "
+                    "once after the first part's </d> and once before the second part's <d>")
+            elif not CONTINUITY_STATED.search(gap):
+                add("D12-split-line-no-continuity-statement", "WARN",
+                    "the join is marked but nothing states that the audio continues across it; "
+                    "base-en.txt 4.4 asks for it explicitly and offers `continues seamlessly "
+                    "across the cut`, `continues uninterrupted into the next shot`, `carries over "
+                    "from the previous shot` or `remains audible across the transition`")
+    # ---------------------------------------------------------------- reference audio's own words
+    # ref-en.txt 5.4, both halves. Reperformance is requested by the PROMPT, which this layer cannot
+    # read, so only what the document itself settles is enforced:
+    #   * a block that plainly reperforms the line and gets it wrong        -> decidable, ERROR
+    #   * a `fully_copy` claim, which puts every word of the source in the
+    #     target's final track by the marker's own definition               -> decidable, ERROR
+    #   * words supplied and used nowhere                                   -> not decidable, WARN
+    # The third is the measured defect (0 of 7) and it is deliberately the weakest rule of the three:
+    # when only timbre or delivery is referenced, 5.4 forbids carrying the words over, so a brief
+    # that leaves them out can be exactly right.
+    for label, transcript in ctx.audio_transcripts:
+        if not (transcript or "").strip():
+            continue
+        said = re.sub(r"\s+", " ", transcript).strip()
+        sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", said)
+                 if len(s.split()) >= 3] or [said]
+        if any(s in b for s in sents for b in spoken):
+            continue
+        entry = re.search(rf"^\s*{re.escape(label)}\s*(\([^)]*\))?\s*:\s*(\w+)", ret, re.M)
+        marker = entry.group(2) if entry else ""
+        near = next((p for b in spoken for p in [_shared_phrase(said, b, 5)] if p), None)
+        if near:
+            add("D14-reperformance-altered", "ERROR",
+                f"a <d> block reperforms {label}'s words and alters them (it shares {near!r} with "
+                f"the transcript and matches none of its sentences). ref-en.txt 5.4: preserve the "
+                f"exact source words and the original language. The words are: {said[:120]!r}")
+        elif marker == "fully_copy":
+            add("D15-copied-audio-words-missing", "ERROR",
+                f"{label} is marked fully_copy, so the complete source audio is the target video's "
+                f"final track and every word on it is audible in the render, but none of them "
+                f"appears inside <d>. Write them verbatim in their original language where they "
+                f"are heard (ref-en.txt 5.4). The words are: {said[:120]!r}")
+        else:
+            add("D16-transcript-not-reperformed", "WARN",
+                f"the caller transcribed {label} and none of those words appears inside <d>. If the "
+                "request asks for them to be reperformed, ref-en.txt 5.4 requires them verbatim in "
+                f"their original language inside <d>: {said[:120]!r}. If only the timbre, rhythm or "
+                "delivery is referenced, leaving them out is correct and this is nothing to fix")
+
     sids = sorted({int(x) for x in re.findall(r"\(S(\d+)(?:\s*,\s*S\d+)*\)", desc)})
     if sids and sids[0] != 1:
         add("D3-speaker-numbering", "ERROR", f"speaker IDs start at S{sids[0]}, must start at S1")
@@ -981,6 +1285,22 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
         if not re.search(r"\b(tempo|beat|bpm|slow|fast|moderate|rhythm)\b", music, re.I):
             add("A5-music-no-tempo", "INFO",
                 "non_diegetic_music should state instrumentation, tempo and dynamics")
+        # base-en.txt 4.7's own prohibition, which had no rule while its positive half (state a
+        # tempo) had one. A mood word is a description of the effect rather than of the signal, and
+        # the encoder gets the word: "melancholic" is not a sound H3 can render, where "sustained low
+        # strings increasing in volume" is.
+        #
+        # WARN. The word list is a closed reading of "abstract mood words" and reasonable people put
+        # the line in slightly different places, so the finding informs; the spec sentence is the
+        # spec's and the list is mine. Scoped to the score alone, because 4.6 says nothing of the
+        # kind about physical sound.
+        mood = sorted({m.group(0).lower() for m in MOOD_WORDS.finditer(music)})
+        if mood:
+            add("A8-music-mood-word", "WARN",
+                "non_diegetic_music states the score's mood or emotional function rather than its "
+                f"sound: {', '.join(repr(w) for w in mood)}. base-en.txt 4.7 asks for "
+                "instrumentation, speed, rhythm and dynamic change and rules those out explicitly. "
+                "Name what is playing and what it does across the duration instead")
 
     # ------------------------------------------------------------ proportionality (the dial)
     # "If I ask for simple, I want simple, if I say go crazy, I want crazy." An output that adds

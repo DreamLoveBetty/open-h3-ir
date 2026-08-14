@@ -406,5 +406,10 @@ two seconds unscored" is a decision. Use "N/A" only when no score is wanted.
   video editing, video continuation, audio reuse, audio reference. Join several with " + ".
 - `detailed_description` opens with one style sentence on its own line, before `[Shot 1]`.
 - Speaker IDs `(S1)`, `(S2)` in order of first speech. Never in retention_analysis.
+- Every shot after the first opens with its cut time and then a cut phrase from the
+  guide's own five: `the camera cuts to`, `the shot cuts to`, `the shot transitions to`,
+  `the shot changes to`, `the shot switches to`. A cross-dissolve, a fade or a wipe only
+  if the request asks for one. A shot that opens straight into a camera move states no
+  transition at all, and a synonym is off the vocabulary the model was trained on.
 - Straight quotes and plain apostrophes only. Any text visible in frame goes in "double quotes".
 - Write in English; keep dialogue in its own language inside `<d>`.

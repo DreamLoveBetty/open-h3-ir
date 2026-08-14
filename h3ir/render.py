@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .grid import ms_to_timestamp
+from .grid import instruction_line_for, ms_to_timestamp
 from .models import AssetKind, DialogueLine, Mode, Plan, Role, SpeakerPlan
 from .plan import ProfileOptions, audio_relations
 from .textnorm import sentences
@@ -36,24 +36,9 @@ class RenderResult:
 # --------------------------------------------------------------------------- pieces
 
 def instruction_line(plan: Plan, opts: ProfileOptions) -> str:
-    """Verbatim from the spec, including the em dash and the per-mode bracket convention.
-
-    The spec is inconsistent here -- fl2va uses bare `Picture 1` / `Shot 1` while i2va and
-    l2va bracket them. That inconsistency is preserved deliberately rather than tidied.
-    """
-    s_ss = plan.target.s_ss(opts.s_ss_policy)
-    last_shot = plan.shots[-1].n if plan.shots else 1
-    if plan.mode is Mode.I2VA:
-        return ("For the target video, at 0.00 seconds into the target video, "
-                "<Picture 1> (from [Shot 1]) is fully referenced.")
-    if plan.mode is Mode.FL2VA:
-        return ("How the reference pictures align with the target video — Picture 1 (from Shot 1) "
-                "aligns with the 0.00-second mark of the target video; Picture 2 "
-                f"(from Shot {last_shot}) aligns with the {s_ss}-second mark of the target video.")
-    if plan.mode is Mode.L2VA:
-        return ("How the reference pictures align with the target video — <Picture 1> "
-                f"(from [Shot {last_shot}]) aligns with the {s_ss}-second mark of the target video.")
-    return ""
+    """Delegates to grid.instruction_line_for, which the repair pass and the validator also use."""
+    return instruction_line_for(plan.mode.value, plan.shots[-1].n if plan.shots else 1,
+                                plan.target.s_ss(opts.s_ss_policy))
 
 
 def render_subject_definitions(plan: Plan) -> str:

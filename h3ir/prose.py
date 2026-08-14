@@ -233,7 +233,7 @@ def base_mode_label_facts(subjects: list[SubjectPlan], labels: tuple[str, ...],
         "sampling step.")
 
 
-def reference_picture_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
+def reference_picture_facts() -> str:
     """The one thing a full-reference brief must not say about its pictures.
 
     ref2va conditions on a picture as content: what it shows is redrawn into the requested scene,
@@ -243,11 +243,14 @@ def reference_picture_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
     frame, so the model wrote "is the first frame of [Shot 1]" on a single-image ref2va brief 3
     times in 7 and R10 rejected the whole brief. Nothing had told it which case it was in.
 
-    Emitted only when no attached picture actually carries an anchor role, so the statement is read
-    off the wiring rather than asserted.
+    UNCONDITIONAL, and that is the correction rather than a simplification. This used to open with
+    `if any(role.startswith("frame_anchor") ...): return ""`, to avoid asserting "none of these is a
+    frame" over a picture that really was one. On this route none ever is: the compiler rewrites every
+    anchor role to `subject` before the plan is built (compile.py, the X10 branch) and the roles this
+    was handed came off that plan's manifest, so the guard read post-downgrade data and could not
+    fire. It was covered by a test that hand-wrote an anchor role and asserted the "" -- which is how
+    unreachable code stays green. The honest statement is the one that matches the wiring.
     """
-    if any(role.startswith("frame_anchor") for _, role in picture_roles):
-        return ""
     return ("None of the pictures here is a frame of the target video. This checkpoint takes them "
             "as content references, meaning what they show is redrawn into the scene the request "
             "asks for, and it has no exact-frame mechanism. So never write that a picture `is the "
@@ -255,6 +258,94 @@ def reference_picture_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
             "completion`: both "
             "promise an exactness this render cannot deliver. Cite the picture inside the definition "
             "of what it shows, or as the composition, storyboard or style anchor it is.")
+
+
+# ref-en.txt 5.2's word range, stated in the ask rather than left inside the copied specification.
+#
+# Measured over 103 ready, written, non-editing ref2va documents: 3 in the 350-500 band, median 218,
+# minimum 74. `P2-too-short` fired on 90 of them and stays a WARN for good reasons that are recorded
+# beside it, but a warning nobody acts on is not pressure and this is not an argument about the last
+# 50 words. The second half matters as much as the first: a length target with no answer to "from
+# what" gets padding, and the spec's own answer is observation -- composition, appearance, position,
+# environment, lighting, state changes, camera, sound.
+LENGTH_TARGET = (
+    "Length: `detailed_description` is 350 to 500 words for a generation task like this one. Aim for "
+    "400 and divide them across however many shots you choose, so two shots is about 200 words each. "
+    "Reach it by describing what is actually in the frame: surfaces, materials, the ground, the "
+    "light and its direction, what each hand is doing, where each subject sits in the frame, and the "
+    "direction of every movement. Do not pad, do not restate the reference relationships, and do not "
+    "summarise the plot; a short brief and an inflated one fail the same way, by telling the model "
+    "less than it needs about the picture it has to make.")
+
+
+# ref-en.txt 2.1's other half, which the definition lines cannot express.
+#
+# `plan.build_subjects` walks the manifest and builds every subject with `sources=[e.label]`, one
+# entry per attached file, and those lines are then handed over as facts to use or reword. So the
+# writer rewords two lines into two lines, and the construct "One subject may be defined by multiple
+# reference assets" appeared in 0 of 11 shipped documents. Asked in as many words to define one
+# subject drawing on two pictures, the writer produced the merged form correctly and the document was
+# then lost for unrelated reasons.
+#
+# Which two assets show one subject is a judgement about identity that nothing in this layer can make
+# without being told: the analyser sees each file alone, and merging on a descriptor match would be
+# inventing a fact about the caller's own material. The request is where that fact lives, and the
+# writer is the only stage that reads it. So the lines stay one per asset and the licence is stated.
+MERGE_SUBJECTS = (
+    "Those lines are one per attached file. If the request says one subject draws on SEVERAL of "
+    "them, combine them into a single definition that states what each asset provides, in this "
+    "form: `<Subject 1> is the woman whose appearance comes from <Picture 1> and whose walking "
+    "motion comes from <Video 1>.` Then use that one label everywhere. Never define the same person "
+    "or object twice under two labels: two labels for one subject split the identity the render is "
+    "supposed to hold, and the second one usually ends up in no shot at all. One asset can also "
+    "provide several subjects, which is the same rule read the other way.")
+
+
+def reference_audio_words(transcripts: tuple[tuple[str, str], ...]) -> str:
+    """The words on an attached recording, handed to the stage that writes the document.
+
+    They reached `plan_shots` and `beat_sheet` through `_asset_digest` and stopped there. The call
+    that writes every shipped section builds its facts from the subject definition lines, which walk
+    `subjects` and never touch a card's transcript, so an audio-only brief fell into the `unnamed`
+    branch and was told to "say only what its note above states". Asked in as many words to have a
+    line reperformed verbatim, the compiler produced no `<d>` block at all, 7 times out of 7.
+
+    Both halves of ref-en.txt 5.4 travel with the words, because handing them over without the
+    prohibition would trade the defect for its mirror image: a timbre-only reference whose original
+    dialogue gets carried into a video that was never supposed to contain it. Which case this is
+    depends on the request, and the writer is the only stage that reads the request.
+    """
+    lines = [f"{label}: {t.strip()}" for label, t in transcripts if (t or "").strip()]
+    if not lines:
+        return ""
+    return ("Words the caller's speech recogniser transcribed from the attached audio, verbatim:\n"
+            + "\n".join(lines)
+            + "\nThese are the words the recording contains. If the request asks for them to be "
+              "reperformed, or if the audio's own signal is reused so they are audible in the "
+              "render, they must appear inside <d> exactly as written above, in their original "
+              "language, attributed to whoever the request says speaks them. If only the timbre, "
+              "rhythm, emotion or delivery of that audio is being referenced, do not carry these "
+              "words into the target video at all. Nothing else about the recording is known: you "
+              "have not heard it, so do not describe how it sounds beyond the note supplied for it.")
+
+
+# base-en.txt 4.4's two continuity markers, stated beside the lines the writer is placing.
+#
+# Both existed only as one sentence of spec text inside a long system prompt, and neither reached a
+# natural request: `<scenetrans>` appeared in 0 of 7 runs whose request said the sentence must keep
+# running across the cut, and `<cutoff>` in 0 of 7 whose request said the video ends mid-sentence.
+# Asked for them explicitly the writer produced both, so the construct was reachable and unprompted.
+#
+# The first sentence is the one that matters most. Told to mark the join, the writer put the WHOLE
+# line inside <d> on both sides of the cut in 7 of 7 runs, which instructs H3 to say it twice. This
+# states the format's rule and invents nothing about the request: the caller supplied the line once.
+DIALOGUE_PLACEMENT = (
+    "Each line above is spoken ONCE in the target video. If a line is still running when you cut, "
+    "divide it at the cut: the first part closes one <d> block, the rest opens the next one, and "
+    "both connecting points carry <scenetrans> with a sentence saying the audio continues across "
+    "the cut. Never write the whole line twice, once on each side: two <d> blocks holding the same "
+    "words tell the model to speak it twice. If a line is still being spoken when the render ends, "
+    "stop it where the video stops and mark that with <cutoff>.")
 
 
 def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
@@ -265,6 +356,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   mode: Mode | None = None,
                   task_types: tuple[str, ...] = (),
                   picture_roles: tuple[tuple[str, str], ...] = (),
+                  audio_transcripts: tuple[tuple[str, str], ...] = (),
+                  generation_task: bool = True,
                   omit: tuple[str, ...] = ()) -> str:
     """One call. The model writes all six sections and decides everything creative in them.
 
@@ -281,6 +374,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # subject_definitions, which then failed the "<Subject N> is ..." rule. A fact sheet that
         # looks like output gets used as output.
         label_facts = "\n".join(_definition_lines(subjects, cards, labels))
+        if label_facts and len({s for x in subjects for s in x.sources}) > 1:
+            label_facts += "\n" + MERGE_SUBJECTS
         # Every label in the wiring, not only the subject ones. `_definition_lines` walks `subjects`,
         # so an <Audio N> or a bare <Video N> was never named in the ask at all -- and a model cannot
         # bind a label it was not told exists. A video-plus-audio brief came back with the audio
@@ -296,7 +391,7 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                 "For any <Audio N> in that list: you have NOT heard it and cannot describe what it "
                 "contains. Say only what its note above states, and never claim it came from a <Video N> "
                 "— the wiring decides that and you have not been told it.")
-        pics = reference_picture_facts(picture_roles)
+        pics = reference_picture_facts()
         if pics and any(lb.startswith("<Picture") for lb in labels):
             label_facts += ("\n" if label_facts else "") + pics
     dlg = "\n".join(f'- "{d.text}" ({d.language})'
@@ -323,6 +418,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
             "prose and name them the same way every time.\n\n"))
         +
         f"Dialogue:\n{dlg}\n"
+        + (f"\n{DIALOGUE_PLACEMENT}\n" if brief.dialogue else "")
+        + (f"\n{reference_audio_words(audio_transcripts)}\n" if audio_transcripts else "")
         # Scoped to the full-reference shape: a base mode has no task-type prefix to constrain, and
         # cannot have an <Audio N> at all -- any audio attachment routes to ref2va (mode.py 12.2#1).
         + (f"\n{audio_task_facts(labels, task_types)}\n" if is_ref else "")
@@ -357,6 +454,11 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # The dial, stated in the ask rather than baked into the system prompt. The same request at
         # two settings must be able to produce two different answers, so this cannot live in a file.
         ask += "\n" + scope.brief_instruction() + "\n"
+    # Scoped exactly as P2-too-short is scoped, and off the same two sentences of ref-en.txt 5.2:
+    # the range is stated for a full-reference generation task, and editing descriptions are exempt
+    # because they "scale with the complexity of the source video".
+    if is_ref and generation_task:
+        ask += "\n" + LENGTH_TARGET + "\n"
     if brief.onscreen_text:
         ask += ("\nText that must be visible in frame, in straight double quotes, verbatim: "
                 + "; ".join(f'"{t}"' for t in brief.onscreen_text) + "\n")
@@ -448,7 +550,7 @@ def beat_sheet(backend: Backend, brief: Brief, mode: Mode, subjects: list[Subjec
         f"Total duration: {sum(s.duration_ms for s in shots) / 1000:.3f} seconds, "
         f"{len(shots)} shot(s).\n{spans}\n\n"
         f"Available subject labels:\n{_asset_digest(cards, subjects)}\n\n"
-        f"Dialogue that will be spoken (inserted later, do not write it):\n{dial}\n"
+        f"Dialogue that will be spoken (inserted later, do not write it):\n{dlg}\n"
     )
     if brief.constraints:
         ask += "\nHard constraints from the caller:\n" + "\n".join(f"- {c}" for c in brief.constraints)
@@ -599,7 +701,7 @@ def shot_body(backend: Backend, brief: Brief, plan_mode: Mode, shot: ShotPlan,
         f"What must happen in this shot: {shot.beat or brief.intent}\n\n"
         f"Subjects visible in this shot:\n{subj_lines}\n\n"
         f"Synchronized sound caused inside this shot (weave in where it occurs):\n{sync}\n\n"
-        f"Dialogue placeholders to place:\n{dial}\n\n"
+        f"Dialogue placeholders to place:\n{dlg}\n\n"
         f"Text visible in frame:\n{text_on_screen}\n\n"
         f"WORD TARGET: {shot.word_target} words. HARD MAXIMUM: "
         f"{int(shot.word_target * 1.1)} words. Do not exceed the maximum.\n\n"

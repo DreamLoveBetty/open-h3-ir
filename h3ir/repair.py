@@ -24,7 +24,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .grid import Target, ms_to_timestamp, timestamp_to_ms
+from .grid import (INSTRUCTION_OPENINGS, Target, instruction_line_for, ms_to_timestamp,
+                   timestamp_to_ms)
 from .models import AUDIO_MARKERS, Finding, Mode, VISUAL_MARKERS
 from .textnorm import normalize
 
@@ -95,6 +96,7 @@ def repair(text: str, *, target: Target, mode: Mode, labels: tuple[str, ...],
     res.text = _fix_labels(res.text, labels, res)
     if mode is Mode.FL2VA:
         res.text = _fix_fl2va_notation(res.text, res)
+    res.text = _fix_instruction_line(res.text, target, mode, res)
     res.text = _fix_dialogue(res.text, dialogue, res)
     if not res.text.endswith("\n"):
         res.text += "\n"
@@ -171,6 +173,47 @@ def _fix_fl2va_notation(text: str, res: RepairResult) -> str:
                            "(`Picture N`, `(from Shot N)`); this mode's mandated notation is bare "
                            "and the deterministic renderer already emits it")
     return fixed
+
+
+def _fix_instruction_line(text: str, target: Target, mode: Mode, res: RepairResult) -> str:
+    """The mandated first line, recomputed from the wiring and substituted.
+
+    Every part of it is a fact this layer holds -- the mode, the effective duration, the index of
+    the final shot -- so a wrong one is a text substitution and not a reason to re-roll, exactly
+    like a wrong label ordinal. The model was handed the line verbatim in its system prompt and
+    wrote three decimal places instead of two in 7 of 8 recorded runs, because the ask states the
+    duration as `{effective_seconds:.3f}` and that is the number in front of it.
+
+    base-en.txt 2.1 is the whole specification of this line: which string per mode, `S.SS` as the
+    effective duration to exactly two decimals, `N` as the actual final shot, first line, one blank
+    line after. T2VA has no such line and ref2va's document starts at `subject_definitions:`, so
+    both are left alone -- inventing one there would bind an alignment the mode cannot express.
+    """
+    if mode is None or mode is Mode.T2VA or mode is Mode.REF2VA:
+        return text
+    nums = [int(n) for n in re.findall(r"\[Shot\s+(\d+)\]", text)]
+    want = instruction_line_for(mode.value, max(nums) if nums else 1, target.s_ss())
+    if not want:
+        return text
+
+    lines = text.split("\n")
+    idx = next((i for i, l in enumerate(lines[:6])
+                if l.strip().startswith(INSTRUCTION_OPENINGS)), None)
+    had = lines[idx].strip() if idx is not None else ""
+    if idx is not None:
+        del lines[idx]
+    rebuilt = want + "\n\n" + "\n".join(lines).lstrip("\n")
+    if rebuilt == text:
+        return text
+    if had:
+        res.repairs.append(
+            "rewrote the instruction line to the form base-en.txt 2.1 mandates for "
+            f"{mode.value}: S.SS is the effective duration to exactly two decimal places and N is "
+            f"the final shot. {had[:70]!r} became {want[:70]!r}")
+    else:
+        res.repairs.append(f"added the mandated {mode.value} instruction line, which was absent; "
+                           "it is the first line of the prompt and carries the frame alignment")
+    return rebuilt
 
 
 def _fix_timestamps(text: str, target: Target, res: RepairResult) -> str:

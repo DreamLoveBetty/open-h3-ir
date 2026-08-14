@@ -244,11 +244,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         if mode is Mode.REF2VA:
             for a in brief.assets:
                 if a.role in (Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST):
-                    lora_findings.append(Finding(
-                        "X10-anchor-role-downgraded", "WARN",
-                        f"an asset was marked {a.role.value} but this request routes to the "
-                        "ref2va checkpoint, which has no exact-frame mechanism; treating it as "
-                        "a subject reference instead"))
+                    lora_findings.append(_anchor_downgrade_finding(
+                        a.role, decision.rule_fired, list(decision.signals)))
                     a.role = Role.SUBJECT
 
         # --- the product floor: a complete, valid IR with no prose model involved ---------
@@ -258,7 +255,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         _inject_lora_triggers(draft_plan, opts)
         sheet_flags = tuple(c.is_reference_sheet for c in cards.values())
         draft_result, draft_findings, draft_tokens = _assess(
-            draft_plan, brief, mode, opts, lora_findings, sheet_flags, licence, style)
+            draft_plan, brief, mode, opts, lora_findings, sheet_flags, licence, style,
+            audio_transcripts=_audio_transcripts(draft_plan, cards))
         timings["draft_s"] = round(time.time() - t, 2)
         draft_errors = [f for f in draft_findings if f.severity == "ERROR"]
         if draft_errors:
@@ -326,13 +324,17 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                 # question the model had to guess at, and each guess had a rule waiting for it.
                 pic_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
                                   if m.kind.value == "image")
+                transcribed = _audio_transcripts(draft_plan, cards)
                 written = compose_brief(backend, brief, draft_plan.subjects, cards,
                                        draft_plan.target, labels,
                                        prompt_name=chosen_compose, seed=seed,
                                        thinking=thinking_planning, images=imgs,
                                        style=style, licence=licence, scope=scope,
                                        mode=mode, task_types=tuple(draft_plan.task_types),
-                                       picture_roles=pic_roles, omit=omit)
+                                       picture_roles=pic_roles, audio_transcripts=transcribed,
+                                       generation_task=("video editing"
+                                                        not in draft_plan.task_types),
+                                       omit=omit)
                 timings["compose_s"] = round(time.time() - t, 2)
 
                 from .prose import _definition_lines
@@ -525,7 +527,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
 
             _reconcile_scopes(plan)
             result, findings, n_tokens = _assess(plan, brief, mode, opts, lora_findings,
-                                                 sheet_flags, licence, style)
+                                                 sheet_flags, licence, style,
+                                                 audio_transcripts=_audio_transcripts(plan, cards))
             errors = [f for f in findings if f.severity == "ERROR"]
             if errors:
                 reason = ("the enriched brief failed validation: "
@@ -550,6 +553,35 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
     finally:
         if own_backend:
             backend.close()
+
+
+def _anchor_downgrade_finding(role: Role, rule_fired: str, signals: list[str]) -> Finding:
+    """The only message a caller gets about a capability they asked for and are not getting.
+
+    ref-en.txt 2.2 and 3 both provide for a picture used as a concrete frame inside a full-reference
+    brief (`<Picture 2> is the first frame of [Shot 1]`, and the `keyframe completion` task type), so
+    the construct is in the format. What is not available is the RENDER: `H3-Base-FL2VA` and
+    `H3-Base-Ref2VA` are two task-specific checkpoints with their own Omni Transformer weights
+    (design.md 12.1, from the release table), the first pinning a keyframe as a cond latent that is
+    never denoised and the second taking the omni-reference set. One local pass runs one of them.
+
+    So the downgrade is honest and the message has to be too. It used to say only that "this
+    checkpoint has no exact-frame mechanism", which names neither why THIS request is on that route
+    nor what the caller can do instead -- and the route is the actionable part, because it is decided
+    by what else is attached (mode.py 12.2#1 and 12.2#2) rather than by anything about the picture.
+    """
+    why = "; ".join(signals) or f"routing rule {rule_fired}"
+    return Finding(
+        "X10-anchor-role-downgraded", "WARN",
+        f"a picture was marked {role.value} and this request compiles for the ref2va checkpoint, "
+        f"which cannot pin an exact frame. The two H3 checkpoints are separate weights: the FL2VA "
+        "one holds a picture as a frame that is never denoised, the ref2va one takes the reference "
+        "set and redraws what a picture shows into the requested scene. One render uses one of them, "
+        f"and this request is on the ref2va side because {why}. The picture is therefore treated as a "
+        "composition and content reference, and `keyframe completion` is not claimed in the summary. "
+        "To get the exact frame instead, send that picture on its own (or with one other frame "
+        "anchor) and no other references, which routes to the frame-anchor checkpoint; to keep the "
+        "other references, this is the closest the local weights get.")
 
 
 def _reconcile_scopes(plan) -> None:
@@ -612,6 +644,7 @@ def _written_context(brief: Brief, mode, plan, cards, n_tokens: int, style, lice
         generation_task="video editing" not in plan.task_types,
         declared_roles=declared, paired_audio=paired,
         standalone_audio=_standalone_audio(plan),
+        audio_transcripts=_audio_transcripts(plan, cards),
         forbid_keyframe_refs=(mode is Mode.REF2VA),
         pose_licensed=any(x.pose_licensed for x in plan.subjects),
         has_reference_sheet=any(c.is_reference_sheet for c in cards.values()),
@@ -619,6 +652,22 @@ def _written_context(brief: Brief, mode, plan, cards, n_tokens: int, style, lice
         transformed_from=_transformed_from(style, licence),
         scope=_scope(brief, plan),
     )
+
+
+def _audio_transcripts(plan, cards: dict[str, AssetCard]) -> tuple[tuple[str, str], ...]:
+    """(label, transcript) for every attached recording the CALLER transcribed.
+
+    The label comes from the manifest and the words from the card, and nothing else in the system
+    joins those two facts: `cards` is keyed by sha256 and the writer only ever sees labels.
+    """
+    out = []
+    for m in plan.manifest:
+        if m.kind is not AssetKind.AUDIO:
+            continue
+        said = (cards.get(m.sha256).transcript if cards.get(m.sha256) else "") or ""
+        if said.strip():
+            out.append((m.label, said.strip()))
+    return tuple(out)
 
 
 def _standalone_audio(plan) -> tuple[str, ...]:
@@ -771,7 +820,8 @@ def wiring_findings(plan, brief: Brief) -> list[Finding]:
 
 def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
             lora_findings: list[Finding], sheet_flags=(),
-            licence=None, style=None) -> tuple[Any, list[Finding], int]:
+            licence=None, style=None,
+            audio_transcripts: tuple[tuple[str, str], ...] = ()) -> tuple[Any, list[Finding], int]:
     """Render, prove the render is reproducible, and validate. One path for the deterministic
     draft and for the enriched brief, so they cannot diverge in how they are checked."""
     result = render_ir(plan, opts)
@@ -799,6 +849,7 @@ def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
         declared_roles=declared,
         paired_audio=paired,
         standalone_audio=_standalone_audio(plan),
+        audio_transcripts=audio_transcripts,
         forbid_keyframe_refs=(mode is Mode.REF2VA),
         pose_licensed=any(x.pose_licensed for x in plan.subjects),
         has_reference_sheet=any(c for c in (sheet_flags or ()) if c),

@@ -136,12 +136,64 @@ def test_a_reference_brief_is_told_its_pictures_are_not_frames():
 
 
 def test_the_statement_is_read_off_the_wiring_and_not_asserted():
-    """If a picture really does carry an anchor role, saying "none of these is a frame" would be a
-    lie. ref2va downgrades anchor roles before this point, so the wiring is the honest source."""
+    """REWRITTEN, because the version here asserted the behaviour of a branch that could not run.
+
+    It called `reference_picture_facts((("<Picture 1>", "frame_anchor_first"),))` and asserted the
+    empty string, on the reasoning that saying "none of these is a frame" over a real anchor would be
+    a lie. True in the abstract, and unreachable in fact: the roles this function is handed come off
+    `draft_plan.manifest`, which is built AFTER ref2va has rewritten every anchor role to `subject`,
+    so the guard was reading post-downgrade data. Hand-writing the input was the only way to exercise
+    it, and a test that can only reach a branch by fabricating an input the system cannot produce is
+    the report's own finding about this codebase's tests.
+
+    The plumbing is what makes the statement honest, so the plumbing is what is asserted. The full
+    case, including the finding the caller gets, is in test_anchor_downgrade_is_honest.py.
+    """
     from h3ir.prose import reference_picture_facts
 
-    assert reference_picture_facts((("<Picture 1>", "subject"),))
-    assert reference_picture_facts((("<Picture 1>", "frame_anchor_first"),)) == ""
+    assert "None of the pictures here is a frame" in reference_picture_facts()
+    assert seen_roles_are_downgraded_before_the_ask()
+
+
+def seen_roles_are_downgraded_before_the_ask() -> bool:
+    """The real invariant: by the time the ask is built, no picture carries an anchor role on this
+    route. Compiled for real, with the model replaced."""
+    import h3ir.compile as C
+    from h3ir.models import ModeDecision
+
+    seen: dict[str, object] = {}
+
+    def spy(backend, brief, subjects, cards_, target, labels, **kw):
+        seen.update(kw)
+        raise RuntimeError("stop here")
+
+    class _Backend:
+        class cfg:
+            model = "capture"
+
+        def require_available(self): pass
+        def server_version(self): return "test"
+        def close(self): pass
+
+    ref, cards = _plate(Role.FRAME_ANCHOR_LAST)
+    clip = AssetRef(kind=AssetKind.VIDEO, role=Role.CONTINUATION_SOURCE, sha256="clip",
+                    seconds=4.0, frames=96)
+    cards = dict(cards)
+    cards["clip"] = AssetCard(sha256="clip", kind=AssetKind.VIDEO, summary="a car on a road")
+    import pytest as _pytest
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(C, "compose_brief", spy)
+        mp.setattr(C, "analyse_all", lambda *a, **k: cards)
+        mp.setattr(C, "infer_mode", lambda *a, **k: ModeDecision(
+            mode=Mode.REF2VA, confidence=1.0, rule_fired="12.2#1",
+            signals=["a video or audio reference is attached"]))
+        brief = Brief(intent="Continue from this clip and end exactly on this picture.",
+                      seconds=8.0, assets=[ref, clip])
+        try:
+            compile_brief(brief, backend=_Backend(), opts=ProfileOptions())
+        except RuntimeError:
+            pass
+    return seen["picture_roles"] == (("<Picture 1>", "subject"),)
 
 
 def test_a_reference_brief_still_gets_its_definition_lines():
