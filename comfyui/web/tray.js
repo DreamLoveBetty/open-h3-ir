@@ -17,7 +17,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v3";
+const VERSION = "tray v4";
+console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 560;
 const PANEL_H = 476;
@@ -40,6 +41,13 @@ const ROLE_TOKEN = {
   "sound effect": "sfx", "voice to match": "voice_timbre",
 };
 const SOUNDTRACKS = ["off", "paired", "alone"];
+// What a filled cell wears so its settings are visible without opening the editor. The default
+// role wears nothing: a badge that is always there says nothing.
+const BADGE = {
+  environment: "setting", style: "style", frame_anchor_first: "first", frame_anchor_last: "last",
+  storyboard: "sketch", edit_source: "edit", continuation_source: "continue",
+  music_style: "style", beat_reference: "beat", sfx: "sfx", voice_timbre: "voice",
+};
 
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -82,7 +90,7 @@ class Tray {
     this.counts = el("span", { class: "oh3-counts" });
     this.msg = el("span", { class: "oh3-msg" });
     const top = el("div", { class: "oh3-top" },
-      this.counts, this.msg, el("span", { class: "oh3-ver", textContent: VERSION }));
+      this.counts, this.msg);
 
     this.picGrid = el("div", { class: "oh3-pics" });
     this.vidRows = el("div", { class: "oh3-vids" });
@@ -184,6 +192,7 @@ class Tray {
 
     if (kind === "picture") {
       cell.append(el("img", { class: "oh3-fit", src: viewUrl(slot.file), loading: "lazy" }));
+      cell.append(this.badges(slot));
       cell.append(el("div", { class: "oh3-bar" },
         el("span", { class: "oh3-tag", textContent: "@" + slot.label }),
         el("span", { class: "oh3-x", textContent: "×",
@@ -207,6 +216,7 @@ class Tray {
         } }));
     }
     row.append(el("span", { class: "oh3-tag", textContent: "@" + slot.label }));
+    row.append(this.badges(slot, true));
     if (kind === "video") {
       const st = el("select", { class: "oh3-seg", title:
         "its soundtrack: off sends none, paired sends it as this clip's own sound, alone sends it as a track in its own right",
@@ -220,6 +230,17 @@ class Tray {
       onclick: (e) => { e.stopPropagation(); this.remove(slot.label); } }));
     cell.append(row);
     return cell;
+  }
+
+  badges(slot, inline = false) {
+    const wrap = el("span", { class: inline ? "oh3-badges oh3-inlinebadges" : "oh3-badges" });
+    if (BADGE[slot.role]) wrap.append(el("span", { class: "oh3-badge oh3-rolebadge",
+      textContent: BADGE[slot.role], title: "what it is: set in the editor below" }));
+    if ((slot.note || "").trim()) wrap.append(el("span", { class: "oh3-badge",
+      textContent: "✎", title: "described: " + slot.note }));
+    if ((slot.transcript || "").trim()) wrap.append(el("span", { class: "oh3-badge",
+      textContent: "abc", title: "its words are typed in" }));
+    return wrap;
   }
 
   // ---------------------------------------------------------------- the editor strip
@@ -278,7 +299,7 @@ const CSS = `
 .oh3-panel{font-family:system-ui,sans-serif;color:#d7dbe2;font-size:11px;
   background:#191c22;border:1px solid #2a2f3a;border-radius:8px;padding:7px;
   display:flex;flex-direction:column;gap:6px;box-sizing:border-box;
-  width:100%;height:${PANEL_H}px;min-height:${PANEL_H}px;overflow:hidden;}
+  width:546px;max-width:100%;height:${PANEL_H}px;min-height:${PANEL_H}px;overflow:hidden;}
 .oh3-panel *{box-sizing:border-box;min-width:0;}
 .oh3-panel.oh3-hot{border-color:#e8873a;}
 .oh3-top{flex:0 0 auto;display:flex;align-items:center;gap:8px;overflow:hidden;}
@@ -332,6 +353,11 @@ const CSS = `
 select.oh3-in{flex:1;}
 .oh3-wide{flex:1;width:100%;}
 .oh3-hint{color:#6b7484;font-size:10px;padding-top:14px;text-align:center;}
+.oh3-badges{position:absolute;top:3px;right:3px;display:flex;gap:3px;z-index:1;}
+.oh3-inlinebadges{position:static;flex:0 0 auto;}
+.oh3-badge{background:rgba(10,12,16,.85);border:1px solid #3a4252;border-radius:3px;
+  color:#c9cfda;font-size:8px;padding:0 3px;line-height:1.5;font-family:ui-monospace,monospace;}
+.oh3-rolebadge{color:#e8873a;border-color:#6d5527;}
 `;
 
 app.registerExtension({
@@ -362,6 +388,14 @@ app.registerExtension({
       requestAnimationFrame(() => tray.render());
       return r;
     };
+    const computeSize = nodeType.prototype.computeSize;
+    nodeType.prototype.computeSize = function () {
+      const out = computeSize?.apply(this, arguments) || [NODE_W, PANEL_H + 110];
+      out[0] = Math.max(NODE_W, out[0]);
+      out[1] = Math.max(PANEL_H + 110, out[1]);
+      return out;
+    };
+
     const onResize = nodeType.prototype.onResize;
     nodeType.prototype.onResize = function (size) {
       try {
