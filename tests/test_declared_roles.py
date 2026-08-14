@@ -163,3 +163,186 @@ def test_the_roles_offered_are_the_ones_that_fit_the_kind():
     msg = r.json()["detail"]["message"]
     assert "sfx" in msg and "voice_timbre" in msg and "bgm" in msg
     assert "frame_anchor_first" not in msg
+
+
+# ---------------------------------------------------------------- the video half of the prefix
+
+"""A declared `edit_source` decides the task type, and the intent's shape does not.
+
+Found from the node side and reproduced service-direct on this code: a clip attached as
+`edit_source` with the intent "the same volley, but the stadium is empty and it is raining hard"
+shipped `[reference generation]` in 6 of 7 seeds, with no "The target video is an edited version of
+<Video 1>." opening and the clip taken apart into four subjects. The earlier re-measure passed 7 of 7
+on "change the car in this clip to a white one", so the behaviour tracked how the intent READ rather
+than what the caller declared. A user who picks "edit it" got a document describing a new video built
+out of the old one's contents.
+
+The wiring settles this completely, and the codebase already says so three times:
+`plan.derive_task_types` works "From roles, never from prose"; `render.render_summary` keeps the
+prefix out of prose because "a prose stage that could write the prefix could invent a relationship
+the pack does not contain"; and `prose.audio_task_facts` pins the audio half of the prefix for
+exactly this failure, having watched the writer claim `audio reuse` on 6 of 7 video edits. The video
+half had no equivalent in either direction: nothing told the writer and no rule read it.
+"""
+
+VIDEO_DEFS = ("subject_definitions:\n"
+              "<Subject 1> is the footballer in <Video 1>, with a green jersey.\n"
+              "<Video 1> is the source video for the target video edit.\n")
+VIDEO_DESC = ("detailed_description:\nThe target video is in live-action style.\n"
+              "[Shot 1] The camera holds a static shot as <Subject 1> strikes the volley in the "
+              "empty stadium while rain sheets across the pitch.\n\n"
+              "overall_soundscape:\nRain hammers the empty stand.\n\nnon_diegetic_music:\nN/A\n")
+
+
+def _video_doc(prefix: str, *, marker: str = "partially_preserved") -> str:
+    return (f"{VIDEO_DEFS}\nsummary:\n[{prefix}] "
+            + ("The target video is an edited version of <Video 1>, now empty and rain-swept. "
+               if "video editing" in prefix else "")
+            + "<Subject 1> is preserved.\n\nretention_analysis:\n"
+              "<Subject 1> (appears in [Shot 1]): fully_preserved - the green jersey is retained.\n"
+              f"<Video 1> (source video editing): {marker} - the framing and setting are "
+              f"maintained.\n\n{VIDEO_DESC}")
+
+
+def _video_ctx(role: str = "edit_source"):
+    from h3ir.validate import Context
+    return Context(mode="ref2va", n_pictures=0, n_videos=1, duration_s=8.0,
+                   generation_task=False,
+                   declared_roles=(("<Subject 1>", "edit_source", ""),
+                                   ("<Video 1>", role, "")))
+
+
+def test_a_declared_edit_source_must_be_claimed_as_video_editing():
+    from h3ir.validate import validate
+
+    errs = [f for f in validate(_video_doc("reference generation"), _video_ctx())
+            if f.severity == "ERROR"]
+    assert [f.rule for f in errs] == ["M13-declared-edit-not-claimed"], [str(f) for f in errs]
+    assert "edit_source" in errs[0].msg and "video editing" in errs[0].msg
+
+
+def test_claiming_it_satisfies_the_rule():
+    from h3ir.validate import validate
+
+    for prefix in ("video editing", "video editing + reference generation",
+                   "reference generation + video editing"):
+        errs = [f for f in validate(_video_doc(prefix), _video_ctx()) if f.severity == "ERROR"]
+        assert not errs, (prefix, [str(f) for f in errs])
+
+
+def test_a_declared_continuation_source_must_be_claimed_too():
+    from h3ir.validate import validate
+
+    doc = _video_doc("reference generation").replace(
+        "<Video 1> is the source video for the target video edit.",
+        "<Video 1> is the source video the target video continues from.").replace(
+        "(source video editing)", "(continuation source)")
+    errs = {f.rule for f in validate(doc, _video_ctx("continuation_source"))
+            if f.severity == "ERROR"}
+    assert "M14-declared-continuation-not-claimed" in errs, errs
+
+
+def test_the_two_are_not_interchangeable():
+    """An edit is not a continuation. Claiming the other one is the same defect wearing the other
+    hat, and ref-en.txt 3 defines them against each other."""
+    from h3ir.validate import validate
+
+    errs = {f.rule for f in validate(_video_doc("video continuation"), _video_ctx())
+            if f.severity == "ERROR"}
+    assert "M13-declared-edit-not-claimed" in errs, errs
+
+
+def test_no_declared_video_role_means_no_finding():
+    """The rule reads the wiring, so with nothing declared it abstains: that is what every caller
+    predating `declared_roles` passes, including the golden controls."""
+    from h3ir.validate import Context, validate
+
+    errs = {f.rule for f in validate(_video_doc("reference generation"),
+                                     Context(mode="ref2va", n_pictures=0, n_videos=1,
+                                             duration_s=8.0, generation_task=False))
+            if f.severity == "ERROR"}
+    assert not {r for r in errs if r.startswith("M1")}, errs
+
+
+def test_a_reference_role_on_a_video_is_left_to_the_writer():
+    """ref-en.txt 3: "If a reference video provides only camera movement, cuts, or rhythm, it
+    normally belongs to reference generation. Use `video editing` or `video continuation` only when
+    that video is directly edited or continued." So a `style` role must NOT be pushed either way."""
+    from h3ir.validate import validate
+
+    errs = [f for f in validate(_video_doc("reference generation"), _video_ctx("style"))
+            if f.severity == "ERROR"]
+    assert not errs, [str(f) for f in errs]
+
+
+def test_the_deterministic_draft_satisfies_its_own_new_rule():
+    """It templates the prefix from the roles, so it must already pass; if it did not, the compiler
+    would raise instead of falling back and every edit request would 500."""
+    from h3ir.compile import _assess
+    from h3ir.draft import deterministic_draft
+    from h3ir.plan import ProfileOptions
+
+    clip = AssetRef(kind=AssetKind.VIDEO, role=Role.EDIT_SOURCE, sha256="clip", seconds=8.0,
+                    frames=192, role_stated=True)
+    cards = {"clip": AssetCard(sha256="clip", kind=AssetKind.VIDEO,
+                               summary="a footballer striking a volley",
+                               subjects=[{"kind": "person", "descriptor": "the footballer",
+                                          "attributes": ["green jersey"]}])}
+    brief = Brief(intent="the same volley, but the stadium is empty and it is raining hard",
+                  seconds=8.0, assets=[clip])
+    plan = deterministic_draft(brief, Mode.REF2VA, cards, opts=ProfileOptions())
+    assert "video editing" in plan.task_types
+    result, findings, _ = _assess(plan, brief, Mode.REF2VA, ProfileOptions(), [])
+    assert "[video editing]" in result.prompt
+    assert not [f for f in findings if f.severity == "ERROR"], [str(f) for f in findings]
+
+
+def test_the_writer_is_told_what_the_video_role_settles():
+    """The other half of the fix, and the half that stops the fix loop being needed: the ask states
+    the fact, the same way `audio_task_facts` does for the audio half."""
+    from h3ir.draft import deterministic_draft
+    from h3ir.plan import ProfileOptions
+    from h3ir.prose import compose_brief
+
+    class Capture:
+        class _Cfg:
+            model = "capture"
+        cfg = _Cfg()
+
+        class _Reply:
+            content = "subject_definitions:\n"
+
+        def __init__(self) -> None:
+            self.asks: list[str] = []
+
+        def chat(self, messages, **kw):
+            c = messages[-1]["content"]
+            self.asks.append(c if isinstance(c, str) else c[0]["text"])
+            return self._Reply()
+
+    clip = AssetRef(kind=AssetKind.VIDEO, role=Role.EDIT_SOURCE, sha256="clip", seconds=8.0,
+                    frames=192, role_stated=True)
+    cards = {"clip": AssetCard(sha256="clip", kind=AssetKind.VIDEO,
+                               summary="a footballer striking a volley",
+                               subjects=[{"kind": "person", "descriptor": "the footballer",
+                                          "attributes": ["green jersey"]}])}
+    brief = Brief(intent="the same volley, but the stadium is empty and it is raining hard",
+                  seconds=8.0, assets=[clip])
+    plan = deterministic_draft(brief, Mode.REF2VA, cards, opts=ProfileOptions())
+    backend = Capture()
+    compose_brief(backend, brief, plan.subjects, cards, plan.target,
+                  tuple(m.label for m in plan.manifest), prompt_name="compose.v2.txt",
+                  mode=Mode.REF2VA, task_types=tuple(plan.task_types),
+                  video_roles=tuple((m.label, m.role.value) for m in plan.manifest
+                                    if m.kind is AssetKind.VIDEO))
+    ask = backend.asks[0]
+    assert "<Video 1>" in ask and "video editing" in ask
+    assert "The target video is an edited version of <Video 1>." in ask
+    assert "however the request is phrased" in ask
+
+
+def test_the_ask_says_nothing_when_no_video_is_attached():
+    from h3ir.prose import video_task_facts
+
+    assert video_task_facts((), ()) == ""
+    assert video_task_facts((("<Video 1>", "style"),), ("reference generation",)) == ""

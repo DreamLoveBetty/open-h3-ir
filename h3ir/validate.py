@@ -556,6 +556,44 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             # video's soundtrack as a separate wired input, so with none wired the signal never
             # reaches the model and the target's audio is generated. Claiming reuse promises
             # something the render cannot do.
+            # The mirror of M5, which was missing in the direction that actually happens. M5 stops
+            # `video editing` being claimed with no video; nothing stopped a DECLARED edit source
+            # from not being claimed at all. Measured service-direct: a clip attached as edit_source
+            # with the intent "the same volley, but the stadium is empty and it is raining hard"
+            # shipped `[reference generation]` in 6 of 7 seeds, the clip taken apart into four
+            # subjects, no editing opening sentence. The same role with "change the car in this clip
+            # to a white one" was right 7 of 7, so the outcome tracked how the intent READ rather
+            # than what the caller declared.
+            #
+            # The role decides, and three places in this codebase already say so: task types come
+            # "From roles, never from prose" (plan.derive_task_types), the prefix is kept out of
+            # prose because a prose stage that could write it could invent a relationship the pack
+            # does not contain (render.render_summary), and a declared role is treated as ground
+            # truth (compile.X18). ref-en.txt 3's own sentence is the same rule read from the other
+            # side: "Use `video editing` or `video continuation` only when that video is directly
+            # edited or continued" -- the declared role IS the statement that it is.
+            #
+            # `reference generation` is deliberately left alone: whether the clip's people are ALSO
+            # reused as subjects is a judgement the spec phrases as one, and combining both is legal.
+            for role, want, rule in (
+                    ("edit_source", "video editing", "M13-declared-edit-not-claimed"),
+                    ("continuation_source", "video continuation",
+                     "M14-declared-continuation-not-claimed")):
+                declared = [lb for lb, r, _ in ctx.declared_roles
+                            if r == role and lb.startswith("<Video")]
+                if declared and want not in parts:
+                    add(rule, "ERROR",
+                        f"{', '.join(declared)} is attached with the declared role {role!r}, so the "
+                        f"task-type prefix must contain {want!r} and it says {parts!r}. The caller "
+                        "stated what the video is FOR and that is not something the request's "
+                        "wording overrides"
+                        + (". Add it, and begin the summary after the prefix with 'The target video "
+                           f"is an edited version of {declared[0]}.'"
+                           if role == "edit_source" else
+                           ". Add it, and say what the new content continues from")
+                        + ". Keep `reference generation` as well if the clip's subjects are also "
+                          "being reused")
+
             # The same guard the other three task types have had, for the two that did not.
             # `M5-editing-without-video` protects `video editing`, M7 and M8 protect the two audio
             # types, and `keyframe completion` and `video continuation` protected nothing: seven

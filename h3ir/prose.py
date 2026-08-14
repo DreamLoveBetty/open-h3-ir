@@ -196,6 +196,50 @@ def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...]) -> st
             "not, and a line that says one while the prefix says the other contradicts itself.")
 
 
+def video_task_facts(video_roles: tuple[tuple[str, str], ...],
+                     task_types: tuple[str, ...]) -> str:
+    """What a declared video role settles about the task-type prefix, stated as a fact in the ask.
+
+    The exact counterpart of `audio_task_facts`, for the half that had nothing. That function exists
+    because the writer claimed `audio reuse` on 6 of 7 video edits and the wiring, not the model,
+    knows the answer; the video half went the other way and was just as reproducible. A clip attached
+    as `edit_source` with the intent "the same volley, but the stadium is empty and it is raining
+    hard" came back `[reference generation]` in 6 of 7 seeds, with the clip decomposed into four
+    subjects and no editing opening sentence, while the same role with "change the car in this clip to
+    a white one" was right 7 of 7. Nothing in the ask mentioned the role, so the writer read the
+    intent and answered the question it seemed to ask.
+
+    Only the two roles the wiring settles completely are pinned. `style`, `subject`, `environment` and
+    `storyboard` on a video stay the model's call, because ref-en.txt 3 phrases that as a judgement:
+    "If a reference video provides only camera movement, cuts, or rhythm, it normally belongs to
+    reference generation." So does `reference generation` alongside an edit, which is legal and often
+    right when the clip's people are reused as well.
+    """
+    pinned = {"edit_source": "video editing", "continuation_source": "video continuation"}
+    lines = [(label, pinned[role]) for label, role in video_roles if role in pinned]
+    if not lines:
+        return ""
+    out = []
+    for label, want in lines:
+        out.append(f"{label} is attached with the declared role for `{want}`, so the task-type "
+                   f"prefix MUST contain `{want}`, however the request is phrased. The caller has "
+                   f"said what that clip is for; a request to change the setting, the weather, the "
+                   f"colour or anything else in it is still an edit of {label}, not a new video "
+                   f"built out of its contents.")
+        if want == "video editing":
+            out.append(f"Begin the summary immediately after the prefix with: The target video is "
+                       f"an edited version of {label}. Define the clip as: {label} is the source "
+                       f"video for the target video edit.")
+        else:
+            out.append(f"Say in the summary what the new content continues from, and define the "
+                       f"clip as: {label} is the source video the target video continues from.")
+    extra = [t for t in task_types if t == "reference generation"]
+    if extra:
+        out.append("Keep `reference generation` in the prefix as well if the clip's subjects are "
+                   "also being reused as content; the two combine with ` + `.")
+    return "\n".join(out)
+
+
 def base_mode_label_facts(subjects: list[SubjectPlan], labels: tuple[str, ...],
                           picture_roles: tuple[tuple[str, str], ...]) -> str:
     """What the attached pictures ARE, for the three-section formats.
@@ -372,6 +416,7 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   mode: Mode | None = None,
                   task_types: tuple[str, ...] = (),
                   picture_roles: tuple[tuple[str, str], ...] = (),
+                  video_roles: tuple[tuple[str, str], ...] = (),
                   audio_transcripts: tuple[tuple[str, str], ...] = (),
                   generation_task: bool = True,
                   omit: tuple[str, ...] = ()) -> str:
@@ -445,6 +490,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # Scoped to the full-reference shape: a base mode has no task-type prefix to constrain, and
         # cannot have an <Audio N> at all -- any audio attachment routes to ref2va (mode.py 12.2#1).
         + (f"\n{audio_task_facts(labels, task_types)}\n" if is_ref else "")
+        + (f"\n{video_task_facts(video_roles, task_types)}\n"
+           if is_ref and video_task_facts(video_roles, task_types) else "")
     )
     # Ablation lever. Each name drops one block from the ask, so the question "does this block earn
     # its place" is a measurement instead of a belief. Production passes nothing.

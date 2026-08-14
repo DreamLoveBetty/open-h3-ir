@@ -325,13 +325,16 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                 pic_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
                                   if m.kind.value == "image")
                 transcribed = _audio_transcripts(draft_plan, cards)
+                vid_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
+                                  if m.kind is AssetKind.VIDEO)
                 written = compose_brief(backend, brief, draft_plan.subjects, cards,
                                        draft_plan.target, labels,
                                        prompt_name=chosen_compose, seed=seed,
                                        thinking=thinking_planning, images=imgs,
                                        style=style, licence=licence, scope=scope,
                                        mode=mode, task_types=tuple(draft_plan.task_types),
-                                       picture_roles=pic_roles, audio_transcripts=transcribed,
+                                       picture_roles=pic_roles, video_roles=vid_roles,
+                                       audio_transcripts=transcribed,
                                        generation_task=("video editing"
                                                         not in draft_plan.task_types),
                                        omit=omit)
