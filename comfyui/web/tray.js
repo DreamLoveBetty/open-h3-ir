@@ -1,18 +1,26 @@
-/* OpenH3-IR Media: the tray's panel.
+/* OpenH3-IR Media: the tray's panel, second construction.
  *
- * Everything here is rendering. The node's one real field is the `tray` string, a JSON list of
- * slots, and this panel is an editor for that string: delete this file and the node still works,
- * still API-drives, and still restores from a saved workflow, with the string visible as itself.
- * The role words and the label rules MIRROR comfyui/tray.py, which is the authority; a mismatch
- * here shows the user words the run will refuse, so change them together.
+ * The first construction sized itself fluidly against whatever the host gave it, and the host's
+ * layout system overrode every declaration: rows painted outside the node at some zooms and inside
+ * at others. This one follows the reference loader's principle instead, which the owner spotted:
+ * PIN the space for every possible slot beforehand, a fixed 476px board with all nine picture
+ * cells, three clip rows and three sound rows drawn from the start, and populate cells as files
+ * land. Nothing negotiates for room, so nothing can lose the negotiation.
  *
- * Panel idioms (DOM widget mount, FormData upload, node sizing guard) follow
+ * Everything here is rendering. The node's one real field is the `tray` string (JSON slots) and
+ * this panel is an editor for it: delete this file and the node still works, still API-drives, and
+ * still restores from a saved workflow. The role words MIRROR comfyui/tray.py, the authority.
+ *
+ * Board geometry, slot styling and upload idioms follow
  * ComfyUI-Fantastic-MiniMaxH3-PromptBuilder's medialoader.js (MIT), credited in README.md.
  */
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
+const VERSION = "tray v3";
 const NODE = "OpenH3IRMedia";
+const NODE_W = 560;
+const PANEL_H = 476;
 const CAPACITY = { picture: 9, video: 3, sound: 3 };
 const MAX_FILES = 12;
 const PREFIX = { picture: "picture", video: "video", sound: "audio" };
@@ -31,10 +39,7 @@ const ROLE_TOKEN = {
   "play it": "bgm", "match its style": "music_style", "cut to its beat": "beat_reference",
   "sound effect": "sfx", "voice to match": "voice_timbre",
 };
-const WORDS = Object.fromEntries(Object.entries(ROLE_TOKEN).map(([w, t]) => [t, w]));
 const SOUNDTRACKS = ["off", "paired", "alone"];
-const NODE_W = 380;
-const PANEL_H = 460;
 
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -61,7 +66,7 @@ function viewUrl(annotated) {
 }
 
 function autoLabel(kind, taken) {
-  const used = new Set(taken.map((t) => t.toLowerCase()));
+  const used = new Set(taken.map((t) => String(t).toLowerCase()));
   for (let n = 1; n <= CAPACITY[kind] + 1; n++) {
     if (!used.has(`${PREFIX[kind]}${n}`)) return `${PREFIX[kind]}${n}`;
   }
@@ -72,26 +77,33 @@ class Tray {
   constructor(node, widget) {
     this.node = node;
     this.widget = widget;
-    this.msg = el("div", { class: "oh3-msg" });
-    this.sections = {};
-    this.root = el("div", { class: "oh3-tray" });
-    const drop = el("div", { class: "oh3-drop", textContent:
-      "drop files here, or click to add — pictures, clips, sounds" });
-    drop.addEventListener("click", () => this.pick());
-    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("oh3-over"); });
-    drop.addEventListener("dragleave", () => drop.classList.remove("oh3-over"));
-    drop.addEventListener("drop", (e) => {
-      e.preventDefault(); drop.classList.remove("oh3-over");
+    this.selected = null; // label of the slot the editor strip is showing
+
+    this.counts = el("span", { class: "oh3-counts" });
+    this.msg = el("span", { class: "oh3-msg" });
+    const top = el("div", { class: "oh3-top" },
+      this.counts, this.msg, el("span", { class: "oh3-ver", textContent: VERSION }));
+
+    this.picGrid = el("div", { class: "oh3-pics" });
+    this.vidRows = el("div", { class: "oh3-vids" });
+    this.sndRows = el("div", { class: "oh3-auds" });
+    const right = el("div", { class: "oh3-col" },
+      el("div", { class: "oh3-sec", textContent: "clips" }), this.vidRows,
+      el("div", { class: "oh3-sec", textContent: "sounds" }), this.sndRows);
+    const cols = el("div", { class: "oh3-cols" },
+      el("div", { class: "oh3-col" },
+        el("div", { class: "oh3-sec", textContent: "pictures" }), this.picGrid),
+      right);
+
+    this.editor = el("div", { class: "oh3-edit" });
+
+    this.root = el("div", { class: "oh3-panel" }, top, cols, this.editor);
+    this.root.addEventListener("dragover", (e) => { e.preventDefault(); this.root.classList.add("oh3-hot"); });
+    this.root.addEventListener("dragleave", () => this.root.classList.remove("oh3-hot"));
+    this.root.addEventListener("drop", (e) => {
+      e.preventDefault(); this.root.classList.remove("oh3-hot");
       this.addFiles([...(e.dataTransfer?.files || [])]);
     });
-    this.root.append(drop);
-    for (const kind of ["picture", "video", "sound"]) {
-      const body = el("div", { class: "oh3-slots" });
-      const head = el("div", { class: "oh3-head" });
-      this.sections[kind] = { body, head };
-      this.root.append(head, body);
-    }
-    this.root.append(this.msg);
     this.render();
   }
 
@@ -131,115 +143,195 @@ class Tray {
     if (!resp.ok) throw new Error(data.error || `upload failed (${resp.status})`);
     const slots = this.slots();
     const kind = data.kind;
-    const ofKind = slots.filter((s) => s.kind === kind);
-    if (ofKind.length >= CAPACITY[kind])
-      throw new Error(`the tray takes at most ${CAPACITY[kind]} ${kind}s, and they are full.`);
+    if (slots.filter((s) => s.kind === kind).length >= CAPACITY[kind])
+      throw new Error(`all ${CAPACITY[kind]} ${kind} slots are full.`);
     if (slots.length >= MAX_FILES)
       throw new Error(`the tray takes at most ${MAX_FILES} files, and it is full.`);
     const slot = { kind, label: autoLabel(kind, slots.map((s) => s.label)), file: data.file,
                    role: ROLE_TOKEN[ROLES[kind][0]], note: "" };
     if (kind === "video") slot.soundtrack = data.has_audio ? "paired" : "off";
     if (kind === "sound") slot.transcript = "";
-    slot._info = data;
+    this.selected = slot.label;
     this.say(`${data.original || data.name} → @${slot.label}`);
     this.write([...slots, slot]);
   }
 
-  card(slot, index) {
-    const kind = slot.kind;
-    const card = el("div", { class: "oh3-card" });
-    const preview = el("div", { class: "oh3-thumb" });
-    if (kind === "picture") preview.append(el("img", { src: viewUrl(slot.file), loading: "lazy" }));
-    else if (kind === "video") preview.append(el("video", { src: viewUrl(slot.file),
-      muted: true, loop: true, preload: "metadata", onmouseenter(e) { e.target.play?.(); },
-      onmouseleave(e) { e.target.pause?.(); } }));
-    else preview.append(el("audio", { src: viewUrl(slot.file), controls: true }));
-
-    const label = el("input", { class: "oh3-label", value: slot.label, title:
-      "the name @ mentions this file by, letters, digits and dashes" });
-    label.addEventListener("change", () => this.update(index, { label: label.value.trim() }));
-
-    const role = el("select", { class: "oh3-role", title: "what this file is to the piece" });
-    for (const words of ROLES[kind]) role.append(el("option", {
-      value: ROLE_TOKEN[words], textContent: words,
-      selected: ROLE_TOKEN[words] === (slot.role || ROLE_TOKEN[ROLES[kind][0]]) }));
-    role.addEventListener("change", () => this.update(index, { role: role.value }));
-
-    const note = el("input", { class: "oh3-note", value: slot.note || "", placeholder:
-      kind === "sound" ? "what it sounds like — the only description the model gets"
-                       : "what it is, in a few words" });
-    note.addEventListener("change", () => this.update(index, { note: note.value }));
-
-    const row = el("div", { class: "oh3-row" }, label, role);
-    if (kind === "video") {
-      const st = el("select", { class: "oh3-role", title:
-        "its own soundtrack: off sends none, paired sends it as this clip's sound, alone sends it as a sound in its own right" });
-      for (const v of SOUNDTRACKS) st.append(el("option", { value: v, textContent: `sound: ${v}`,
-        selected: v === (slot.soundtrack || "off") }));
-      st.addEventListener("change", () => this.update(index, { soundtrack: st.value }));
-      row.append(st);
-    }
-    const kill = el("button", { class: "oh3-x", textContent: "×",
-      title: "remove this slot", onclick: () => {
-        const slots = this.slots(); slots.splice(index, 1); this.write(slots);
-      } });
-    row.append(kill);
-    card.append(preview, row, note);
-
-    if (kind === "sound" && (slot.role === "voice_timbre" || slot.transcript)) {
-      const words = el("textarea", { class: "oh3-words", value: slot.transcript || "",
-        placeholder: "the words in this recording, exactly as spoken — nothing here can hear" });
-      words.addEventListener("change", () => this.update(index, { transcript: words.value }));
-      card.append(words);
-    }
-    return card;
+  update(label, patch) {
+    const slots = this.slots();
+    const i = slots.findIndex((s) => s.label === label);
+    if (i < 0) return;
+    slots[i] = { ...slots[i], ...patch };
+    if (patch.label) this.selected = patch.label;
+    this.write(slots);
   }
 
-  update(index, patch) {
-    const slots = this.slots();
-    slots[index] = { ...slots[index], ...patch };
-    this.write(slots);
+  remove(label) {
+    if (this.selected === label) this.selected = null;
+    this.write(this.slots().filter((s) => s.label !== label));
+  }
+
+  // ---------------------------------------------------------------- the pinned board
+
+  cell(kind, index, slot) {
+    if (!slot) {
+      return el("div", { class: "oh3-slot", textContent: `${PREFIX[kind]}${index + 1}`,
+        onclick: () => this.pick() });
+    }
+    const cls = { picture: "pic", video: "vid", sound: "aud" }[kind];
+    const cell = el("div", { class: `oh3-slot oh3-filled oh3-${cls}`
+      + (this.selected === slot.label ? " oh3-sel" : "") });
+    cell.addEventListener("click", () => { this.selected = slot.label; this.render(); });
+
+    if (kind === "picture") {
+      cell.append(el("img", { class: "oh3-fit", src: viewUrl(slot.file), loading: "lazy" }));
+      cell.append(el("div", { class: "oh3-bar" },
+        el("span", { class: "oh3-tag", textContent: "@" + slot.label }),
+        el("span", { class: "oh3-x", textContent: "×",
+          onclick: (e) => { e.stopPropagation(); this.remove(slot.label); } })));
+      return cell;
+    }
+
+    const row = el("div", { class: "oh3-rowline" });
+    if (kind === "video") {
+      row.append(el("video", { class: "oh3-vthumb", src: viewUrl(slot.file), muted: true,
+        loop: true, preload: "metadata",
+        onmouseenter(e) { e.target.play?.(); }, onmouseleave(e) { e.target.pause?.(); } }));
+    } else {
+      row.append(el("button", { class: "oh3-play", textContent: "♪", title: "play",
+        onclick: (e) => {
+          e.stopPropagation();
+          if (this._audio) { this._audio.pause(); this._audio = null; return; }
+          this._audio = new Audio(viewUrl(slot.file));
+          this._audio.play();
+          this._audio.addEventListener("ended", () => { this._audio = null; });
+        } }));
+    }
+    row.append(el("span", { class: "oh3-tag", textContent: "@" + slot.label }));
+    if (kind === "video") {
+      const st = el("select", { class: "oh3-seg", title:
+        "its soundtrack: off sends none, paired sends it as this clip's own sound, alone sends it as a track in its own right",
+        onclick: (e) => e.stopPropagation() });
+      for (const v of SOUNDTRACKS) st.append(el("option", { value: v, textContent: "sound " + v,
+        selected: v === (slot.soundtrack || "off") }));
+      st.addEventListener("change", () => this.update(slot.label, { soundtrack: st.value }));
+      row.append(st);
+    }
+    row.append(el("span", { class: "oh3-x", textContent: "×",
+      onclick: (e) => { e.stopPropagation(); this.remove(slot.label); } }));
+    cell.append(row);
+    return cell;
+  }
+
+  // ---------------------------------------------------------------- the editor strip
+
+  renderEditor() {
+    const slot = this.slots().find((s) => s.label === this.selected);
+    if (!slot) {
+      this.editor.replaceChildren(el("div", { class: "oh3-hint", textContent:
+        "drop files anywhere on this panel, or click an empty slot. Click a filled one to name it "
+        + "and say what it is." }));
+      return;
+    }
+    const label = el("input", { class: "oh3-in oh3-name", value: slot.label,
+      title: "the name @ mentions this file by: letters, digits and dashes" });
+    label.addEventListener("change", () => this.update(slot.label, { label: label.value.trim() }));
+    const role = el("select", { class: "oh3-in", title: "what this file is to the piece" });
+    for (const words of ROLES[slot.kind]) role.append(el("option", {
+      value: ROLE_TOKEN[words], textContent: words, selected: ROLE_TOKEN[words] === slot.role }));
+    role.addEventListener("change", () => this.update(slot.label, { role: role.value }));
+    const note = el("input", { class: "oh3-in oh3-wide", value: slot.note || "", placeholder:
+      slot.kind === "sound" ? "what it sounds like — the only description the model will ever have"
+                            : "what it is, in a few words" });
+    note.addEventListener("change", () => this.update(slot.label, { note: note.value }));
+
+    const rows = [el("div", { class: "oh3-editrow" },
+      el("span", { class: "oh3-at", textContent: "@" }), label, role),
+      el("div", { class: "oh3-editrow" }, note)];
+    if (slot.kind === "sound") {
+      const words = el("input", { class: "oh3-in oh3-wide", value: slot.transcript || "",
+        placeholder: "the words in this recording, exactly as spoken — nothing here can hear" });
+      words.addEventListener("change", () => this.update(slot.label, { transcript: words.value }));
+      rows.push(el("div", { class: "oh3-editrow" }, words));
+    }
+    this.editor.replaceChildren(...rows);
   }
 
   render() {
     const slots = this.slots();
-    for (const kind of ["picture", "video", "sound"]) {
-      const of = slots.map((s, i) => [s, i]).filter(([s]) => s.kind === kind);
-      const { head, body } = this.sections[kind];
-      head.textContent = `${kind === "sound" ? "sounds" : kind + "s"}  ${of.length}/${CAPACITY[kind]}`;
-      body.replaceChildren(...of.map(([s, i]) => this.card(s, i)));
-    }
+    const of = (kind) => slots.filter((s) => s.kind === kind);
+    if (this.selected && !slots.some((s) => s.label === this.selected)) this.selected = null;
+
+    this.counts.textContent =
+      `${slots.length} / ${MAX_FILES}`;
+    this.picGrid.replaceChildren(
+      ...Array.from({ length: 9 }, (_, i) => this.cell("picture", i, of("picture")[i])));
+    this.vidRows.replaceChildren(
+      ...Array.from({ length: 3 }, (_, i) => this.cell("video", i, of("video")[i])));
+    this.sndRows.replaceChildren(
+      ...Array.from({ length: 3 }, (_, i) => this.cell("sound", i, of("sound")[i])));
+    this.renderEditor();
   }
 }
 
+/* The board: every dimension pinned, nothing negotiated with the host. */
 const CSS = `
-.oh3-tray{display:flex;flex-direction:column;gap:6px;padding:6px;font-family:system-ui,sans-serif;
-  font-size:11px;color:#dde2ea;width:100%;max-width:100%;height:460px;min-height:460px;
-  overflow:hidden;overflow-y:auto;box-sizing:border-box;position:relative;contain:content;}
-.oh3-tray *{box-sizing:border-box;min-width:0;max-width:100%;}
-.oh3-drop{border:1px dashed #4a5262;border-radius:6px;padding:10px;text-align:center;color:#8b93a5;
-  cursor:pointer;}
-.oh3-drop.oh3-over{border-color:#e8873a;color:#e8873a;}
-.oh3-head{color:#8b93a5;font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-top:2px;}
-.oh3-slots{display:flex;flex-direction:column;gap:6px;}
-.oh3-card{border:1px solid #2e3440;border-radius:6px;padding:6px;display:flex;flex-direction:column;
-  gap:5px;background:rgba(16,18,24,.6);}
-.oh3-thumb img,.oh3-thumb video{max-width:100%;max-height:96px;border-radius:4px;display:block;}
-.oh3-thumb audio{width:100%;height:26px;}
-.oh3-row{display:flex;gap:5px;align-items:center;}
-.oh3-label{flex:0 0 88px;min-width:0;background:#14161c;border:1px solid #2e3440;color:#dde2ea;
-  border-radius:4px;padding:3px 5px;font-size:11px;}
-.oh3-role{flex:1;min-width:0;background:#14161c;border:1px solid #2e3440;color:#dde2ea;
-  border-radius:4px;padding:3px;font-size:11px;}
-.oh3-note{width:100%;box-sizing:border-box;background:#14161c;border:1px solid #2e3440;
-  color:#dde2ea;border-radius:4px;padding:3px 5px;font-size:11px;}
-.oh3-words{width:100%;box-sizing:border-box;background:#14161c;border:1px solid #2e3440;
-  color:#dde2ea;border-radius:4px;padding:3px 5px;font-size:11px;min-height:34px;resize:vertical;}
-.oh3-x{flex:0 0 auto;background:none;border:1px solid #2e3440;color:#8b93a5;border-radius:4px;
-  cursor:pointer;width:20px;height:20px;line-height:1;}
-.oh3-x:hover{color:#f07070;border-color:#f07070;}
-.oh3-msg{min-height:13px;font-size:10px;color:#8b93a5;}
+.oh3-panel{font-family:system-ui,sans-serif;color:#d7dbe2;font-size:11px;
+  background:#191c22;border:1px solid #2a2f3a;border-radius:8px;padding:7px;
+  display:flex;flex-direction:column;gap:6px;box-sizing:border-box;
+  width:100%;height:${PANEL_H}px;min-height:${PANEL_H}px;overflow:hidden;}
+.oh3-panel *{box-sizing:border-box;min-width:0;}
+.oh3-panel.oh3-hot{border-color:#e8873a;}
+.oh3-top{flex:0 0 auto;display:flex;align-items:center;gap:8px;overflow:hidden;}
+.oh3-counts{font-family:ui-monospace,monospace;font-size:10px;color:#8a93a3;flex:0 0 auto;}
+.oh3-msg{flex:1;min-width:0;font-size:10px;color:#8a93a3;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
 .oh3-msg.oh3-bad{color:#f07070;}
+.oh3-ver{flex:0 0 auto;font-size:8px;color:#4d5563;font-family:ui-monospace,monospace;}
+.oh3-cols{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.oh3-col{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;}
+.oh3-sec{flex:0 0 auto;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7484;}
+.oh3-pics{flex:1;min-height:0;display:grid;gap:5px;
+  grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));}
+.oh3-vids{flex:0 0 auto;display:grid;grid-template-rows:repeat(3,44px);gap:5px;
+  grid-template-columns:minmax(0,1fr);}
+.oh3-auds{flex:0 0 auto;display:grid;grid-template-rows:repeat(3,36px);gap:5px;
+  grid-template-columns:minmax(0,1fr);}
+.oh3-slot{border:1px dashed #2b313d;border-radius:6px;background:#141820;
+  display:flex;align-items:center;justify-content:center;color:#4d5563;font-size:10px;
+  cursor:pointer;overflow:hidden;min-width:0;min-height:0;}
+.oh3-slot:hover{border-color:#59637a;color:#8a93a3;}
+.oh3-filled{border-style:solid;border-color:#2e3440;background:#12151b;cursor:pointer;
+  display:block;position:relative;}
+.oh3-filled.oh3-pic{border-color:#6d5527;}
+.oh3-filled.oh3-vid{border-color:#255c6b;}
+.oh3-filled.oh3-aud{border-color:#4c3d6e;}
+.oh3-sel{outline:1px solid #e8873a;outline-offset:1px;}
+.oh3-fit{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;
+  background:#0d1015;}
+.oh3-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:4px;
+  padding:1px 4px;background:rgba(10,12,16,.82);overflow:hidden;}
+.oh3-tag{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:ui-monospace,monospace;font-size:9px;color:#e0a94c;text-align:left;}
+.oh3-vid .oh3-tag{color:#4cc3e0;} .oh3-aud .oh3-tag{color:#b48ce8;}
+.oh3-x{flex:0 0 auto;cursor:pointer;color:#7a8393;font-size:11px;line-height:1;}
+.oh3-x:hover{color:#e05a5a;}
+.oh3-rowline{display:flex;align-items:center;gap:6px;padding:0 6px;height:100%;overflow:hidden;}
+.oh3-vthumb{width:56px;height:32px;min-width:56px;border-radius:4px;object-fit:contain;
+  background:#0d1015;flex:0 0 auto;}
+.oh3-play{width:20px;height:20px;border-radius:50%;border:1px solid #3a4252;background:#20242d;
+  color:#c9cfda;font-size:10px;line-height:1;cursor:pointer;flex:0 0 auto;padding:0;}
+.oh3-seg{flex:0 0 auto;width:96px;background:#12151b;border:1px solid #2e3440;color:#c9cfda;
+  border-radius:4px;font-size:10px;padding:2px;}
+.oh3-edit{flex:0 0 auto;height:88px;border-top:1px solid #2a2f3a;padding-top:6px;
+  display:flex;flex-direction:column;gap:5px;overflow:hidden;}
+.oh3-editrow{display:flex;align-items:center;gap:5px;overflow:hidden;}
+.oh3-at{flex:0 0 auto;color:#e8873a;font-family:ui-monospace,monospace;}
+.oh3-in{background:#12151b;border:1px solid #2e3440;color:#d7dbe2;border-radius:4px;
+  padding:3px 6px;font-size:11px;}
+.oh3-name{flex:0 0 110px;}
+select.oh3-in{flex:1;}
+.oh3-wide{flex:1;width:100%;}
+.oh3-hint{color:#6b7484;font-size:10px;padding-top:14px;text-align:center;}
 `;
 
 app.registerExtension({
@@ -254,23 +346,19 @@ app.registerExtension({
       const r = onCreated?.apply(this, arguments);
       const state = (this.widgets || []).find((w) => w.name === "tray");
       if (!state) return r;
-      // The string stays the node's real field; the panel is its editor, so the raw text row
-      // shrinks out of the way rather than showing the same fact twice.
       state.computeSize = () => [0, -4];
       state.hidden = true;
       if (state.options) state.options.hidden = true;
       const tray = new Tray(this, state);
       this._oh3Tray = tray;
       const panel = this.addDOMWidget("oh3_panel", "div", tray.root, { serialize: false });
-      // The canvas reserves room only for what computeSize declares, and a DOM widget declares
-      // nothing by default: without these two lines the panel gets zero rows and its content piles
-      // over the node's other widgets. The recipe follows the reference loader verbatim.
+      // Honoured by the canvas renderer; harmless where Vue owns layout, and the board's own
+      // pinned CSS is what actually keeps it intact there.
       panel.computedHeight = PANEL_H;
-      panel.computeSize = (w) => [w || this.size?.[0] || NODE_W, PANEL_H];
+      panel.computeSize = (w) => [w || NODE_W, PANEL_H];
       const min = this.computeSize?.();
       this.size[0] = Math.max(NODE_W, this.size?.[0] || 0);
-      this.size[1] = Math.max(min?.[1] || 0, PANEL_H + 130, this.size?.[1] || 0);
-      // A workflow load writes widget values after onNodeCreated, so re-render when it lands.
+      this.size[1] = Math.max(min?.[1] || 0, PANEL_H + 110, this.size?.[1] || 0);
       requestAnimationFrame(() => tray.render());
       return r;
     };
@@ -278,11 +366,10 @@ app.registerExtension({
     nodeType.prototype.onResize = function (size) {
       try {
         size[0] = Math.max(NODE_W, size[0]);
-        size[1] = Math.max(PANEL_H + 130, size[1]);
+        size[1] = Math.max(PANEL_H + 110, size[1]);
       } catch (e) { /* leave the size alone */ }
       return onResize?.apply(this, arguments);
     };
-
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       const r = onConfigure?.apply(this, arguments);
