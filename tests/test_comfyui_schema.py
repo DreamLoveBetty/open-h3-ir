@@ -338,17 +338,16 @@ def test_the_gguf_option_lists_come_from_the_packs_own_registered_lists():
     assert ".gguf" not in body, "the node routes on is_gguf rather than on its own copy of the rule"
 
 
-def test_the_path_prefixes_are_not_something_people_have_to_type():
-    """ComfyUI's own folder is known from ComfyUI, and the service's spelling of it is found by
-    trying and checking. Two hand-typed prefix boxes were the earlier design."""
+def test_no_path_prefix_is_something_people_have_to_type():
+    """ComfyUI's own folder is known from ComfyUI, and the service's spelling of it is found by trying
+    and checking. Two hand-typed prefix boxes were the first design and one advanced override was the
+    second; both asked the user to answer a question the node answers by asking the service to open
+    the file. What is left when that fails is a service that cannot reach ComfyUI's disk at all, and
+    no box fixes that."""
     ids = [i for _n, _k, i, _kw in ALL]
-    assert "comfy_path_prefix" not in ids, "ComfyUI's own location is not a question for the user"
-    assert "service_path_prefix" not in ids
-    override = [kw for _k, i, kw in SETUP if i == "service_sees_comfy_at"]
-    assert override, "an override has to exist for setups that cannot be worked out"
-    assert override[0].get("advanced") is not None, "and it belongs out of the way"
-    assert "service_sees_comfy_at" not in _ids(COMPILE), \
-        "a split install is a fact about a machine, so it lives on the machine node"
+    for gone in ("comfy_path_prefix", "service_path_prefix", "service_sees_comfy_at"):
+        assert gone not in ids, f"{gone} is not a question for the user"
+    assert "service sees" not in TEXT, "nor a field named in a message, since it is not on any node"
 
 
 # --------------------------------------------------------------------------- what is on which node
@@ -358,7 +357,7 @@ def test_the_compile_node_holds_no_plumbing_at_all():
     describe a machine were nine of its rows, five of them drawing an unreadable 48-character
     filename against a long label in a 38-character row."""
     for machine in ("server", "reference_model", "frames_model", "text_encoder", "video_vae",
-                    "audio_vae", "weight_dtype", "timeout_s", "service_sees_comfy_at"):
+                    "audio_vae", "weight_dtype", "timeout_s"):
         assert machine not in _ids(COMPILE), f"{machine} is a fact about a machine, not a shot"
         assert machine in _ids(SETUP), f"{machine} has to still exist somewhere"
 
@@ -377,13 +376,28 @@ def test_the_compile_node_is_small_enough_to_read_at_rest():
     assert len(declared) <= 16, f"{len(declared)} inputs; it was 29 and one of them was needed"
 
 
-def test_the_satellites_are_all_optional_on_the_compile_node():
-    """None of them is required for the node to work, which is the whole argument for moving things
-    off it: a satellite that is absent until you need it is not lying around, it is absent."""
-    for socket in ("setup", "sound", "footage", "first_frame", "last_frame", "pictures"):
+def test_every_satellite_but_setup_is_optional_on_the_compile_node():
+    """A satellite that is absent until you need it is not lying around, it is absent, and that is the
+    whole argument for moving things off this node."""
+    for socket in ("sound", "footage", "first_frame", "last_frame", "pictures"):
         kw = next(kw for _k, i, kw in COMPILE if i == socket)
         assert isinstance(kw.get("optional"), ast.Constant) and kw["optional"].value is True, \
             f"{socket} must be optional"
+
+
+def test_the_setup_socket_is_required_because_nothing_else_can_choose_the_files():
+    """The one satellite that is not optional, and the consequence the picker was worth. Nothing in
+    this pack decides which of two H3 checkpoints somebody meant, so a graph with no Setup node has no
+    files to load and says so instead of rendering with something it picked itself."""
+    kw = next(kw for _k, i, kw in COMPILE if i == "setup")
+    assert kw.get("optional") is None, "an optional setup socket is a node that guesses again"
+    assert "Required" in _str(kw.get("tooltip")), "and the socket says so where it is read"
+    # The same refusal in this pack's own words, for the graph that arrives with the socket empty.
+    execute = TEXT[TEXT.index("    def execute(cls, intent"):TEXT.index("helpers", TEXT.index(
+        "    def execute(cls, intent"))]
+    assert "if not setup:" in execute, "checked before anything is written or loaded"
+    for said in ("OpenH3-IR Setup node", "five H3 files", "setup socket"):
+        assert said in execute, f"the refusal has to say {said!r}"
 
 
 def test_a_clips_three_facts_travel_together():
@@ -438,24 +452,38 @@ def test_silence_sits_with_the_rest_of_what_you_are_asking_for():
         assert _index(earlier) < _index("silent")
 
 
-def test_the_ask_comes_before_what_it_looks_at_and_the_machine_comes_last():
+def test_the_ask_comes_first_and_then_what_it_looks_at():
     """Nodes 2.0 honours schema order exactly; the legacy canvas draws all sockets above all widgets.
-    The order is chosen to read correctly under both: the ask first among the widgets, attachments
-    first and the machine last among the sockets."""
+    The order is chosen to read correctly under both: the ask first, then the machine it runs on, then
+    the attachments."""
     for attachment in ("first_frame", "last_frame", "pictures", "footage", "sound"):
         assert _index("intent") < _index(attachment)
-        assert _index(attachment) < _index("setup"), "the machine reads last"
     for advanced in ("sizing", "seed", "effort"):
         assert _index("silent") < _index(advanced)
+
+
+def test_the_declared_order_is_the_order_comfyui_publishes():
+    """MEASURED on the live instance: `/object_info` puts every required input ahead of every optional
+    one, whatever order they were declared in, and the canvas reads that. So an order that read better
+    in the source than on the canvas would be describing a node nobody is looking at. The required
+    `setup` socket is what made this visible: declared last, it was published seventh."""
+    declared = [i for _k, i, kw in COMPILE if i and i not in TEMPLATE_IDS]
+    optional = [bool(isinstance(kw.get("optional"), ast.Constant) and kw["optional"].value)
+                for _k, i, kw in COMPILE if i and i not in TEMPLATE_IDS]
+    assert optional == sorted(optional), \
+        f"required and optional inputs are interleaved in the source: {list(zip(declared, optional))}"
+    assert _index("shots") < _index("setup") < _index("first_frame"), \
+        "the machine is required, so it reads between the ask and the attachments"
 
 
 def test_the_rarely_touched_settings_are_marked_as_such():
     """A bonus for Nodes 2.0 users, never a hide: under the legacy renderer `advanced` does nothing
     at all, so the surface is designed to be correct with all of it visible."""
     advanced = {i for _n, _k, i, kw in ALL if kw.get("advanced") is not None}
-    for expected in ("seed", "effort", "sizing", "weight_dtype", "timeout_s",
-                     "service_sees_comfy_at"):
+    for expected in ("seed", "effort", "sizing", "weight_dtype", "timeout_s"):
         assert expected in advanced, f"{expected} should not be in the way of ordinary use"
+    for never in ("reference_model", "frames_model", "text_encoder", "video_vae", "audio_vae"):
+        assert never not in advanced, "a pick nobody can see is the guess it replaced"
     for never in ("intent", "seconds", "aspect", "creativity", "silent", "shots", "first_frame",
                   "last_frame", "pictures", "footage", "sound", "setup"):
         assert never not in advanced
@@ -522,18 +550,31 @@ def test_a_clips_job_is_a_choice_the_user_makes_per_clip():
         "the default must not claim the render is an edit of the source"
 
 
-def test_the_model_combos_open_on_a_sentinel_rather_than_a_filename():
-    """Two failures in one. A pinned filename is a workflow that fails on someone else's install, and
-    `options[0]` on a machine without H3 weights pre-selects a plausible file from the wrong family:
-    it loads, and then the render is wrong for a reason nobody can see."""
-    from comfyui.h3ir_client import AUTO
-
-    assert AUTO == "(found automatically)"
+def test_the_model_combos_are_a_picker_and_nothing_else():
+    """The five files are a question only the user can answer: a filename says what a file is called,
+    not what somebody intended it to be. So each combo lists what this install has and opens on one of
+    them, exactly like every loader in ComfyUI, with no sentinel default meaning "work it out" and no
+    hidden preference behind it."""
     for model in ("reference_model", "frames_model", "text_encoder", "video_vae", "audio_vae"):
         kw = next(kw for _k, i, kw in SETUP if i == model)
-        assert isinstance(kw["default"], ast.Name) and kw["default"].id == "AUTO", \
-            f"{model} must default to the sentinel"
-        assert isinstance(kw["options"], ast.Call), "the sentinel is prepended by _model_options"
+        assert isinstance(kw["options"], ast.Call) and kw["options"].func.id == "_model_options", \
+            f"{model} must list what this install actually has"
+        assert "default" not in kw, \
+            f"{model} carries no default, so the combo opens on a real file the user can read"
+        assert "(found" not in _str(kw.get("tooltip")), "no tooltip promises a search either"
+
+
+def test_the_pick_is_the_file_that_loads_and_no_table_second_guesses_it():
+    """THE control on the picker. Auto-resolution matched H3's filenames against a table of expected
+    words, with a preference for int8 builds nobody asked for, and the render then used a file the
+    canvas never showed. The node reads the five names off the bundle and loads those."""
+    execute = TEXT[TEXT.index("    def execute(cls, intent"):TEXT.index("helpers", TEXT.index(
+        "    def execute(cls, intent"))]
+    for guess in ("PATTERNS", "resolve_model", "int8", "found automatically"):
+        assert guess not in TEXT, f"{guess} is how the node used to answer a question it cannot"
+    for direct in ('"frames_model" if frames_job else "reference_model"', 'machine["text_encoder"]',
+                   'machine["video_vae"]', 'machine["audio_vae"]'):
+        assert direct in execute, f"{direct} has to be read straight off the Setup bundle"
 
 
 # --------------------------------------------------------------------------- identity and outputs

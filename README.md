@@ -238,11 +238,13 @@ resolution picker, the frame-count arithmetic, the model and VAE and encoder loa
 conditioning node. One node in, model and conditioning and latent out. The same render that took
 twenty seven nodes takes sixteen.
 
-At rest it is one sentence and five widgets. Everything that is not about this shot lives on a node
-you only add when you need it: **OpenH3-IR Setup** for the service address and the model files,
-**OpenH3-IR Footage** for a reference clip, **OpenH3-IR Sound** for reference music, an effect or a
-voice. With no Setup node in the graph the five H3 files are found by name, so a workflow you share
-runs on someone else's disk.
+At rest it is one sentence and five widgets, plus **OpenH3-IR Setup** beside it holding the service
+address and the five H3 files to load. That one is a picker and nothing else: your install's files in
+both formats, the file you choose is the file that loads, and no search by name, preferred build or
+option meaning "work it out". A filename cannot tell anyone which of two H3 checkpoints you meant, so
+the answer is yours, it is visible on the node, and the `report` output names every file loaded.
+Everything else stays out of the graph until you need it: **OpenH3-IR Footage** for a reference clip,
+**OpenH3-IR Sound** for reference music, an effect or a voice.
 
 The socket you plug a picture into is the job. `first frame` means it is the first frame of the video;
 `picture 1` means it is something the shot should contain. Those use different H3 weights, and the node

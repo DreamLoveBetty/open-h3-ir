@@ -58,12 +58,6 @@ MAX_CLIPS = 3
 PICTURE_NAMES = tuple(f"picture {i}" for i in range(1, MAX_PICTURES + 1))
 CLIP_NAMES = tuple(f"clip {i}" for i in range(1, MAX_CLIPS + 1))
 
-# The first option of every model combo on the Setup node, and its default. It exists so that adding
-# a Setup node to change one field does not pin five filenames into a workflow someone else will
-# open, and so that a machine with no H3 weights cannot pre-select a plausible file from the wrong
-# family: that loads, and then the render is wrong for a reason nobody can see.
-AUTO = "(found automatically)"
-
 # What a clip is for, in the user's words, and the role each one means. Three different jobs in the
 # brief, so the wrong one renders something plausible and wrong.
 FOOTAGE_JOBS = {
@@ -110,7 +104,7 @@ def retranslate(error: Exception) -> bool:
     return getattr(error, "code", "") == PATH_MAY_BE_WRONG
 
 
-def path_candidates(comfy_root: str, override: str = "") -> list[str]:
+def path_candidates(comfy_root: str) -> list[str]:
     r"""Spellings of ComfyUI's folder to offer the service, best guess first.
 
     ComfyUI's own location is known from ComfyUI, so nobody types it. What cannot be known is how a
@@ -119,9 +113,11 @@ def path_candidates(comfy_root: str, override: str = "") -> list[str]:
     form is offered and the service is asked to confirm it by actually opening the file. Nothing is
     assumed: a candidate that does not work produces the next attempt, and running out produces an
     error that lists what was tried.
+
+    There is no hand-typed override, because there was nothing anyone could usefully type: every
+    spelling that can work is a spelling of a folder ComfyUI already named, and the one case a box
+    could not fix is a service on another machine, which cannot open these files under any spelling.
     """
-    if override.strip():
-        return [override.strip()]
     if not comfy_root:
         return [""]
     out = [comfy_root]
@@ -414,66 +410,49 @@ def clip_loader_for(name: str) -> str:
     return LOADER_GGUF_CLIP if is_gguf(name) else LOADER_NATIVE_CLIP
 
 
-def resolve_model(options: list[str], patterns: tuple[tuple[str, ...], ...], *, what: str,
-                  looks_like: str) -> tuple[str, str]:
-    """Find H3's file by name, and say which build was passed over.
+# The words H3's own two checkpoint families put in their filenames. Used for one thing only: saying
+# out loud that a pick looks like the other family. Never for choosing a file, because which file the
+# user meant is not something a filename can answer.
+REFERENCE_FAMILY = "ref2va"
+FRAMES_FAMILY = "fl2va"
 
-    Returns (chosen, gguf_alternative). Patterns are tried in order, family first, because "video"
-    alone once matched an LTX VAE on a box that also had H3's, and a plausible file from the wrong
-    family is worse than none: it loads, and then the render is wrong for a reason nobody can see.
 
-    Safetensors wins, because it is the native path and needs no third-party pack; a GGUF build of
-    the same family is returned so the report can say it was there and how to pick it. The two
-    searches are separate on purpose: a quantised build is named for its quantisation, so
-    `minimax_h3_ref2va_Q4_K_M.gguf` matches the family pattern but never the precise one the
-    safetensors build matched, and searching them together would hide it. Nothing matching at all
-    raises, rather than falling back to the first file in the list.
+def family_warning(chosen: str, *, frames_job: bool) -> str:
+    """A plain warning when the picked checkpoint's own name says it is the other H3 family.
+
+    The two slots are easy to swap and both files load: a reference checkpoint on a first-and-last
+    frame job renders something plausible with nothing on screen to say why it ignored the frames.
+    So the filename is read, and only where it decides the question. A name carrying the other
+    family's word and not this one's is evidence; a name carrying neither is not, and a name carrying
+    both cannot be read. Silence in those cases, because a guess dressed as a warning teaches people
+    to ignore warnings.
+
+    It never blocks the render. Which file is right is the user's call and a renamed file is still
+    the file they meant.
     """
-    def first(want_gguf: bool) -> str:
-        for needles in patterns:
-            for o in options:
-                if is_gguf(o) is want_gguf and all(n in o.lower() for n in needles):
-                    return o
+    wanted, other = ((FRAMES_FAMILY, REFERENCE_FAMILY) if frames_job
+                     else (REFERENCE_FAMILY, FRAMES_FAMILY))
+    name = (chosen or "").lower()
+    if other not in name or wanted in name:
         return ""
-
-    native, gguf = first(False), first(True)
-    if native:
-        return native, gguf
-    if gguf:
-        return gguf, ""
-    raise ServiceError(
-        f"no {what} was found in this install. Nothing in the list looks like {looks_like}, so "
-        "there is nothing to load and guessing would render something wrong for a reason you "
-        f"could not see. Put H3's {what} in the right models folder, or pick the file yourself on "
-        "an OpenH3-IR Setup node."
-        + (f" The list held: {', '.join(options[:12])}." if options else " The list was empty."))
-
-
-REFERENCE_PATTERNS = (("ref2va", "int8"), ("ref2va",))
-FRAMES_PATTERNS = (("fl2va", "int8"), ("fl2va",))
-ENCODER_PATTERNS = (("qwen3vl", "minimax"), ("minimax",))
-VIDEO_VAE_PATTERNS = (("minimax", "video"), ("h3", "video"))
-AUDIO_VAE_PATTERNS = (("minimax", "audio"), ("h3", "audio"))
+    job = "a first and last frame job" if frames_job else "a reference or text job"
+    slot = "frame weights" if frames_job else "reference weights"
+    return (f"{chosen} names H3's {other} family, and this graph is {job}, which runs on the "
+            f"{wanted} checkpoint. Check the {slot} field on the Setup node: it will render either "
+            "way, and it will be wrong in a way nothing on screen explains.")
 
 
 # --------------------------------------------------------------------------- the bundles
 
-def setup_defaults() -> dict[str, Any]:
-    """What the compile node assumes with no Setup node in the graph.
-
-    Every model is left to auto-resolution on purpose: a workflow with no Setup node pins no
-    filenames, so it runs on a stranger's disk. A pinned filename is a workflow that fails on
-    someone else's install.
-    """
-    return {"server": DEFAULT_SERVER, "reference_model": AUTO, "frames_model": AUTO,
-            "text_encoder": AUTO, "video_vae": AUTO, "audio_vae": AUTO,
-            "weight_dtype": "default", "timeout_s": 600, "service_sees_comfy_at": ""}
-
-
 def setup_bundle(*, server: str, reference_model: str, frames_model: str, text_encoder: str,
-                 video_vae: str, audio_vae: str, weight_dtype: str, timeout_s: int,
-                 service_sees_comfy_at: str) -> dict[str, Any]:
-    """One socket carrying the nine facts that describe a machine rather than a shot."""
+                 video_vae: str, audio_vae: str, weight_dtype: str,
+                 timeout_s: int) -> dict[str, Any]:
+    """One socket carrying the eight facts that describe a machine rather than a shot.
+
+    Every file in it was picked by a person. Nothing here searches, prefers a build or fills a gap:
+    which file was meant is not a question a filename can answer, and a node that answered it anyway
+    was choosing for the user without saying so.
+    """
     address = (server or "").strip()
     if not address:
         raise ServiceError(
@@ -487,8 +466,7 @@ def setup_bundle(*, server: str, reference_model: str, frames_model: str, text_e
         raise ServiceError(f"weight precision {weight_dtype!r} is not one of {WEIGHT_DTYPES}.")
     return {"server": address.rstrip("/"), "reference_model": reference_model,
             "frames_model": frames_model, "text_encoder": text_encoder, "video_vae": video_vae,
-            "audio_vae": audio_vae, "weight_dtype": weight_dtype, "timeout_s": int(timeout_s),
-            "service_sees_comfy_at": (service_sees_comfy_at or "").strip()}
+            "audio_vae": audio_vae, "weight_dtype": weight_dtype, "timeout_s": int(timeout_s)}
 
 
 def footage_bundle(frames: Any, its_sound: Any, job: str) -> dict[str, Any]:
@@ -569,12 +547,12 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
         if code in ("asset-no-path", "asset-missing"):
             raise ServiceError(
                 f"the service could not read an attachment: {det.get('message', code)}. "
-                "ComfyUI and the service are looking at the same file through different paths. Add "
-                "an OpenH3-IR Setup node and fill in 'ComfyUI as the service sees it' with the "
-                "spelling the service can open, for example /mnt/c/ComfyUI-Production where "
-                "ComfyUI itself says C:\\ComfyUI-Production. If the service runs on another machine "
-                "entirely it cannot open ComfyUI's files at all, and only text-only prompts will "
-                "work.", PATH_MAY_BE_WRONG)
+                "ComfyUI and the service are looking at the same file through different paths, for "
+                "example /mnt/c/ComfyUI-Production where ComfyUI itself says C:\\ComfyUI-Production. "
+                "The node tries the plausible spellings itself and this is what is left when none of "
+                "them opened. If the service runs on another machine entirely it cannot open "
+                "ComfyUI's files at all, and only text-only prompts will work; if it runs beside "
+                "ComfyUI, give it read access to ComfyUI's folder.", PATH_MAY_BE_WRONG)
         if code == "asset-unreadable":
             # The file was found and opened, and could not be used. A different spelling of the path
             # cannot help, so this must NOT carry the retry marker. The analyser writes these for a
@@ -714,13 +692,6 @@ def length_notes(asked_seconds: float, frames: int) -> list[str]:
                                 f"{TRAINED_MIN_FRAMES / FPS:.3f}s. It still renders, and it is "
                                 "untested."))
     return out
-
-
-def gguf_alternative_note(what: str, filename: str) -> str:
-    """Said at the only moment it matters, so no control had to exist for the user to learn the
-    choice is there."""
-    return line("note", f"a GGUF build of the {what} is also installed ({filename}). Pick it on an "
-                        "OpenH3-IR Setup node to use it.")
 
 
 def precision_ignored_note() -> str:

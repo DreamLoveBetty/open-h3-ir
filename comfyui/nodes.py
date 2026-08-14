@@ -19,12 +19,17 @@ The lists grow as they are filled, and they are labelled `picture 1` and `clip 1
 the brief's own words, so a note that says "line one describes picture 1" needs no further
 explaining.
 
-Nothing that is not shot-scoped stays on the node. A machine's address, its model files, its VRAM
-and its split-install path are one optional Setup socket. A clip is frames plus a soundtrack plus
-what it is for, which is one optional Footage node per clip. Three sounds with three notes and a
-transcript are one optional Sound node. With none of them in the graph the compile node is a
-sentence and five widgets, and the five H3 files resolve by name on whatever disk the workflow lands
-on, so a workflow shared with a stranger runs.
+Nothing that is not shot-scoped stays on the node. A machine's address, its five model files and its
+VRAM setting are one Setup socket. A clip is frames plus a soundtrack plus what it is for, which is
+one optional Footage node per clip. Three sounds with three notes and a transcript are one optional
+Sound node. The satellites are absent until you need them; Setup is the one that is always there,
+because the five files it carries are picked by a person and nothing here invents them.
+
+Which file to load is a question only the user can answer. There is no search by name, no preferred
+build and no sentinel that means "work it out": a filename says what a file is called, not what
+somebody intended it to be, and a node that answers that question anyway is choosing for the user
+without telling them. So the picks are visible on the node, they are trivial to change, and the
+report names every file that was loaded and the loader that read it.
 
 The file is the format. A `.gguf` checkpoint or encoder loads through ComfyUI-GGUF's loader and a
 `.safetensors` one loads natively, decided per file from the extension, with no toggle anywhere. A
@@ -44,18 +49,16 @@ from typing import Any
 from comfy_api.latest import ComfyExtension, io
 
 from .media import digest, sha256_file, write_footage, write_picture, write_sound
-from .h3ir_client import (ASPECTS, AUDIO_VAE_PATTERNS, AUTO, CLIP_NAMES, CREATIVITY, DEFAULT_SERVER,
-                          EFFORT, ENCODER_PATTERNS, FOOTAGE_JOBS, FPS, FRAMES_PATTERNS,
-                          PICTURE_NAMES, REFERENCE_PATTERNS, SHOTS, SIZING, SOUND_PARTS,
-                          VIDEO_VAE_PATTERNS, WEIGHT_DTYPES, ServiceError, bindings_by_content,
-                          build_payload, check_mode, clip_loader_for, compile_brief, expected_mode,
-                          footage_bundle,
-                          gguf_alternative_note, inputs_fingerprint, is_gguf, length_notes, line,
+from .h3ir_client import (ASPECTS, CLIP_NAMES, CREATIVITY, DEFAULT_SERVER, EFFORT, FOOTAGE_JOBS,
+                          FPS, PICTURE_NAMES, SHOTS, SIZING, SOUND_PARTS, WEIGHT_DTYPES,
+                          ServiceError, bindings_by_content, build_payload, check_mode,
+                          clip_loader_for, compile_brief, expected_mode, family_warning,
+                          footage_bundle, inputs_fingerprint, is_gguf, length_notes, line,
                           merge_model_options, ordered, path_candidates, plan_assets,
-                          precision_ignored_note, render_fields, report, resolve_model, retranslate,
-                          setup_bundle, setup_defaults, sound_bundle, unet_loader_for)
+                          precision_ignored_note, render_fields, report, retranslate, setup_bundle,
+                          sound_bundle, unet_loader_for)
 
-# One socket carrying nine facts about a machine, one carrying a clip's three, one carrying the
+# One socket carrying eight facts about a machine, one carrying a clip's three, one carrying the
 # sounds. Custom io types, so a plain IMAGE cannot be dropped into a socket that needs a bundle and
 # the refusal happens on the canvas rather than after a queue.
 Setup = io.Custom("H3IR_SETUP")
@@ -100,7 +103,10 @@ def _files(kind: str) -> list[str]:
 
 
 def _model_options(native_kind: str, gguf_kind: str = "") -> list[str]:
-    """A model combo: the sentinel, then both builds of the same folder merged.
+    """A model combo: both builds of the same folder, merged into one list.
+
+    No sentinel and no default, so the combo behaves like every loader in ComfyUI: it opens on a real
+    filename, the filename is what the node shows, and changing it is one click.
 
     The GGUF half comes only from ComfyUI-GGUF's own registered list. It is never globbed off the
     disk, because a file offered with no loader behind it is exactly the plausible-and-wrong option
@@ -108,7 +114,7 @@ def _model_options(native_kind: str, gguf_kind: str = "") -> list[str]:
     """
     native = _files(native_kind)
     gguf = _files(gguf_kind) if gguf_kind else []
-    return [AUTO, *merge_model_options(native, gguf)]
+    return merge_model_options(native, gguf)
 
 
 class OpenH3IRCompile(io.ComfyNode):
@@ -169,6 +175,16 @@ class OpenH3IRCompile(io.ComfyNode):
                             "and the compiler knows where they can go. Set a number when the piece "
                             "has to be one continuous take, or exactly two. Four is the compiler's "
                             "ceiling."),
+                # The machine, and the only required socket. It sits here because ComfyUI groups every
+                # required input ahead of every optional one when it publishes the schema, so a
+                # declaration order that read better in this file would be a different node from the
+                # one people are looking at.
+                Setup.Input(
+                    "setup", display_name="setup",
+                    tooltip="Required. The service address and the five H3 files to load, from an "
+                            "OpenH3-IR Setup node. Which files those are is your choice, so there is "
+                            "one node that holds it and the report names every file that was "
+                            "loaded."),
 
                 # --------------------------------------------------------- this is what it looks at
                 io.Image.Input(
@@ -207,12 +223,6 @@ class OpenH3IRCompile(io.ComfyNode):
                 Sound.Input(
                     "sound", display_name="sound", optional=True,
                     tooltip="Music, an effect, or a voice to match, from an OpenH3-IR Sound node."),
-                Setup.Input(
-                    "setup", display_name="setup", optional=True,
-                    tooltip="Service address and model files, from an OpenH3-IR Setup node. Without "
-                            f"one the service is expected at {DEFAULT_SERVER.split('//')[-1]} and "
-                            "the H3 files are found by name in your models folders. The report "
-                            "lists whatever was used."),
 
                 # --------------------------------------------------------- rarely touched
                 io.Combo.Input(
@@ -274,7 +284,18 @@ class OpenH3IRCompile(io.ComfyNode):
                 shots: str, first_frame=None, last_frame=None, pictures=None,
                 picture_notes: str = "", footage=None, sound=None, setup=None,
                 sizing: str = "match", seed: int = 7, effort: str = "standard") -> io.NodeOutput:
-        machine = dict(setup_defaults(), **(setup or {}))
+        # The socket is required, so ComfyUI refuses an unconnected graph before this runs. This is
+        # the same refusal in this pack's own words, for the graph that arrives over /prompt with the
+        # socket present and empty: without the five picks there is nothing to load, and the node
+        # will not choose five files on somebody's behalf.
+        if not setup:
+            raise ServiceError(
+                "this node has no setup. Add an OpenH3-IR Setup node, pick the five H3 files it "
+                "asks for (the reference weights, the frame weights, the text encoder, the picture "
+                "VAE and the sound VAE) and wire its setup output into this node's setup socket. "
+                "Which files those are cannot be worked out from their names, so they are your "
+                "choice rather than a guess this node makes for you.")
+        machine = setup
         pics = ordered(pictures, PICTURE_NAMES)
         clips = ordered(footage, CLIP_NAMES)
         sounds = cls._sounds_from(sound)
@@ -302,29 +323,20 @@ class OpenH3IRCompile(io.ComfyNode):
 
         body, used_prefix = cls._compile_where_the_service_can_read(
             server=machine["server"], written=written, picture_notes=picture_notes, sizing=sizing,
-            transcripts=transcripts, override=machine["service_sees_comfy_at"],
-            timeout=float(machine["timeout_s"]),
+            transcripts=transcripts, timeout=float(machine["timeout_s"]),
             brief=dict(intent=intent, seconds=seconds, aspect=aspect, creativity=creativity,
                        effort=effort, seed=seed, silent=silent, shots=shots))
 
         prompt, width, height, length, ref_sizing = render_fields(body)
         warning = check_mode(declared, str(body.get("mode", "")))
 
-        checkpoint, alt_checkpoint = cls._pick(
-            machine["frames_model" if frames_job else "reference_model"],
-            "diffusion_models", "unet_gguf",
-            FRAMES_PATTERNS if frames_job else REFERENCE_PATTERNS,
-            what=("H3 first-and-last-frame checkpoint" if frames_job
-                  else "H3 reference checkpoint"),
-            looks_like=("minimax_h3_fl2va_....safetensors" if frames_job
-                        else "minimax_h3_ref2va_....safetensors"))
-        encoder, alt_encoder = cls._pick(
-            machine["text_encoder"], "text_encoders", "clip_gguf", ENCODER_PATTERNS,
-            what="H3 text encoder", looks_like="qwen3vl_..._minimax_h3_....safetensors")
-        video_vae, _ = cls._pick(machine["video_vae"], "vae", "", VIDEO_VAE_PATTERNS,
-                                 what="H3 picture VAE", looks_like="minimax_h3_video_vae_....")
-        audio_vae, _ = cls._pick(machine["audio_vae"], "vae", "", AUDIO_VAE_PATTERNS,
-                                 what="H3 sound VAE", looks_like="minimax_h3_audio_vae_....")
+        # Which file, decided on the Setup node and read straight off it. The socket the user filled
+        # decides which of the two checkpoints this job needs, which is the one question a graph can
+        # answer on its own.
+        checkpoint = machine["frames_model" if frames_job else "reference_model"]
+        encoder = machine["text_encoder"]
+        video_vae = machine["video_vae"]
+        audio_vae = machine["audio_vae"]
 
         model = cls._load_model(checkpoint, machine["weight_dtype"])
         clip = cls._load_clip(encoder)
@@ -347,16 +359,14 @@ class OpenH3IRCompile(io.ComfyNode):
         text += "\n" + line("vaes", f"{video_vae}  +  {audio_vae}")
         if used_prefix:
             text += "\n" + line("paths", f"the service reads ComfyUI's folder at {used_prefix}")
-        if alt_checkpoint:
-            text += "\n" + gguf_alternative_note(
-                "frame weights" if frames_job else "reference weights", alt_checkpoint)
-        if alt_encoder:
-            text += "\n" + gguf_alternative_note("text encoder", alt_encoder)
         if is_gguf(checkpoint) and machine["weight_dtype"] != "default":
             text += "\n" + precision_ignored_note()
-        if warning:
-            text += "\n" + line("WARNING", warning)
-            print("[OpenH3-IR] " + warning)
+        # Both warnings go to the report and to the console. Nothing obliges anyone to wire the
+        # report output to a node that shows it, and a warning nobody can see is not a warning.
+        for said in (warning, family_warning(checkpoint, frames_job=frames_job)):
+            if said:
+                text += "\n" + line("WARNING", said)
+                print("[OpenH3-IR] " + said)
         # A length outside the trained band is a choice, not a fault, so it stays in the `note`
         # register. It also goes to the console, because nothing obliges anyone to wire the report
         # output to a node that shows it.
@@ -418,7 +428,7 @@ class OpenH3IRCompile(io.ComfyNode):
 
     @classmethod
     def _compile_where_the_service_can_read(cls, *, server, written, picture_notes, sizing,
-                                           transcripts, override, timeout, brief):
+                                           transcripts, timeout, brief):
         r"""Compile, working the path mapping out by trying rather than by asking anyone to type it.
 
         The service opens attachments from disk, and it may see the disk differently than ComfyUI
@@ -429,7 +439,7 @@ class OpenH3IRCompile(io.ComfyNode):
         every run, and running out of candidates produces an error listing what was tried.
         """
         root = _comfy_root()
-        candidates = path_candidates(root, override)
+        candidates = path_candidates(root)
         last: ServiceError | None = None
         for prefix in candidates:
             assets = plan_assets(written, list((picture_notes or "").splitlines()), sizing, root,
@@ -447,27 +457,8 @@ class OpenH3IRCompile(io.ComfyNode):
             + "\n\nTried these spellings of ComfyUI's folder: " + ", ".join(repr(c) for c in
                                                                            candidates)
             + ". If the service runs on a different machine it cannot open these files at all, and "
-              "only text-only prompts will work. If it can reach them by some other path, add an "
-              "OpenH3-IR Setup node and put that path in its 'ComfyUI as the service sees it' "
-              "field.")
-
-    @classmethod
-    def _pick(cls, chosen: str, native_kind: str, gguf_kind: str,
-              patterns: tuple[tuple[str, ...], ...], *, what: str,
-              looks_like: str) -> tuple[str, str]:
-        """A model file, either the one that was picked or the one H3's own naming identifies.
-
-        Resolution happens per file and only for the files this job needs, so a machine with no
-        first-and-last-frame checkpoint can still run reference jobs. Nothing here falls back to the
-        first entry in a list: a plausible file from the wrong family loads, and then the render is
-        wrong for a reason nobody can see.
-        """
-        if chosen and chosen != AUTO:
-            return chosen, ""
-        native = _files(native_kind)
-        gguf = _files(gguf_kind) if gguf_kind else []
-        return resolve_model(merge_model_options(native, gguf), patterns, what=what,
-                             looks_like=looks_like)
+              "only text-only prompts will work. If it runs beside ComfyUI, it needs read access to "
+              "the folder above, under a spelling it can open.")
 
     @classmethod
     def _node(cls, class_name: str, missing: str):
@@ -556,10 +547,12 @@ class OpenH3IRCompile(io.ComfyNode):
 class OpenH3IRSetup(io.ComfyNode):
     """The machine, not the shot: where the service is and which files to load.
 
-    Optional by design. With no Setup node in the graph the five H3 files resolve by name on
-    whatever disk the workflow lands on, so a workflow shared with a stranger runs; a pinned
-    filename is a workflow that fails on someone else's install. That is also why every model combo
-    opens on `(found automatically)` rather than on a file.
+    A picker, and only a picker. Every combo lists the files this install actually has, in both
+    formats, and opens on one of them the way ComfyUI's own loaders do. Nothing is searched for by
+    name, no build is preferred, and there is no option meaning "work it out": which of two H3
+    checkpoints somebody meant is not written in either filename, so the answer belongs to the person
+    who put the files there. The pick is on the canvas where it can be read and changed, and the
+    compile node's report names every file it loaded.
     """
 
     @classmethod
@@ -569,9 +562,8 @@ class OpenH3IRSetup(io.ComfyNode):
             display_name="OpenH3-IR Setup",
             category="OpenH3-IR",
             search_aliases=["openh3", "h3", "ir", "service", "server", "gguf", "models"],
-            description=("Where the OpenH3-IR service is, and which H3 files to load. Optional: "
-                         "without it the service is expected on localhost and the files are found "
-                         "by name."),
+            description=("Where the OpenH3-IR service is, and which five H3 files to load. Every H3 "
+                         "graph needs one: the compile node loads what you pick here."),
             inputs=[
                 io.String.Input(
                     "server", display_name="service", default=DEFAULT_SERVER,
@@ -579,33 +571,30 @@ class OpenH3IRSetup(io.ComfyNode):
                             "h3ir serve. It can be another machine."),
                 io.Combo.Input(
                     "reference_model", display_name="reference weights",
-                    options=_model_options("diffusion_models", "unet_gguf"), default=AUTO,
-                    tooltip="H3's checkpoint for reference and text jobs. Found by name unless you "
-                            "pick one. Both formats are in this list: pick a .gguf and it loads "
-                            "through Unet Loader (GGUF), pick a .safetensors and it loads "
-                            "natively."),
+                    options=_model_options("diffusion_models", "unet_gguf"),
+                    tooltip="H3's checkpoint for reference and text jobs, named ref2va by MiniMax. "
+                            "Both formats are in this list: pick a .gguf and it loads through Unet "
+                            "Loader (GGUF), pick a .safetensors and it loads natively."),
                 io.Combo.Input(
                     "frames_model", display_name="frame weights",
-                    options=_model_options("diffusion_models", "unet_gguf"), default=AUTO,
-                    tooltip="H3's checkpoint for first and last frame jobs. The compile node "
-                            "chooses between this and the reference weights from which sockets you "
-                            "filled. Both formats are in this list: a .gguf loads through Unet "
-                            "Loader (GGUF)."),
+                    options=_model_options("diffusion_models", "unet_gguf"),
+                    tooltip="H3's checkpoint for first and last frame jobs, named fl2va by MiniMax. "
+                            "The compile node uses this one or the reference weights depending on "
+                            "which sockets you filled, and says which in its report. Both formats "
+                            "are in this list."),
                 io.Combo.Input(
                     "text_encoder", display_name="text encoder",
-                    options=_model_options("text_encoders", "clip_gguf"), default=AUTO,
+                    options=_model_options("text_encoders", "clip_gguf"),
                     tooltip="The Qwen3-VL encoder H3 was trained against. Both formats are in this "
                             "list, chosen independently of the checkpoint: a GGUF encoder works "
                             "with safetensors weights and the other way round."),
                 io.Combo.Input(
                     "video_vae", display_name="picture VAE", options=_model_options("vae"),
-                    default=AUTO,
                     tooltip="H3's picture VAE, used for the decode as well."),
                 io.Combo.Input(
                     "audio_vae", display_name="sound VAE", options=_model_options("vae"),
-                    default=AUTO,
-                    tooltip="H3's sound VAE. Needed even for a silent piece, because H3 writes "
-                            "picture and sound together."),
+                    tooltip="H3's sound VAE, a different file from the picture VAE. Needed even for "
+                            "a silent piece, because H3 writes picture and sound together."),
                 io.Combo.Input(
                     "weight_dtype", display_name="weight precision", options=list(WEIGHT_DTYPES),
                     default="default", advanced=True,
@@ -617,13 +606,6 @@ class OpenH3IRSetup(io.ComfyNode):
                     advanced=True,
                     tooltip="Writing a brief is one call to your language model, so this is as slow "
                             "as that model is."),
-                io.String.Input(
-                    "service_sees_comfy_at", display_name="ComfyUI as the service sees it",
-                    default="", advanced=True,
-                    tooltip="Only for a split install, for example ComfyUI on Windows with the "
-                            "service in WSL. ComfyUI's own folder is found automatically and the "
-                            "usual spellings are tried and checked. Fill this only if the node "
-                            "reports that none of them worked."),
             ],
             outputs=[Setup.Output(display_name="setup")],
         )
@@ -631,12 +613,11 @@ class OpenH3IRSetup(io.ComfyNode):
     @classmethod
     def execute(cls, server: str, reference_model: str, frames_model: str, text_encoder: str,
                 video_vae: str, audio_vae: str, weight_dtype: str = "default",
-                timeout_s: int = 600, service_sees_comfy_at: str = "") -> io.NodeOutput:
+                timeout_s: int = 600) -> io.NodeOutput:
         return io.NodeOutput(setup_bundle(
             server=server, reference_model=reference_model, frames_model=frames_model,
             text_encoder=text_encoder, video_vae=video_vae, audio_vae=audio_vae,
-            weight_dtype=weight_dtype, timeout_s=timeout_s,
-            service_sees_comfy_at=service_sees_comfy_at))
+            weight_dtype=weight_dtype, timeout_s=timeout_s))
 
 
 class OpenH3IRFootage(io.ComfyNode):

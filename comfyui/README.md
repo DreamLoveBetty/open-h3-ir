@@ -2,12 +2,12 @@
 
 Type one sentence. Get a MiniMax H3 job that is ready to sample.
 
-One node writes the brief H3 actually wants, picks the right weights for the job, loads the encoder
-and both VAEs, and hands out the model, the conditioning and the latent. There is no text box to
-paste into, no resolution picker, no frame-count arithmetic and no row of loaders.
+One node writes the brief H3 actually wants, loads the weights the job needs plus the encoder and both
+VAEs, and hands out the model, the conditioning and the latent. There is no text box to paste into, no
+resolution picker, no frame-count arithmetic and no row of loaders.
 
-At rest it is a sentence and five widgets. Everything that is not about this shot lives on a node you
-only add when you need it.
+Two nodes, then: a sentence and five widgets on one, the five H3 files on the other. Everything else
+is a node that stays out of the graph until you need it.
 
 ## What you need
 
@@ -38,23 +38,59 @@ another machine.
 
 ## The five nodes
 
-**H3 from a Sentence** is the one you always add. Search for `h3`, `minimax` or `ref2va` and it comes
-up.
+**H3 from a Sentence** is the one you always add, and **OpenH3-IR Setup** is the one it needs: it
+carries the service address and the five H3 files to load. Search for `h3`, `minimax` or `ref2va` and
+both come up.
 
-The other three are optional and none of them is needed for the node to work.
+The other two are optional and neither is needed for a render.
 
 | Node | When you add it | What it replaces |
 | --- | --- | --- |
-| **OpenH3-IR Setup** | the service is not on localhost, or you want to pick model files yourself | nine rows about your machine |
+| **OpenH3-IR Setup** | always, once per graph | the service address and five loader boxes |
 | **OpenH3-IR Footage** | you have a reference clip | one node per clip, up to H3's three |
 | **OpenH3-IR Sound** | you have reference music, an effect or a voice | seven rows most renders never use |
 
 **OpenH3-IR Show Text** puts a text output on the canvas. Wire `report` into it.
 
-With no Setup node in the graph the service is expected at `127.0.0.1:8420` and the five H3 files are
-found by name in your models folders. That is deliberate and it is the reason to leave it out: a
-workflow with no Setup node pins no filenames, so it runs on somebody else's disk. A pinned filename
-is a workflow that fails on someone else's install.
+## The five files are yours to pick
+
+The Setup node is a picker and nothing else. Each combo lists what your install actually has, in both
+formats, and the file you choose is the file that loads. Nothing here searches by name, prefers a
+build, or offers an option meaning "work it out".
+
+That is deliberate, and it is worth saying why, because the node used to do the opposite. A filename
+tells you what a file is called. It does not tell you which of two H3 checkpoints you meant, or which
+of three encoders you keep for H3, or which build you want today. Answering that question from the
+name means the render used a file the canvas never showed, and the one thing this pack will not do is
+choose for you quietly. So the pick is on the node where you can read it, changing it is one click,
+and the `report` output names every file that was loaded and the loader that read it.
+
+Two of those files are easy to swap, because H3 ships two checkpoints and the socket you filled
+decides which one this job needs: `ref2va` for reference and text jobs, `fl2va` for a first or last
+frame. Both load happily in either slot, so if the filename says one family and the graph is the
+other, the report says so in plain words and the render still happens:
+
+```
+weights        minimax_h3_fl2va_pruned_int8_convrot.safetensors  via UNETLoader
+WARNING        minimax_h3_fl2va_pruned_int8_convrot.safetensors names H3's fl2va family, and
+               this graph is a reference or text job, which runs on the ref2va checkpoint.
+               Check the reference weights field on the Setup node: it will render either way,
+               and it will be wrong in a way nothing on screen explains.
+```
+
+It is read from the filename and only where the filename decides the question. A file whose name says
+neither family, or both, gets no warning: a renamed file is not evidence of a mistake, and a warning
+that fires on no evidence is one people learn to ignore.
+
+Because nothing invents the five files, a graph with no Setup node has nothing to load and says so
+before it writes a file or calls anything:
+
+```
+Required input is missing: setup
+```
+
+That is ComfyUI refusing the graph at validation. Queue one with the socket connected to nothing and
+the node says it in its own words: add an OpenH3-IR Setup node, pick the five files, wire it in.
 
 ## The socket you plug into is the job
 
@@ -78,7 +114,7 @@ sockets describe, the node says so in its report and in the console.
 | picture 1 … picture 9 | a person, a car, a room. The next socket appears once this one is filled |
 | clip 1 … clip 3 | reference footage, from an OpenH3-IR Footage node |
 | sound | reference music, an effect or a voice, from an OpenH3-IR Sound node |
-| setup | the service address and the model files, from an OpenH3-IR Setup node |
+| setup | the service address and the five model files, from an OpenH3-IR Setup node. Required |
 
 The frame sockets and the picture sockets are different jobs, so filling both is refused before
 anything runs rather than after a model call. So is a sound on a frame-anchor job: H3's frame
@@ -176,8 +212,9 @@ The GGUF entries come only from ComfyUI-GGUF's own registered file lists, never 
 folder, so an install without the pack is never offered a file it cannot load.
 
 The checkpoint and the encoder are chosen independently, because they are separate files with separate
-loaders and every combination is legal. Auto-resolution prefers `.safetensors`, since it needs no
-third-party pack, and the report says when a GGUF build was there and not used.
+loaders and every combination is legal: a GGUF encoder works with safetensors weights and the other
+way round. Neither build is preferred over the other. Both sit in the same list and the one you pick
+is the one that loads.
 
 ## Attachments and the two views of one disk
 
@@ -190,11 +227,13 @@ sees those same bytes at `/mnt/c/ComfyUI/temp/ref.png`. So the node offers the p
 turn and the service confirms one by actually opening the file. The report says which one worked.
 
 That is a guess that gets checked every run, rather than a guess that gets trusted. If none of them
-work the error lists what was tried, and the Setup node's advanced field **ComfyUI as the service sees
-it** takes an answer for setups nobody could work out.
+work the error lists every spelling it tried.
 
-If the service is on a genuinely different machine it cannot open ComfyUI's files at all. Text-only
-prompts still work, attachments do not, and the node says so instead of failing obscurely.
+There is no box to type a path into, because there was nothing useful to type in it: every spelling
+that can work is a spelling of a folder ComfyUI already named. What is left when none of them opens is
+a service that cannot reach ComfyUI's disk at all. If it runs beside ComfyUI, give it read access to
+that folder. If it is on a genuinely different machine it cannot open those files under any spelling.
+Text-only prompts still work, attachments do not, and the node says so instead of failing obscurely.
 
 ## What it does not do
 
@@ -225,7 +264,8 @@ look alike are told apart rather than lumped together:
 | --- | --- |
 | no service running | the command that starts one, and the node to put another address on |
 | service up, your language model down | said as such, so you do not go looking at the graph |
-| the attachment could not be found | the paths it tried, and the field that takes an answer |
+| the attachment could not be found | every path it tried, and what to change where the service runs |
+| no Setup node, or one wired to nothing | which files to pick and which socket to wire them into |
 | the attachment opened and could not be used | the analyser's own words about the file, and no retry, because a different path would fail the same way |
 | the service host has no ffmpeg | named as the service machine's problem, not your graph's, and it does not blame your language model even though both are a 503 |
 | more references than H3 has sockets | which ceilings, and nothing dropped for you |
@@ -243,6 +283,10 @@ Re-queue with a different `brief seed`.
 
 `example/openh3ir_ref2va.api.json` is a graph that actually ran, byte for byte as submitted. It
 renders 8 seconds at 1344x768 from two reference plates and writes an mp4 with H3's own audio.
+
+Its Setup node holds the five filenames from the machine it ran on, which is what a picked file looks
+like when it is written down. Yours will be different, so change them: that is the one thing you have
+to do to this graph before it runs anywhere else.
 
 It is in ComfyUI's API format, which is what the `/prompt` endpoint accepts, because that is the format
 that actually ran. A canvas workflow assembled by hand and never executed can display settings it never

@@ -5,9 +5,9 @@ sentence a user reads rather than on an exception type. A node that raises the r
 useless message has failed at the only job that matters when something is wrong.
 
 Several of these are falsification controls: they fail if the code starts guessing. `render_fields`
-inventing a frame count, `resolve_model` falling back to the first file in a list, or a mapping key
-being renamed would each leave the node looking like it works while quietly producing the wrong
-render or breaking every saved workflow in the world.
+inventing a frame count, a model file being resolved from its name instead of being picked, or a
+mapping key being renamed would each leave the node looking like it works while quietly producing the
+wrong render or breaking every saved workflow in the world.
 """
 from __future__ import annotations
 
@@ -276,21 +276,97 @@ def test_an_unknown_clip_job_is_refused():
         C.footage_bundle("FRAMES", None, "make it better")
 
 
+def _setup(**over):
+    """A Setup bundle with the five picks a person made, since there is no longer any other kind."""
+    fields = dict(server=C.DEFAULT_SERVER,
+                  reference_model="minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                  frames_model="minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                  text_encoder="qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+                  video_vae="minimax_h3_video_vae_fp16.safetensors",
+                  audio_vae="minimax_h3_audio_vae_fp32.safetensors",
+                  weight_dtype="default", timeout_s=600)
+    return C.setup_bundle(**{**fields, **over})
+
+
 def test_a_service_address_with_no_scheme_is_refused_before_anything_is_requested():
     with pytest.raises(C.ServiceError) as e:
-        C.setup_bundle(server="127.0.0.1:8420", reference_model=C.AUTO, frames_model=C.AUTO,
-                       text_encoder=C.AUTO, video_vae=C.AUTO, audio_vae=C.AUTO,
-                       weight_dtype="default", timeout_s=600, service_sees_comfy_at="")
+        _setup(server="127.0.0.1:8420")
     assert "no scheme" in str(e.value) and C.DEFAULT_SERVER in str(e.value)
 
 
-def test_no_setup_node_means_nothing_is_pinned():
-    """A workflow with no Setup node has to run on a stranger's disk, which is only true if every
-    model is left to auto-resolution rather than to a filename this machine happened to have."""
-    d = C.setup_defaults()
-    assert d["server"] == C.DEFAULT_SERVER
-    for model in ("reference_model", "frames_model", "text_encoder", "video_vae", "audio_vae"):
-        assert d[model] == C.AUTO
+def test_the_bundle_carries_the_five_picks_and_invents_nothing():
+    """THE control on the picker. Every file in the bundle is the file the user chose, unchanged and
+    unsubstituted, and there is no field left that could mean anything else."""
+    d = _setup()
+    assert d["reference_model"] == "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+    assert d["frames_model"] == "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    assert d["text_encoder"] == "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    assert d["video_vae"] == "minimax_h3_video_vae_fp16.safetensors"
+    assert d["audio_vae"] == "minimax_h3_audio_vae_fp32.safetensors"
+    assert set(d) == {"server", "reference_model", "frames_model", "text_encoder", "video_vae",
+                      "audio_vae", "weight_dtype", "timeout_s"}
+
+
+def test_a_pick_this_pack_would_once_have_overruled_survives_untouched():
+    """The old resolver preferred an int8 build over anything else with the same family word in it,
+    which on a Blackwell card is the slower file and was nobody's decision. A pick is a pick."""
+    d = _setup(reference_model="MiniMax_H3_Ref2VA_pruned_nvfp4.safetensors")
+    assert d["reference_model"] == "MiniMax_H3_Ref2VA_pruned_nvfp4.safetensors"
+
+
+def test_nothing_in_the_pack_searches_for_a_model_file_by_name():
+    """The falsification control for the whole change. Auto-resolution answered a question the node
+    could not know the answer to ("which of these did you mean?"), so it is gone rather than
+    improved, and this fails if it or its sentinel comes back under any name."""
+    import pathlib
+
+    assert not hasattr(C, "resolve_model") and not hasattr(C, "setup_defaults")
+    assert not hasattr(C, "AUTO"), "a sentinel meaning 'work it out' is the same guess with a label"
+    # Read beside the module under test rather than beside the runner, or a cross-tree pytest run
+    # asserts about a copy of the pack nobody edited.
+    pack = pathlib.Path(C.__file__).parent
+    source = "\n".join((pack / name).read_text(encoding="utf-8")
+                       for name in ("nodes.py", "h3ir_client.py"))
+    assert "found automatically" not in source
+    for gone in ("REFERENCE_PATTERNS", "FRAMES_PATTERNS", "ENCODER_PATTERNS", "VIDEO_VAE_PATTERNS",
+                 "AUDIO_VAE_PATTERNS"):
+        assert gone not in source, f"{gone} is a table for guessing which file was meant"
+
+
+# ----------------------------------------------- picking the wrong slot is worth saying out loud
+
+def test_a_reference_checkpoint_in_the_frame_slot_is_warned_about():
+    """Both files load. A ref2va checkpoint on a frame job renders something plausible that ignores
+    the frames, so the filename's own family word is read back to the user."""
+    said = C.family_warning("minimax_h3_ref2va_pruned_int8_convrot.safetensors", frames_job=True)
+    assert "ref2va" in said and "fl2va" in said, "name what was picked and what the job wants"
+    assert "frame weights" in said, "name the field on the node that fixes it"
+    assert "render either way" in said, "it is a warning, not a refusal"
+
+
+def test_a_frame_checkpoint_in_the_reference_slot_is_warned_about():
+    said = C.family_warning("minimax_h3_fl2va_pruned_int8_convrot.safetensors", frames_job=False)
+    assert "fl2va" in said and "reference weights" in said
+
+
+def test_the_right_checkpoint_says_nothing_at_all():
+    assert C.family_warning("minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                            frames_job=False) == ""
+    assert C.family_warning("MiniMax_H3_FL2VA_Q4_K_M.gguf", frames_job=True) == "", \
+        "case is not a family, and the format is not either"
+
+
+def test_a_filename_that_names_no_family_is_not_guessed_about():
+    """THE control on the warning. A renamed or third-party file is not evidence of a mistake, and a
+    warning that fires on no evidence teaches people to ignore warnings."""
+    for name in ("h3_weights.safetensors", "", "my_favourite_checkpoint.gguf"):
+        assert C.family_warning(name, frames_job=True) == ""
+        assert C.family_warning(name, frames_job=False) == ""
+
+
+def test_a_filename_naming_both_families_is_not_read_either():
+    assert C.family_warning("minimax_h3_ref2va_and_fl2va_merged.safetensors",
+                            frames_job=True) == ""
 
 
 # --------------------------------------------------------------------------- the file is the format
@@ -323,59 +399,16 @@ def test_a_gguf_checkpoint_and_a_safetensors_encoder_are_both_legal():
     assert C.is_gguf("weights.gguf") and not C.is_gguf("encoder.safetensors")
 
 
-# ------------------------------------------------- finding H3's files: controls against guessing
-
-def test_the_family_comes_before_a_loose_match():
-    """"video" alone matched an LTX VAE on a box that also had H3's. A plausible file from the wrong
-    family loads, and then the render is wrong for a reason nobody can see."""
-    got, _alt = C.resolve_model(
-        ["LTX23_video_vae_bf16.safetensors", "minimax_h3_video_vae_fp16.safetensors"],
-        C.VIDEO_VAE_PATTERNS, what="H3 picture VAE", looks_like="minimax_h3_video_vae")
-    assert got == "minimax_h3_video_vae_fp16.safetensors"
-
-
-def test_nothing_matching_raises_instead_of_taking_the_first_file_in_the_list():
-    """THE control. `options[0]` was the old fallback, and on a machine with no H3 weights it
-    pre-selected something from another model family that loads happily."""
-    with pytest.raises(C.ServiceError) as e:
-        C.resolve_model(["Krea2Turbo.safetensors", "ideogram4_fp8_scaled.safetensors"],
-                        C.REFERENCE_PATTERNS, what="H3 reference checkpoint",
-                        looks_like="minimax_h3_ref2va_....safetensors")
-    msg = str(e.value)
-    assert "minimax_h3_ref2va" in msg, "say what it was looking for"
-    assert "OpenH3-IR Setup" in msg, "name the node that fixes it"
-    assert "Krea2Turbo.safetensors" in msg, "say what it did find, or the message is unfalsifiable"
-
-
-def test_an_empty_install_says_the_list_was_empty_rather_than_listing_nothing():
-    with pytest.raises(C.ServiceError) as e:
-        C.resolve_model([], C.ENCODER_PATTERNS, what="H3 text encoder", looks_like="qwen3vl")
-    assert "list was empty" in str(e.value)
-
-
-def test_safetensors_wins_and_the_gguf_build_that_was_passed_over_is_named():
-    """Auto-resolution prefers the native path because it needs no third-party pack, and then says
-    the other build was there. The user learns the choice exists at the only moment it matters, and
-    no control had to exist for them to learn it."""
-    got, alt = C.resolve_model(
-        ["minimax_h3_ref2va_pruned_int8_convrot.safetensors", "minimax_h3_ref2va_Q4_K_M.gguf"],
-        C.REFERENCE_PATTERNS, what="H3 reference checkpoint", looks_like="x")
-    assert got == "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
-    assert alt == "minimax_h3_ref2va_Q4_K_M.gguf", \
-        "a quantised build is named for its quantisation, so it never matches the precise pattern " \
-        "the safetensors build matched; searching them together would hide it"
-
-
-def test_a_gguf_build_is_used_when_it_is_the_only_one_installed():
-    got, alt = C.resolve_model(["minimax_h3_ref2va_Q4_K_M.gguf"], C.REFERENCE_PATTERNS,
-                               what="x", looks_like="y")
-    assert got == "minimax_h3_ref2va_Q4_K_M.gguf"
-    assert alt == "", "there is no alternative to report when it is the one that was taken"
-
-
-def test_the_alternative_note_says_which_file_and_where_to_pick_it():
-    note = C.gguf_alternative_note("reference weights", "minimax_h3_ref2va_Q4_K_M.gguf")
-    assert "minimax_h3_ref2va_Q4_K_M.gguf" in note and "OpenH3-IR Setup" in note
+def test_both_builds_of_one_file_are_offered_and_neither_is_preferred():
+    """The list is what the user chooses from, in one order, with no build promoted over another. The
+    old resolver preferred safetensors and reported the GGUF build as an alternative it passed over;
+    there is nothing to pass over when the user is the one picking."""
+    got = C.merge_model_options(["minimax_h3_ref2va_pruned_int8_convrot.safetensors"],
+                                ["minimax_h3_ref2va_Q4_K_M.gguf"])
+    assert got == ["minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                   "minimax_h3_ref2va_Q4_K_M.gguf"]
+    assert not hasattr(C, "gguf_alternative_note"), \
+        "a note about the build that was passed over described a choice nobody makes any more"
 
 
 def test_the_ignored_precision_note_says_why_it_was_ignored():
@@ -450,17 +483,21 @@ def test_a_timeout_points_at_the_node_that_holds_the_knob(monkeypatch):
     assert "OpenH3-IR Setup" in str(e.value) and "timeout" in str(e.value)
 
 
-def test_an_unreadable_reference_names_the_field_that_fixes_it(monkeypatch):
-    """The failure this project will actually generate: ComfyUI on Windows, service in WSL."""
+def test_an_unreadable_reference_says_what_is_wrong_and_names_no_field_that_is_gone(monkeypatch):
+    """The failure this project will actually generate: ComfyUI on Windows, service in WSL. It used to
+    end by naming a widget to fill in, and that widget no longer exists, so the instruction is now
+    about the two things a person can actually change."""
     _fake(monkeypatch, (422, {"detail": {"code": "asset-missing",
                                         "message": "no such file: C:\\x\\ref.png"}}))
     with pytest.raises(C.ServiceError) as e:
         C.compile_brief("http://x", {"intent": "a"})
     msg = str(e.value)
-    assert "ComfyUI as the service sees it" in msg, \
-        "naming the widget that fixes it is the whole point of the message"
-    assert "OpenH3-IR Setup" in msg, "and naming the node it lives on, since it is not on the canvas"
+    assert "no such file: C:\\x\\ref.png" in msg, "pass the service's own words through"
+    assert "different paths" in msg, "say what the failure is"
     assert "another machine" in msg, "the remote case has no fix and must be stated"
+    assert "read access" in msg, "and the local case does, so say it"
+    assert "as the service sees it" not in msg, \
+        "THE control: an instruction to fill in a field nobody can find is worse than no instruction"
 
 
 def test_a_contradictory_request_lists_the_rules_that_fired(monkeypatch):
@@ -792,9 +829,13 @@ def test_a_posix_root_offers_only_itself():
     assert C.path_candidates("/opt/ComfyUI") == ["/opt/ComfyUI"]
 
 
-def test_an_override_replaces_the_guesses_rather_than_joining_them():
-    assert C.path_candidates(r"C:\X", "/srv/shared") == ["/srv/shared"]
-    assert C.path_candidates(r"C:\X", "   ") != ["   "], "blank is not an override"
+def test_there_is_nothing_to_type_and_no_second_argument_to_type_it_into():
+    """The hand-typed override is gone with the field it belonged to. Every spelling that can work is
+    a spelling of a folder ComfyUI already named, and the one case a box could not fix is a service on
+    another machine, which cannot open these files under any spelling at all."""
+    import inspect
+
+    assert list(inspect.signature(C.path_candidates).parameters) == ["comfy_root"]
 
 
 def test_only_an_unfindable_attachment_is_worth_another_spelling():
