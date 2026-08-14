@@ -338,6 +338,39 @@ def base_mode_label_facts(subjects: list[SubjectPlan], labels: tuple[str, ...],
         "sampling step.")
 
 
+def storyboard_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
+    """What a declared storyboard role settles, stated as a fact in the ask.
+
+    The same disease audio_task_facts and video_task_facts cure, found the same way: a picture
+    attached with the declared role `storyboard` came back defined as `<Subject 2> ... the modern
+    showroom environment in <Picture 2>`, shipped ready, at the first seed tried and again
+    service-direct. `build_subjects` refuses to make a subject of a storyboard, so the label had no
+    definition line, fell into the "attached and NOT yet described" block, and that block's
+    instruction is to define it. Nothing said what it was, so the writer read the pixels and
+    answered: scenery.
+
+    ref-en.txt 2.2 gives the construct: a standalone `<Picture N>` line stating which shots it maps
+    to and what planning information it provides. The deterministic draft has written that form all
+    along (render.py); this states it where the shipped document is actually written.
+    """
+    boards = [label for label, role in picture_roles if role == "storyboard"]
+    if not boards:
+        return ""
+    lines = []
+    for label in boards:
+        lines.append(
+            f"{label} is a STORYBOARD, declared by the caller: a shot-planning sketch. It never "
+            f"appears in the target video. Give {label} its own standalone definition line in "
+            "subject_definitions stating which shots it maps to and what planning information it "
+            "provides (viewpoint, subject placement, shot order), in the form '<Picture N> is a "
+            "storyboard reference for [Shot 1] and [Shot 2], defining ...'. Never define a "
+            f"<Subject N> from {label}, never describe its content as part of any scene, and in "
+            f"retention_analysis give it one line as '{label} (storyboard reference): "
+            "weak_reference - the viewpoint, subject placement and shot order are followed, while "
+            "the drawing itself is not reproduced.'")
+    return "\n".join(lines)
+
+
 def reference_picture_facts() -> str:
     """The one thing a full-reference brief must not say about its pictures.
 
@@ -504,6 +537,9 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # bind a label it was not told exists. A video-plus-audio brief came back with the audio
         # referenced nowhere, which is an asset the app would wire in against text that never
         # mentions it.
+        board_facts = storyboard_facts(picture_roles)
+        if board_facts:
+            label_facts += ("\n" if label_facts else "") + board_facts
         unnamed = [lb for lb in labels if lb not in label_facts]
         if unnamed:
             label_facts += ("\n" if label_facts else "") + (

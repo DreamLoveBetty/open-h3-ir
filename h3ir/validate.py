@@ -820,6 +820,25 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             add("R8-edit-source-marker", "ERROR",
                 f"{label} is an edit source; {got!r} is not a coherent claim about it")
 
+    # A storyboard is a plan, not content. The wiring declares the role; a <Subject N> sourced from
+    # that label asserts the drawing's content appears in the video, which contradicts the one thing
+    # the role means. Decidable from the wiring plus the document's own claim, and the repair is
+    # unambiguous (the standalone form ref-en.txt 2.2 mandates), so it is an ERROR and feeds the
+    # correction loop. Found shipped: a declared storyboard defined as "the modern showroom
+    # environment", ready, through the node and service-direct alike.
+    for label, role, _marker in ctx.declared_roles:
+        if role != "storyboard" or not label.startswith("<Picture"):
+            continue
+        for line_ in defs.splitlines():
+            if re.match(r"\s*<Subject \d+>", line_) and label in line_:
+                add("R28-storyboard-cited-as-content", "ERROR",
+                    f"{label} is declared a storyboard, a shot-planning sketch that never appears "
+                    f"in the target video, and this defines a subject from it: {line_.strip()[:120]!r}. "
+                    "Remove it from every <Subject N> definition and give it its own standalone "
+                    f"line instead: '{label} is a storyboard reference for [Shot ...], defining "
+                    "their viewpoint, subject placement, and shot order.'")
+                break
+
     # An invented PROVENANCE claim. The first video+audio brief anyone compiled wrote "<Audio 1> is the
     # ambient sound track from <Video 1>" for an audio asset wired standalone (`ref_audio_1`), not as
     # that video's soundtrack (`ref_video_audio_1`). The model cannot know the wiring and guessed from
