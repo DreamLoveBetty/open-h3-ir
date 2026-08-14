@@ -33,6 +33,8 @@ const ROLE_TOKEN = {
 };
 const WORDS = Object.fromEntries(Object.entries(ROLE_TOKEN).map(([w, t]) => [t, w]));
 const SOUNDTRACKS = ["off", "paired", "alone"];
+const NODE_W = 380;
+const PANEL_H = 460;
 
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -212,7 +214,7 @@ class Tray {
 
 const CSS = `
 .oh3-tray{display:flex;flex-direction:column;gap:6px;padding:6px;font-family:system-ui,sans-serif;
-  font-size:11px;color:#dde2ea;height:100%;overflow-y:auto;box-sizing:border-box;}
+  font-size:11px;color:#dde2ea;height:460px;min-height:460px;overflow-y:auto;box-sizing:border-box;}
 .oh3-drop{border:1px dashed #4a5262;border-radius:6px;padding:10px;text-align:center;color:#8b93a5;
   cursor:pointer;}
 .oh3-drop.oh3-over{border-color:#e8873a;color:#e8873a;}
@@ -255,13 +257,28 @@ app.registerExtension({
       state.computeSize = () => [0, -4];
       const tray = new Tray(this, state);
       this._oh3Tray = tray;
-      this.addDOMWidget("oh3_panel", "div", tray.root, { serialize: false });
-      const min = 420;
-      this.setSize([Math.max(this.size?.[0] || 0, 360), Math.max(this.size?.[1] || 0, min)]);
+      const panel = this.addDOMWidget("oh3_panel", "div", tray.root, { serialize: false });
+      // The canvas reserves room only for what computeSize declares, and a DOM widget declares
+      // nothing by default: without these two lines the panel gets zero rows and its content piles
+      // over the node's other widgets. The recipe follows the reference loader verbatim.
+      panel.computedHeight = PANEL_H;
+      panel.computeSize = () => [NODE_W, PANEL_H];
+      const min = this.computeSize?.();
+      this.size[0] = Math.max(NODE_W, this.size?.[0] || 0);
+      this.size[1] = Math.max(min?.[1] || 0, PANEL_H + 130, this.size?.[1] || 0);
       // A workflow load writes widget values after onNodeCreated, so re-render when it lands.
       requestAnimationFrame(() => tray.render());
       return r;
     };
+    const onResize = nodeType.prototype.onResize;
+    nodeType.prototype.onResize = function (size) {
+      try {
+        size[0] = Math.max(NODE_W, size[0]);
+        size[1] = Math.max(PANEL_H + 130, size[1]);
+      } catch (e) { /* leave the size alone */ }
+      return onResize?.apply(this, arguments);
+    };
+
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       const r = onConfigure?.apply(this, arguments);
