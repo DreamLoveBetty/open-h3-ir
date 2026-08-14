@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .grid import Target, rows_per_latent_frame, video_latent_t
-from .models import (AssetCard, AssetKind, Brief, CameraMove, DialogueLine, ManifestEntry, Mode,
-                     Plan, Role, ShotPlan, SpeakerPlan, SubjectPlan)
+from .models import (AUDIO_REFERENCE_ROLES, AssetCard, AssetKind, Brief, CameraMove, DialogueLine,
+                     ManifestEntry, Mode, Plan, Role, ShotPlan, SpeakerPlan, SubjectPlan)
 
 # Words of speech per second at a natural delivery (~155 wpm). Used to stop the planner
 # putting more dialogue into a shot than can physically be spoken inside it.
@@ -187,6 +187,11 @@ _AUDIO_MARKER = {
     Role.BGM: "partially_copy",
     Role.SFX: "reference",
     Role.VOICE_TIMBRE: "reference",
+    # The two roles added for ref-en.txt 2.4's other two reference uses. Same side of the same
+    # sentence: 4.2 defines `reference` as "only timbre, rhythm, music style, dialogue content, or
+    # sound texture is referenced", which names a music style and a rhythm outright.
+    Role.MUSIC_STYLE: "reference",
+    Role.BEAT_REFERENCE: "reference",
 }
 
 
@@ -453,12 +458,12 @@ def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
         # is reused in full or in part" and `audio reference` is "the signal is not copied
         # directly; only its music style, timbre, dialogue or lyric content, sound-effect texture,
         # beat, or continuity is referenced". `bgm` copies part of the signal, so it is reuse; a
-        # timbre reference and a sound-effect texture are named in that second sentence, so they
-        # are not. A summary claiming reuse over a retention line saying `reference` is the
-        # document contradicting itself, and no rule catches that shape.
+        # timbre reference, a sound-effect texture, a music style and a beat are all named in that
+        # second sentence, so they are not. A summary claiming reuse over a retention line saying
+        # `reference` is the document contradicting itself, and M15 now catches that shape.
         if any(m.role is Role.BGM for m in manifest):
             types.append("audio reuse")
-        if any(m.role in (Role.VOICE_TIMBRE, Role.SFX) for m in manifest):
+        if any(m.role in AUDIO_REFERENCE_ROLES for m in manifest):
             types.append("audio reference")
     out: list[str] = []
     for t in types:
@@ -552,6 +557,14 @@ def audio_relations(plan: Plan) -> list[tuple[str, str, str]]:
                     "without copying the original signal")
         elif m.role is Role.BGM:
             note = f"the background music from {m.label} is reused beneath the new audio"
+        elif m.role is Role.MUSIC_STYLE:
+            # Says what is taken AND that the signal is not, in one sentence, because a note that
+            # only names the property leaves the copy question open for the next reader.
+            note = (f"the target video's score follows {m.label}'s instrumentation and tempo and "
+                    "is newly generated, without copying the original signal")
+        elif m.role is Role.BEAT_REFERENCE:
+            note = (f"{m.label}'s beat sets the timing of the cuts and the action, without copying "
+                    "the original signal")
         else:
             note = f"{m.label}'s sound texture is referenced"
         out.append((m.label, marker, note))

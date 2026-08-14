@@ -438,10 +438,10 @@ and A″ then consume it. Everything after C is deterministic given those three.
 
 **A — Intake.** Normalises: mode from the wiring (not from the user), `requested_seconds` → frame
 grid, canvas, per-asset role (`frame_anchor | subject | environment | style | storyboard |
-edit_source | continuation_source | voice_timbre | bgm | sfx | transcript_source`), dialogue lines
-with explicit language tags, on-screen text strings, hard constraints. Roles are the input from
-which task types and retention markers are *derived*, so they must be explicit, not inferred from
-prose.
+edit_source | continuation_source | voice_timbre | bgm | music_style | beat_reference | sfx |
+transcript_source`), dialogue lines with explicit language tags, on-screen text strings, hard
+constraints. Roles are the input from which task types and retention markers are *derived*, so they
+must be explicit, not inferred from prose.
 
 **B — Analyse (the expensive, reusable stage).** One `AssetCard` per asset, cached on content hash.
 This is where the hosted stage's apparent magic actually lives. Its verbosity is not a house style —

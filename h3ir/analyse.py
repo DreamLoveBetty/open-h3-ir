@@ -205,6 +205,8 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
     role_summary = {
         Role.VOICE_TIMBRE: "a spoken vocal reference supplying voice timbre and delivery",
         Role.BGM: "a background music track",
+        Role.MUSIC_STYLE: "a music-style reference supplying instrumentation and tempo",
+        Role.BEAT_REFERENCE: "a rhythmic reference supplying beat and tempo",
         Role.SFX: "a sound-effect reference",
     }.get(ref.role, "an audio reference")
     summary = role_summary

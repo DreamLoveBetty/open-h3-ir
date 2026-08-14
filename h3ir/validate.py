@@ -18,12 +18,29 @@ from typing import Iterable
 from .creativity import (COMMITS_CAMERA, MAXIMAL_CAMERA, ONSCREEN_TEXT, SCORE, SPEECH,
                          Scope)
 from .grid import INSTRUCTION_OPENINGS, instruction_line_for, s_ss_text
-from .models import (AMPLITUDES, AUDIO_MARKERS, CAMERA_TYPES, Finding, SPEEDS, TASK_TYPES,
-                     VISUAL_MARKERS)
+from .models import (AMPLITUDES, AUDIO_MARKERS, AUDIO_REFERENCE_ROLE_VALUES, CAMERA_TYPES, Finding,
+                     Role, SPEEDS, TASK_TYPES, VISUAL_MARKERS)
 
 REF_SECTIONS = ["subject_definitions", "summary", "retention_analysis",
                 "detailed_description", "overall_soundscape", "non_diegetic_music"]
 BASE_SECTIONS = ["integrated_multimodal_description", "overall_soundscape", "non_diegetic_music"]
+
+# Role values that are internal wiring names rather than English, read by P9. Derived from the enum
+# rather than typed out, so a role added later is covered without anyone remembering to. The
+# underscore filter is what keeps `subject`, `style` and `environment` -- ordinary words a brief needs
+# -- out of it.
+ROLE_TOKENS_NEVER_IN_PROSE = tuple(r.value for r in Role if "_" in r.value)
+# What to call each of them instead, in the wording the spec and the renderer already use, so the
+# finding hands over the replacement rather than only naming the offence.
+ROLE_IN_WORDS = {
+    "frame_anchor_first": "the first frame of the target video",
+    "frame_anchor_last": "the last frame of the target video",
+    "edit_source": "the source video for the target video edit",
+    "continuation_source": "the source video the target video continues from",
+    "voice_timbre": "the voice-timbre reference",
+    "music_style": "a music-style reference",
+    "beat_reference": "a beat reference",
+}
 
 # The mechanical constraint is frame ALIGNMENT (n % 17 == 5), not membership in the node's stated
 # trained band. The band is a note about where the model was trained, and the owner renders past
@@ -318,6 +335,12 @@ def _shot_signature(body: str) -> tuple[str, str, str]:
 
 def _labels_cited(body: str) -> set[str]:
     return set(re.findall(r"<(?:Subject|Picture|Video|Audio)\s+\d+>", body))
+
+
+# Prepositions that make the label an OBJECT rather than the subject of what follows it, so
+# "the tempo of <Audio 1> is reused" is not a claim that the signal is. Read by R27 only.
+_NOT_THE_SUBJECT = ("of", "from", "in", "into", "on", "onto", "with", "to", "by", "like", "as",
+                    "than", "over", "under", "beneath", "beside", "within", "using")
 
 
 def _strip_verbatim(s: str) -> str:
@@ -632,6 +655,35 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                         "sound like in overall_soundscape rather than claiming the original is "
                         + ("reused." if claimed == "audio reuse" else "referenced."))
 
+            # `audio reuse` claimed when every attached audio is wired as a reference. M7 catches
+            # the claim with NO audio at all and had nothing to say about the case that actually
+            # happens: measured at five seeds each, `S6-beat-rhythm` shipped "[reference generation +
+            # audio reuse]" 5 of 5 and `X9`, whose request states outright that nothing from the
+            # recording is used, 5 of 5, both with the track attached as `bgm` because no role
+            # expressed "the beat is referenced and the signal is not copied". Now that two roles do,
+            # the prefix is decidable from the wiring: ref-en.txt 3 defines `audio reuse` as "the
+            # same audio signal is reused in full or in part", and a reference-only role is the
+            # caller's statement that none is.
+            #
+            # ERROR, and safe there because the wiring settles it and the repair is unambiguous:
+            # `audio reference` is the type these roles derive, and it is already in the prefix
+            # whenever the derivation reached the writer. Fires only when EVERY attached audio is
+            # reference-only -- one `bgm` alongside makes reuse correct and this abstains.
+            #
+            # `used["Audio"]` keeps it off M7's ground: with the label attached but cited nowhere,
+            # M7 already fires and the two messages would contradict each other.
+            audio_roles = [r for lb, r, _ in ctx.declared_roles if lb.startswith("<Audio")]
+            if (audio_roles and "audio reuse" in parts and used["Audio"]
+                    and all(r in AUDIO_REFERENCE_ROLE_VALUES for r in audio_roles)):
+                add("M15-audio-reuse-without-a-copy-role", "ERROR",
+                    "the summary claims 'audio reuse' and every attached audio is wired with a role "
+                    "that references a property rather than copying the signal ("
+                    + ", ".join(sorted(set(audio_roles)))
+                    + "). ref-en.txt 3: 'audio reuse' is 'the same audio signal is reused in full "
+                      "or in part', and the caller has declared that none of it is. Replace it with "
+                      "'audio reference' in the prefix and say what is taken from the recording — "
+                      "its style, its beat, its timbre or its texture — rather than the signal")
+
     # ---------------------------------------------------------------- retention
     if is_ref:
         analysed = set()
@@ -802,10 +854,12 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
     # is not copied directly; only timbre, rhythm, music style, dialogue content, or sound texture", and
     # `fully_copy` is the complete final track.
     #
-    # Narrow on purpose: only the two roles whose definition IS "a property is referenced, not the
+    # Narrow on purpose: only the roles whose definition IS "a property is referenced, not the
     # signal". `bgm` and paired soundtracks legitimately copy, and nothing here legislates them.
+    # `music_style` and `beat_reference` join the set for the reason they exist: both derive
+    # `reference` from the same sentence of 4.2 that puts a timbre and a sound texture there.
     for label, role, _marker in ctx.declared_roles:
-        if role not in ("voice_timbre", "sfx"):
+        if role not in AUDIO_REFERENCE_ROLE_VALUES:
             continue
         entry = re.search(rf"^\s*{re.escape(label)}\s*(\([^)]*\))?\s*:\s*(\w+)", ret, re.M)
         if entry and entry.group(2) in ("fully_copy", "partially_copy"):
@@ -813,6 +867,44 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                 f"{label} is wired as {role}, which references a property rather than copying the "
                 f"signal, and the brief claims {entry.group(2)!r} — that marker says the clip becomes "
                 "the target's audio. Use 'reference', or 'weak_reference' for broad similarity only")
+
+        # The same claim made in PROSE, which the marker rule cannot see. Measured on the recorded
+        # `S6-beat-rhythm` runs: with the marker corrected the sentence survives, and one seed put it
+        # in a section R22 does not read at all -- `non_diegetic_music: <Audio 1> is directly reused
+        # as the complete audience-only score`. A document can satisfy every marker rule and still
+        # promise the caller's own recording will be played.
+        #
+        # Anchored on the LABEL being the SUBJECT of the copy verb, which is what keeps the rule off
+        # legitimate prose. Two shapes it must not fire on, and the second one was a live false
+        # positive caught by its own test before this shipped:
+        #   "<Audio 1>'s tempo is reused in the new score"  -- the possessive puts a noun between the
+        #      label and the verb, so the pattern's required adjacency fails.
+        #   "the tempo of <Audio 1> is reused ..."          -- adjacent, and the subject is the tempo.
+        #      A property being reused is exactly what the role licenses, so the preposition in front
+        #      of the label disqualifies the match.
+        # No negated form matches either: "is not copied" puts a word where none is allowed.
+        #
+        # The cost of that second guard, stated rather than hidden: "the whole of <Audio 1> is
+        # reused" is a real copy claim this rule misses. A miss is the right way to be wrong here --
+        # the marker rule above and the prefix rule in the summary block both still read it, and a
+        # false ERROR costs the caller a correction round on a correct sentence.
+        subject = "".join(rf"(?<!\b{p} )" for p in _NOT_THE_SUBJECT) + re.escape(label)
+        for pat in (subject + r"\s+is\s+(?:being\s+)?(?:directly\s+|fully\s+|simply\s+)?"
+                    r"(?:reused|copied|played)\b",
+                    subject + r"\s+(?:is|serves)\s+(?:used\s+)?as\s+the\s+"
+                    r"(?:target\s+video's\s+)?(?:complete|entire|whole|final)\b"):
+            hit = re.search(pat, scrubbed_all, re.I)
+            if hit:
+                add("R27-reference-audio-claimed-as-copied", "ERROR",
+                    f"{label} is wired as {role}, which references a property and does not copy the "
+                    f"signal, and the brief says {hit.group(0)!r}. Nothing of that recording is "
+                    f"audible in the target video, so no section may say it is reused, copied or "
+                    f"played. State what IS taken from it — its "
+                    + {"voice_timbre": "voice timbre and delivery", "sfx": "sound texture",
+                       "music_style": "musical style, instrumentation and tempo",
+                       "beat_reference": "beat and tempo"}.get(role, "referenced property")
+                    + " — and that the target video's own audio is generated")
+                break
 
     # An <Audio N> asserted to BE a frame of the video. Measured on 4 of 50 recorded audio briefs,
     # all of them audio-only: "anchored by <Audio 1> as the opening frame", "<Audio 1>, which serves
@@ -1132,6 +1224,28 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                 + " (a cross-dissolve, fade or wipe only if the request asked for one). A synonym "
                   "is a near miss in the same way a wrong label is: "
                 + f"{opening[:60]!r}")
+            break
+
+    # A wiring token written as prose. Measured on the first live run of the per-label audio fact:
+    # told the declared role was `beat_reference`, the writer put "<Audio 1> is the beat_reference for
+    # the target video" straight into `subject_definitions`. Role names are this layer's internal
+    # vocabulary and H3 was trained on none of them; ref-en.txt 2.4's own line is "<Audio 1> is the
+    # voice-timbre reference for <Subject 1> (S1)", hyphenated English.
+    #
+    # Only the tokens carrying an underscore, which is what makes the rule free of false positives:
+    # `subject`, `style` and `environment` are ordinary words that belong in a brief, while no
+    # snake_case token is ever spec prose. The retention markers are deliberately NOT in the set --
+    # `fully_copy` is snake_case and legal, being the spec's own marker vocabulary.
+    #
+    # WARN, because the fix is in the ask rather than in a correction round: the sentence still says
+    # what the audio is, and spending a fix-loop round on a hyphen risks a fallback over cosmetics.
+    # It is here so that a regression in the ask is visible instead of silent.
+    for token in ROLE_TOKENS_NEVER_IN_PROSE:
+        if re.search(rf"\b{re.escape(token)}\b", scrubbed_all):
+            add("P9-role-token-in-prose", "WARN",
+                f"the brief contains the wiring token {token!r}. Role names are internal to the "
+                "compiler and H3 was trained on none of them; write it in words, the way the spec "
+                f"does: {ROLE_IN_WORDS.get(token, token.replace('_', ' '))}")
             break
 
     # Three defects the write-first path produced that no rule caught. All three are the same

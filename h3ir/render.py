@@ -94,6 +94,15 @@ def render_subject_definitions(plan: Plan) -> str:
             paired = f" of {m.paired_with}" if m.paired_with else ""
             lines.append(f"{m.label} is the synchronized audio track{paired}, "
                          f"providing the background music{detail}.")
+        elif m.role is Role.MUSIC_STYLE:
+            # ref-en.txt 2.4: "An `<Audio N>` definition primarily states the audio's role." The
+            # role here is a style reference, so the line names the style and says the score is new
+            # -- the same fact the retention note carries, in the section that introduces the label.
+            lines.append(f"{m.label} is a music-style reference for the target video's newly "
+                         f"generated score{detail}.")
+        elif m.role is Role.BEAT_REFERENCE:
+            lines.append(f"{m.label} is a beat reference whose rhythm sets the timing of the "
+                         f"target video's cuts and action{detail}.")
         else:
             lines.append(f"{m.label} is a sound-texture reference for the target "
                          f"video{detail}.")

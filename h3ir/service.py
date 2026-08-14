@@ -108,14 +108,14 @@ class RefineIn(BaseModel):
 _ROLE_BY_NAME = {r.value: r for r in Role}
 
 # Which roles make sense for which kind, for the error message only. A picture cannot be a voice
-# reference and a wav cannot be a first frame, and listing all eleven under a typo'd audio role
-# would be a worse message than naming the three that apply.
+# reference and a wav cannot be a first frame, and listing every role under a typo'd audio role
+# would be a worse message than naming the ones that apply.
 _ROLES_BY_KIND = {
     "image": (Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST, Role.SUBJECT, Role.ENVIRONMENT,
               Role.STYLE, Role.STORYBOARD),
     "video": (Role.EDIT_SOURCE, Role.CONTINUATION_SOURCE, Role.SUBJECT, Role.ENVIRONMENT,
               Role.STYLE, Role.STORYBOARD),
-    "audio": (Role.VOICE_TIMBRE, Role.BGM, Role.SFX),
+    "audio": (Role.VOICE_TIMBRE, Role.BGM, Role.MUSIC_STYLE, Role.BEAT_REFERENCE, Role.SFX),
 }
 
 

@@ -1,7 +1,7 @@
 """Every declared role has to survive its own renderer. No model and no GPU.
 
 `Role` is the input the whole layer derives from: task types, retention markers and the
-subject-definition wording all come off it. Eleven values are accepted at the API boundary, and
+subject-definition wording all come off it. Every value is accepted at the API boundary, and
 until now the suite exercised most of them only through hand-written documents that a test wrote
 and then validated. That proves the RULE and never proves the renderer obeys it, which is how
 `role: "sfx"` shipped as a hard 500 on first use: `plan._AUDIO_MARKER` wrote `partially_copy` and
@@ -35,8 +35,17 @@ ROLE_CASES = [
     (Role.CONTINUATION_SOURCE, AssetKind.VIDEO, Mode.REF2VA),
     (Role.VOICE_TIMBRE, AssetKind.AUDIO, Mode.REF2VA),
     (Role.BGM, AssetKind.AUDIO, Mode.REF2VA),
+    (Role.MUSIC_STYLE, AssetKind.AUDIO, Mode.REF2VA),
+    (Role.BEAT_REFERENCE, AssetKind.AUDIO, Mode.REF2VA),
     (Role.SFX, AssetKind.AUDIO, Mode.REF2VA),
 ]
+
+
+def test_every_role_in_the_enum_has_a_case_here():
+    """The guard that makes this file stay complete. A role added to the enum and not to the table
+    above is a role nothing renders in this suite, which is the state `sfx` was in when it shipped a
+    hard 500 on first use."""
+    assert {r for r, _, _ in ROLE_CASES} == set(Role), set(Role) - {r for r, _, _ in ROLE_CASES}
 
 
 def _brief_for(role: Role, kind: AssetKind) -> tuple[Brief, dict[str, AssetCard]]:
@@ -68,14 +77,33 @@ def test_every_role_renders_a_draft_that_passes_its_own_validator(role, kind, mo
     """The invariant `compile_brief` raises on: the draft is deterministic, so an ERROR in it is
     our bug and there is nothing to fall back to. Over HTTP that raise is a bare 500.
 
-    Eleven roles, eleven renders, each validated as rendered. `sfx` failed this on
-    R22-audio-marker-role before the marker table was corrected.
+    One render per role, each validated as rendered. `sfx` failed this on R22-audio-marker-role
+    before the marker table was corrected.
     """
     brief, cards = _brief_for(role, kind)
     plan = deterministic_draft(brief, mode, cards, opts=ProfileOptions())
     _, findings, _ = _assess(plan, brief, mode, ProfileOptions(), [])
     errors = [f for f in findings if f.severity == "ERROR"]
     assert not errors, [str(f) for f in errors]
+
+
+@pytest.mark.parametrize("role,kind,mode", ROLE_CASES, ids=[r.value for r, _, _ in ROLE_CASES])
+def test_no_role_writes_its_own_wiring_token_into_the_brief(role, kind, mode):
+    """Our own renderer held to the rule the writer is held to (P9). A role name is this layer's
+    internal vocabulary and H3 was trained on none of them: the spec's line is "<Audio 1> is the
+    voice-timbre reference for <Subject 1> (S1)", hyphenated English. Measured as a real leak on the
+    written path once the declared role reached the ask, so the deterministic path needs the guard
+    too -- it is the text that ships whenever the writer fails verification.
+    """
+    from h3ir.plan import ProfileOptions
+    from h3ir.render import render_ir
+    from h3ir.validate import ROLE_TOKENS_NEVER_IN_PROSE
+
+    brief, cards = _brief_for(role, kind)
+    text = render_ir(deterministic_draft(brief, mode, cards, opts=ProfileOptions()),
+                     ProfileOptions()).prompt
+    leaked = [t for t in ROLE_TOKENS_NEVER_IN_PROSE if t in text]
+    assert not leaked, leaked
 
 
 # ---------------------------------------------------------------- sfx, the specific contradiction

@@ -153,8 +153,8 @@ def test_a_role_that_does_not_exist_is_refused_rather_than_ignored():
 
 
 def test_the_roles_offered_are_the_ones_that_fit_the_kind():
-    """A wav cannot be a first frame. Listing all eleven under a typo'd audio role would be a worse
-    message than naming the three that apply."""
+    """A wav cannot be a first frame. Listing every role under a typo'd audio role would be a worse
+    message than naming the ones that apply."""
     client = TestClient(service.app, raise_server_exceptions=False)
     r = client.post("/v1/briefs", json={
         "intent": "A supercar starts up.",

@@ -327,6 +327,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                 transcribed = _audio_transcripts(draft_plan, cards)
                 vid_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
                                   if m.kind is AssetKind.VIDEO)
+                aud_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
+                                  if m.kind is AssetKind.AUDIO)
                 written = compose_brief(backend, brief, draft_plan.subjects, cards,
                                        draft_plan.target, labels,
                                        prompt_name=chosen_compose, seed=seed,
@@ -334,6 +336,7 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                                        style=style, licence=licence, scope=scope,
                                        mode=mode, task_types=tuple(draft_plan.task_types),
                                        picture_roles=pic_roles, video_roles=vid_roles,
+                                       audio_roles=aud_roles,
                                        audio_transcripts=transcribed,
                                        generation_task=("video editing"
                                                         not in draft_plan.task_types),
@@ -774,6 +777,8 @@ def wiring_findings(plan, brief: Brief) -> list[Finding]:
             continue
         want = {Role.VOICE_TIMBRE: "the voice — \"his own voice, calm and low\"",
                 Role.BGM: "the music — instrumentation and tempo",
+                Role.MUSIC_STYLE: "the music — instrumentation and tempo",
+                Role.BEAT_REFERENCE: "the beat — its tempo and where the hits fall",
                 Role.SFX: "the sound"}.get(m.role)
         if want:
             findings.append(Finding(

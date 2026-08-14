@@ -164,7 +164,28 @@ def _reference_governed(licence) -> list[str]:
     return [a for a, who in licence.governs.items() if who == "reference" and a != MEDIUM]
 
 
-def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...]) -> str:
+# What each reference-only audio role means: the name to CALL it in the brief, and the property it
+# supplies. Keyed by the role's own value so the ask, `plan._AUDIO_MARKER` and the validator's rules
+# all read the same vocabulary.
+#
+# The name is the spec's own hyphenated phrase and the role's token appears nowhere in this ask, for
+# a reason measured on the first live run of this fact: told the role was `beat_reference`, the writer
+# wrote "<Audio 1> is the beat_reference for the target video" into `subject_definitions`. A
+# snake_case wiring token is prose H3 was never trained on, and ref-en.txt 2.4's own line is
+# "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)". P9 catches it if it happens anyway.
+_AUDIO_PROPERTY = {
+    "voice_timbre": ("a voice-timbre reference", "voice timbre and delivery"),
+    "sfx": ("a sound-texture reference", "sound texture"),
+    "music_style": ("a music-style reference",
+                    "musical style, instrumentation and tempo, and the score you write for the "
+                    "target video is new music in that style"),
+    "beat_reference": ("a beat reference",
+                       "beat and tempo, which set the timing of the cuts and of the action"),
+}
+
+
+def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...],
+                     audio_roles: tuple[tuple[str, str], ...] = ()) -> str:
     """What the wiring settles about the two audio task types, stated as a fact in the ask.
 
     The renderer already owns this: "a prose stage that could write the prefix could invent a
@@ -178,6 +199,12 @@ def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...]) -> st
     person out of a reference video also counts as `reference generation` is a judgement about how
     the reference is used, and ref-en.txt 3 phrases it as one ("normally", "only when"), so the
     model keeps it.
+
+    `audio_roles` adds the per-label half. The aggregate sentence names the relationship the roles
+    declare in total, which a mixed brief -- one track copied, another referenced for its style --
+    cannot express, and which measured as insufficient even on single-asset briefs. Roles with no
+    entry in `_AUDIO_PROPERTY` get no sentence, which is what every caller predating the parameter
+    passes.
     """
     audio = [lb for lb in labels if lb.startswith("<Audio")]
     if not audio:
@@ -189,11 +216,45 @@ def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...]) -> st
                 "audio is preserved, reused or carried over anywhere in the brief; decide what the "
                 "video should sound like and put it in overall_soundscape.")
     declared = [t for t in task_types if t.startswith("audio ")]
-    return (f"Attached audio: {', '.join(audio)}. The audio relationship their roles declare is "
-            f"{' + '.join(declared) or 'reference generation only'}, and that is the audio task "
-            "type to use; do not claim the other one. The retention marker has to agree with it: "
-            "`fully_copy` and `partially_copy` are copies, `reference` and `weak_reference` are "
-            "not, and a line that says one while the prefix says the other contradicts itself.")
+    out = [f"Attached audio: {', '.join(audio)}. The audio relationship their roles declare is "
+           f"{' + '.join(declared) or 'reference generation only'}, and that is the audio task "
+           "type to use; do not claim the other one. The retention marker has to agree with it: "
+           "`fully_copy` and `partially_copy` are copies, `reference` and `weak_reference` are "
+           "not, and a line that says one while the prefix says the other contradicts itself."]
+    # Per label, for the roles whose definition IS "a property is referenced, not the signal". The
+    # aggregate sentence above is not enough on a mixed brief and was not enough on a single one
+    # either: `S6-beat-rhythm` wrote "<Audio 1>: fully_copy - <Audio 1> is reused 1:1 as the target
+    # video's complete final audio track" in 5 of 5 runs, and `X9`, whose request says outright that
+    # nothing from the recording is used, in 5 of 5. The role is the caller's statement of what the
+    # recording is FOR, so it is stated as a fact here for the same reason `video_task_facts` states
+    # the declared video role: the writer was reading the intent and answering the question it
+    # seemed to ask.
+    for label, role in audio_roles:
+        named = _AUDIO_PROPERTY.get(role)
+        if not named:
+            continue
+        name, prop = named
+        out.append(
+            f"{label} is attached as {name}, so only its {prop}. Its signal is NOT used in the "
+            f"target video. Its retention marker is `reference`, or `weak_reference` if the request "
+            f"asks for no more than a broad likeness, and never `fully_copy` or `partially_copy`; "
+            f"and nowhere in the brief — not in the summary, the definitions, the description or "
+            f"the music section — may {label} be described as reused, copied, played, or serving "
+            f"as the target video's audio track. Define it the way the specification does, in plain "
+            f"words: `{label} is {name} for the target video`, and then say what it supplies. "
+            f"However the request is phrased, the caller has said what that recording is for.")
+    # And the copy side's own distinction, in ref-en.txt 4.2's words. `bgm` legitimately copies and
+    # nothing here legislates which of the two copy markers it takes -- only the request decides,
+    # which is why `X4` is right to write `fully_copy` and `X10` right to write `partially_copy` for
+    # the same role. What the writer was missing is the marker table's definition: `S2-copy-part`,
+    # whose request lays other sound over the top of part of the track, claimed `fully_copy` and
+    # "reused 1:1 as the target video's complete final audio track" in 5 of 5 runs.
+    if any(role == "bgm" for _lb, role in audio_roles):
+        out.append("`fully_copy` says the complete source audio is the target video's complete "
+                   "final audio track, with nothing added, removed or laid over it. If the request "
+                   "keeps only part of the timeline, or adds, removes or replaces any sound after "
+                   "copying, the marker is `partially_copy`.")
+    return "\n".join(out)
 
 
 def video_task_facts(video_roles: tuple[tuple[str, str], ...],
@@ -417,6 +478,7 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   task_types: tuple[str, ...] = (),
                   picture_roles: tuple[tuple[str, str], ...] = (),
                   video_roles: tuple[tuple[str, str], ...] = (),
+                  audio_roles: tuple[tuple[str, str], ...] = (),
                   audio_transcripts: tuple[tuple[str, str], ...] = (),
                   generation_task: bool = True,
                   omit: tuple[str, ...] = ()) -> str:
@@ -489,7 +551,7 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         + (f"\n{reference_audio_words(audio_transcripts)}\n" if audio_transcripts else "")
         # Scoped to the full-reference shape: a base mode has no task-type prefix to constrain, and
         # cannot have an <Audio N> at all -- any audio attachment routes to ref2va (mode.py 12.2#1).
-        + (f"\n{audio_task_facts(labels, task_types)}\n" if is_ref else "")
+        + (f"\n{audio_task_facts(labels, task_types, audio_roles)}\n" if is_ref else "")
         + (f"\n{video_task_facts(video_roles, task_types)}\n"
            if is_ref and video_task_facts(video_roles, task_types) else "")
     )

@@ -51,11 +51,40 @@ class Role(str, Enum):
     CONTINUATION_SOURCE = "continuation_source"
     VOICE_TIMBRE = "voice_timbre"
     BGM = "bgm"
+    # ref-en.txt 2.4 lists five uses for an <Audio N> and three of them had a role: copying the
+    # signal (`bgm`), a speaker's timbre and delivery (`voice_timbre`), sound-effect texture
+    # (`sfx`). The two with no socket were "Referencing a background-music style" and "Referencing
+    # beat, rhythm, or audio continuity", so a caller who wanted either had to attach the track as
+    # `bgm`, whose derived bookkeeping says the signal is copied. Measured at five seeds each on the
+    # live service: `S6-beat-rhythm` shipped `fully_copy` 5 of 5 and `X9`, whose request says in as
+    # many words that nothing from the recording is used, 5 of 5. Both shipped `ready`.
+    #
+    # TWO roles rather than one, because the retention note and the definition line are derived
+    # from the role and the two cases need different true sentences: a style reference says the new
+    # score adopts the instrumentation and tempo, and a beat reference says the cutting follows the
+    # hits. One role covering both could only write a sentence vague enough to be true of either,
+    # and the draft that carries that sentence is what ships when the writer fails.
+    #
+    # `beat_reference` carries the suffix and `music_style` does not, for a reason rather than by
+    # accident: a music style and a voice timbre are properties nobody can mistake for a signal,
+    # while "a beat" colloquially IS the track. The suffix is what stops a caller who wants the
+    # track PLAYED from picking this instead of `bgm`.
+    MUSIC_STYLE = "music_style"
+    BEAT_REFERENCE = "beat_reference"
     SFX = "sfx"
 
 
 VISUAL_MARKERS = ("fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference")
 AUDIO_MARKERS = ("fully_copy", "partially_copy", "reference", "weak_reference")
+
+# The audio roles whose definition IS "a property is referenced, not the signal", against ref-en.txt
+# 4.2's `reference` row: "only timbre, rhythm, music style, dialogue content, or sound texture is
+# referenced". Contract rather than a local list, because three stages have to agree on it: the
+# marker table and the task-type derivation in plan.py, the fact the ask states in prose.py, and the
+# rules that refuse a copy claim in validate.py. A role added to one and forgotten in another is how
+# a document ends up claiming a copy the wiring does not perform.
+AUDIO_REFERENCE_ROLES = (Role.VOICE_TIMBRE, Role.SFX, Role.MUSIC_STYLE, Role.BEAT_REFERENCE)
+AUDIO_REFERENCE_ROLE_VALUES = tuple(r.value for r in AUDIO_REFERENCE_ROLES)
 
 TASK_TYPES = ("keyframe completion", "reference generation", "video editing",
               "video continuation", "audio reuse", "audio reference")
