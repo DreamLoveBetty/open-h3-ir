@@ -174,6 +174,17 @@ def test_the_ask_states_both_halves_of_the_rule():
     assert "do not carry" in ask.lower()
 
 
+def test_the_ask_says_the_words_go_in_one_place_only():
+    """Measured after the words started arriving: the writer put them inside <d> AND in double
+    quotes in the surrounding prose, and `Q2-unlicensed-addition` rejected the brief twice on two of
+    seven runs. Q2 was right. base-en.txt 4.5 makes a double-quoted span text that is visible on
+    screen, so quoting the line tells H3 to letter it across the picture as well as speak it."""
+    ask = _capture_ask(Role.VOICE_TIMBRE, WORDS,
+                       "Have the man at the counter say the line on the recording again.")
+    assert "exactly ONE place" in ask
+    assert "burned into the frame" in ask
+
+
 def test_the_ask_says_nothing_about_words_when_no_transcript_was_supplied():
     ask = _capture_ask(Role.BGM, "", "Score this like the attached track.")
     assert "transcrib" not in ask.lower(), ask

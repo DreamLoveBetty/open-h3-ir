@@ -337,7 +337,10 @@ def reference_audio_words(transcripts: tuple[tuple[str, str], ...]) -> str:
               "language, attributed to whoever the request says speaks them. If only the timbre, "
               "rhythm, emotion or delivery of that audio is being referenced, do not carry these "
               "words into the target video at all. Nothing else about the recording is known: you "
-              "have not heard it, so do not describe how it sounds beyond the note supplied for it.")
+              "have not heard it, so do not describe how it sounds beyond the note supplied for it.\n"
+              "Write them in exactly ONE place, inside <d>, and do not quote them in the prose "
+              "around it. A double-quoted span in this format is text burned into the frame, so "
+              "quoting the line makes the render letter it across the picture as well as speak it.")
 
 
 # base-en.txt 4.4's two continuity markers, stated beside the lines the writer is placing.
