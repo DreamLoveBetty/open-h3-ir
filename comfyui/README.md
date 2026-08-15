@@ -2,12 +2,16 @@
 
 Type one sentence. Get a MiniMax H3 job that is ready to sample.
 
+This folder is the ComfyUI half of [OpenH3-IR](../README.md), which is one compiler with two front
+doors onto it: these three nodes, and an HTTP service anything else can call. Both doors run the same
+service. What the compiler does to a render, shown side by side, is on that page.
+
 One node writes the brief H3 actually wants, loads the weights the job needs plus the encoder and both
 VAEs, and hands out the model, the conditioning and the latent. There is no text box to paste into, no
 resolution picker, no frame-count arithmetic and no row of loaders.
 
-Two nodes, then: a sentence and five widgets on one, the five H3 files on the other. Everything else
-is a node that stays out of the graph until you need it.
+Three nodes in all: the sentence and its knobs on one, everything the piece looks at or listens to on
+the second, the five H3 files on the third. A piece with no media needs only the first and the third.
 
 ## What you need
 
@@ -47,11 +51,29 @@ Media node and wire its `media` output into Main.
 
 Wire `report` into ComfyUI's own **Preview as Text** node to read what happened on the canvas.
 
+## The knobs on Main
+
+Eight fields, and the first one is the work:
+
+| field | what it decides |
+| --- | --- |
+| the prompt box | one plain sentence, saying what happens, with `@` for anything in the tray |
+| `seconds` | the only length control in the graph, snapped onto H3's frame grid once and used for both the brief and the latent |
+| `frame shape` | 16:9, 21:9, 4:3, 1:1, 3:4 or 9:16. The canvas is sized from it, so there is no resolution box to keep in step with anything |
+| `invention` | how much the writer may add where your sentence is silent: `restrained`, `balanced`, `bold`, `extreme` |
+| `no music` | turns off the score only. Ambient and physical sound are still written, because H3 writes sound in the same pass as the picture |
+| `shots` | `auto` leaves the edit to the writer. A number from 1 to 10 is kept exactly, and a count that cannot fit the length is refused with the arithmetic, since every shot needs 1.2 seconds |
+| `size, in megapixels` | 0 is H3's native size, 768 on the short edge, which is what it was trained at. A stated size runs from 0.25 to 2.5, and is sharper, slower and hungrier for VRAM in proportion |
+| `spoken in` | the language every `@speaks` line is spoken in, which becomes the tag H3 reads. It decides nothing while no line is locked |
+
+Three more sit under advanced and are rarely touched: `reference size`, `brief seed` (the compiler's
+seed, not the sampler's) and `writing effort`.
+
 ## The tray
 
 Drop files on the OpenH3-IR Media panel, or click it to pick them. Pictures, clips and sounds sort
-themselves into their sections, up to H3's own capacities: nine pictures, three clips, three sounds,
-twelve files in all.
+themselves into their sections. Nine pictures, three clips and three sounds are H3's own per-kind
+ceilings; twelve files in all is the tray's, so you cannot fill every slot at once.
 
 Every slot carries three things:
 
@@ -63,18 +85,19 @@ dashes. The name is how the prompt refers to the file.
 | Kind | The choices |
 | --- | --- |
 | picture | something in the shot · the setting · a style to copy · first frame · last frame · storyboard |
-| clip | copy what is in it · edit it · carry on from it |
+| clip | copy what is in it · copy how it is shot · edit it · carry on from it |
 | sound | play it · match its style · cut to its beat · sound effect · voice to match |
 
-These decide the books mechanically. A clip set to "edit it" produces an editing brief whatever the
-sentence says; a track set to "match its style" can never be claimed as copied. First and last frame
-switch the job to H3's fl2va model, which takes no references at all, so mixing frames with reference
-slots is refused before any model call, with the reason.
+These decide the brief mechanically rather than by persuasion. A clip set to "edit it" produces an
+editing brief whatever the sentence says; a clip set to "copy how it is shot" lends its structure and
+is never cited for anything in it; a track set to "match its style" can never be claimed as copied.
+First and last frame switch the job to H3's fl2va model, which takes no references at all, so mixing
+frames with reference slots is refused before any model call, with the reason.
 
 **A line about it.** Optional for pictures, which get looked at. Nearly essential for sounds, which
 do not: nothing in this chain can hear, so the line you type is the only thing that will ever know
-what a track sounds like. A voice slot also takes the words already spoken inside the recording,
-since the system cannot hear those either.
+what a track sounds like. A sound set to "voice to match" or to "play it" takes one thing more, the
+words already spoken inside the recording, since nothing here can hear those either.
 
 A clip with its own soundtrack gets one more choice: **off** sends none of it, **paired** sends it
 as that clip's own sound, **alone** sends it as a track in its own right.
@@ -118,17 +141,17 @@ name means the render used a file the canvas never showed, and the one thing thi
 choose for you quietly. So the pick is on the node where you can read it, changing it is one click,
 and the `report` output names every file that was loaded and the loader that read it.
 
-Two of those files are easy to swap, because H3 ships two checkpoints and the socket you filled
-decides which one this job needs: `ref2va` for reference and text jobs, `fl2va` for a first or last
-frame. Both load happily in either slot, so if the filename says one family and the graph is the
-other, the report says so in plain words and the render still happens:
+Two of those files are easy to swap, because H3 ships two checkpoints and what the tray says its
+pictures are decides which one this job needs: `ref2va` for reference and text jobs, `fl2va` for a
+first or last frame. Both load happily in either slot, so if the filename says one family and the
+graph is the other, the report says so in plain words and the render still happens:
 
 ```
 weights        minimax_h3_fl2va_pruned_int8_convrot.safetensors  via UNETLoader
 WARNING        minimax_h3_fl2va_pruned_int8_convrot.safetensors names H3's fl2va family, and
                this graph is a reference or text job, which runs on the ref2va checkpoint.
-               Check the ref2va model field on the Setup node: it will render either way,
-               and it will be wrong in a way nothing on screen explains.
+               Check the ref2va model field on the Setup node: it will render either way, and
+               it will be wrong in a way nothing on screen explains.
 ```
 
 It is read from the filename and only where the filename decides the question. A file whose name says
@@ -147,7 +170,8 @@ the node says it in its own words: add an OpenH3-IR Setup node, pick the five fi
 
 ## Wiring the graph
 
-Setup into Main's `setup`. Media into Main's `media` when there is media. Then five outputs:
+Setup into Main's `setup`. Media into Main's `media` when there is media. Then the five outputs that
+carry the render:
 
 | Out | Into |
 | --- | --- |
@@ -228,20 +252,19 @@ you already trust does the rest.
 
 It cannot hear. Sounds are described from what you type plus their metadata.
 
-It takes nine pictures, three clips and three standalone sounds, which are H3's own limits.
+It takes nine pictures, three clips and three standalone sounds, which are H3's own limits, and twelve
+files in total, which is the tray's.
 
-The frame sockets and the picture list are mutually exclusive, and the schema cannot express that, so
-it is an error message after a queue rather than a greyed-out socket. A small frontend extension in a
-`web/` folder could grey the other group when one is connected. Not built.
+A picture made elsewhere in the same graph cannot be fed in. The tray holds files rather than tensors,
+and that is deliberate: the service opens the attachment from disk and H3 receives the same file
+decoded, so a path and a tensor can never end up describing different pictures. The cost is real
+enough to name, though. An `IMAGE` coming out of another node has to be saved to disk first and then
+dropped on the tray.
 
-A per-picture role is not offered. The service also has `environment` and `style` roles, but
-exposing them would need a wrapper node per picture, and a wrapper node means a plain `IMAGE` from a
-Load Image node would refuse to connect to the picture list. That is the worst possible first
-impression for a node whose whole pitch is that it removes boxes. Write "the empty showroom" in the
-notes line instead. The storyboard role earned its own socket because a storyboard is a different
-job, not a different description: a picture that must never appear in the video cannot ride a socket
-that means "put this in the video". The frontend can already grow several inputs per item; the Python
-side takes one template input, so per-picture roles stay reachable if that changes.
+Nothing stops you choosing two roles that cannot coexist. Set one picture to first frame while another
+slot holds a reference and the panel accepts it; the refusal comes when the graph runs, naming both
+slots and the reason, before a file is written or a model call is spent. A panel that greyed out the
+choices a filled slot has already ruled out would be better. Not built.
 
 ## When something goes wrong
 
@@ -295,3 +318,14 @@ renders with it.
 The tray panel's widget and upload idioms follow ComfyUI-Fantastic-MiniMaxH3-PromptBuilder (MIT),
 and the prompt editor's state handling follows ComfyUI-MiniMaxH3-Easy (MIT). Both are credited here
 because reading working frontends beats inventing broken ones.
+
+## Licence
+
+Apache 2.0, like the rest of the repository: [LICENSE](../LICENSE), and [NOTICE](../NOTICE) for what
+belongs to whom.
+
+That covers these nodes. It does not cover the model you point them at, and H3's own licence is more
+restrictive than most: it excludes four territories outright, it asks a commercial product to display
+"MiniMax H3" in its own interface, and above 20 million USD a year it needs written authorization from
+MiniMax. The three terms are spelled out in the [main README](../README.md#licence), and MiniMax's
+agreement is the thing to actually read.

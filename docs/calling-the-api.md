@@ -4,7 +4,11 @@ This is the document for whoever drives the compiler: an application, a UI, or a
 nothing about H3. It says what the service promises, what it only attempts, and which of those you
 can safely build a screen or a workflow on.
 
-If you are changing the compiler itself, you want [../AGENTS.md](../AGENTS.md) instead.
+If you are changing the compiler itself, you want [../AGENTS.md](../AGENTS.md) instead. If your caller
+is ComfyUI, the client is already written: [../comfyui/README.md](../comfyui/README.md) is the node
+pack, and [`../comfyui/h3ir_client.py`](../comfyui/h3ir_client.py) is a worked example of this API
+consumed over the standard library alone, with every failure branch below turned into a sentence for a
+person to read.
 
 ## In one line
 
@@ -34,8 +38,8 @@ choosing it cannot lose a capability the request needed.
 
 ## The creativity dial
 
-One control, four named positions, default `balanced`. **A person understands these words; a 0.0–1.0
-slider does not, which is why it is named rather than numeric.**
+One control, four named positions, default `balanced`. **A person understands these words; a 0.0 to
+1.0 slider does not, which is why it is named rather than numeric.**
 
 | position | what it licenses beyond the request |
 |---|---|
@@ -105,3 +109,8 @@ Three layers. A UI should read the first two and never the third.
   conveniences; the analyser raises rather than producing a card it cannot support.
 - **A single run is not a measurement.** Nothing about the writing model is deterministic enough
   that one output proves a path is sound.
+- **The asset ceilings are the runtime's sockets, not a policy.** Nine images, three videos, three
+  standalone audios, and a soundtrack for each of those videos, which is eighteen files at the
+  absolute maximum. Over capacity is a `422` naming what to drop, never a manifest that publishes a
+  socket the graph does not have. `GET /v1/capabilities` reports all four numbers, so read them rather
+  than copying them into your client.
