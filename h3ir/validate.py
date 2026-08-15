@@ -858,6 +858,23 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                     "composition reference for the target video, defining ...'.")
                 break
 
+    # And the same defect for videos: a structure clip lends how it is shot and cut; what is IN it
+    # stays out (measured, matrix row 26: the clip's man, crowd and sphere all walked into the new
+    # scene against "and nothing else").
+    for label, role, _marker in ctx.declared_roles:
+        if role != "structure" or not label.startswith("<Video"):
+            continue
+        for line_ in defs.splitlines():
+            if re.match(r"\s*<Subject \d+>", line_) and label in line_:
+                add("R30-structure-cited-as-content", "ERROR",
+                    f"{label} is declared a structure reference: it lends its camera movement and "
+                    f"cutting rhythm and its contents never appear in the target video, and this "
+                    f"defines a subject from it: {line_.strip()[:120]!r}. Remove it from every "
+                    f"<Subject N> definition and give it its own standalone line instead: "
+                    f"'{label} is the source video providing the camera movement and cutting "
+                    "rhythm for the target video.'.")
+                break
+
     # An invented PROVENANCE claim. The first video+audio brief anyone compiled wrote "<Audio 1> is the
     # ambient sound track from <Video 1>" for an audio asset wired standalone (`ref_audio_1`), not as
     # that video's soundtrack (`ref_video_audio_1`). The model cannot know the wiring and guessed from

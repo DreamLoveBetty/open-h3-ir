@@ -29,14 +29,14 @@ const PREFIX = { picture: "picture", video: "video", sound: "audio" };
 const ROLES = {
   picture: ["something in the shot", "the setting", "a style to copy",
             "first frame", "last frame", "storyboard"],
-  video: ["copy what is in it", "edit it", "carry on from it"],
+  video: ["copy what is in it", "copy how it is shot", "edit it", "carry on from it"],
   sound: ["play it", "match its style", "cut to its beat", "sound effect", "voice to match"],
 };
 const ROLE_TOKEN = {
   "something in the shot": "subject", "the setting": "environment", "a style to copy": "style",
   "first frame": "frame_anchor_first", "last frame": "frame_anchor_last",
   "storyboard": "storyboard",
-  "copy what is in it": "subject", "edit it": "edit_source",
+  "copy what is in it": "subject", "copy how it is shot": "structure", "edit it": "edit_source",
   "carry on from it": "continuation_source",
   "play it": "bgm", "match its style": "music_style", "cut to its beat": "beat_reference",
   "sound effect": "sfx", "voice to match": "voice_timbre",

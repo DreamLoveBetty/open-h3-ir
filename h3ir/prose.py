@@ -398,6 +398,32 @@ def style_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
     return "\n".join(lines)
 
 
+def structure_facts(video_roles: tuple[tuple[str, str], ...]) -> str:
+    """What a structure-role clip is, stated where the document is written.
+
+    The style role's statement, one asset-kind over. Measured (matrix row 26): asked for "the
+    camera movement and the cutting rhythm and nothing else", the writer adopted the structure and
+    still walked the clip's man, crowd and glowing sphere into the new scene. The role travels in
+    the manifest; nothing told the writer what it means. R30-structure-cited-as-content is the
+    deterministic check behind this statement.
+    """
+    clips = [label for label, role in video_roles if role == "structure"]
+    if not clips:
+        return ""
+    lines = []
+    for label in clips:
+        lines.append(
+            f"{label} is a STRUCTURE REFERENCE, declared by the caller: it lends how it is shot "
+            f"and cut — camera movement, framing rhythm, cut timing — and nothing else. Its "
+            f"contents never appear in the target video. Give {label} one standalone line in "
+            f"subject_definitions in the form '{label} is the source video providing the camera "
+            f"movement and cutting rhythm for the target video.', follow its moves and cuts in "
+            f"detailed_description, and in retention_analysis give it one line as '{label} "
+            f"(camera movement and cutting rhythm): ...'. Never define a <Subject N> from "
+            f"{label} and never place anything seen in it into any shot.")
+    return "\n".join(lines)
+
+
 def reference_picture_facts() -> str:
     """The one thing a full-reference brief must not say about its pictures.
 
@@ -572,6 +598,9 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         look_facts = style_facts(picture_roles)
         if look_facts:
             label_facts += ("\n" if label_facts else "") + look_facts
+        shape_facts = structure_facts(video_roles)
+        if shape_facts:
+            label_facts += ("\n" if label_facts else "") + shape_facts
         unnamed = [lb for lb in labels if lb not in label_facts]
         if unnamed:
             label_facts += ("\n" if label_facts else "") + (

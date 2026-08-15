@@ -47,6 +47,10 @@ class Role(str, Enum):
     ENVIRONMENT = "environment"
     STYLE = "style"
     STORYBOARD = "storyboard"
+    # A video that lends its camera movement and cutting rhythm and nothing else — the
+    # structure sibling of STYLE, added when the sentence alone measurably could not keep a
+    # clip's contents out of the target video (matrix row 26).
+    STRUCTURE = "structure"
     EDIT_SOURCE = "edit_source"
     CONTINUATION_SOURCE = "continuation_source"
     VOICE_TIMBRE = "voice_timbre"

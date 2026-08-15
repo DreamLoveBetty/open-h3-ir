@@ -28,6 +28,7 @@ ROLE_CASES = [
     (Role.SUBJECT, AssetKind.IMAGE, Mode.REF2VA),
     (Role.ENVIRONMENT, AssetKind.IMAGE, Mode.REF2VA),
     (Role.STYLE, AssetKind.IMAGE, Mode.REF2VA),
+    (Role.STRUCTURE, AssetKind.VIDEO, Mode.REF2VA),
     (Role.STORYBOARD, AssetKind.IMAGE, Mode.REF2VA),
     (Role.FRAME_ANCHOR_FIRST, AssetKind.IMAGE, Mode.I2VA),
     (Role.FRAME_ANCHOR_LAST, AssetKind.IMAGE, Mode.L2VA),

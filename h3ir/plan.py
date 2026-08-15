@@ -172,6 +172,7 @@ _ROLE_MARKER = {
     Role.CONTINUATION_SOURCE: "partially_preserved",
     Role.STYLE: "weak_reference",
     Role.STORYBOARD: "weak_reference",
+    Role.STRUCTURE: "weak_reference",
 }
 # `sfx` is `reference`, not a copy, and that was a real 500 rather than a nicety. R22
 # (validate.py) forbids a copy marker for the two roles whose definition IS "a property is
@@ -208,9 +209,10 @@ def build_subjects(manifest: list[ManifestEntry],
     for e in manifest:
         if e.kind is AssetKind.AUDIO:
             continue
-        # A style plate lends its look; like a storyboard it is planning material, never a
-        # visible unit, so it gets no <Subject N> and earns its standalone line in render.py.
-        if e.role in (Role.STORYBOARD, Role.STYLE):
+        # A style plate lends its look and a structure clip its camera and cutting; like a
+        # storyboard they are planning material, never visible units, so they get no
+        # <Subject N> and earn their standalone lines in render.py.
+        if e.role in (Role.STORYBOARD, Role.STYLE, Role.STRUCTURE):
             continue
         card = cards.get(e.sha256)
         if card is None:
@@ -450,7 +452,8 @@ def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
 
     if roles & {Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST}:
         types.append("keyframe completion")
-    if roles & {Role.SUBJECT, Role.ENVIRONMENT, Role.STYLE, Role.STORYBOARD, Role.VOICE_TIMBRE}:
+    if roles & {Role.SUBJECT, Role.ENVIRONMENT, Role.STYLE, Role.STORYBOARD, Role.STRUCTURE,
+                Role.VOICE_TIMBRE}:
         types.append("reference generation")
     if Role.EDIT_SOURCE in roles:
         types.append("video editing")

@@ -81,6 +81,11 @@ def render_subject_definitions(plan: Plan) -> str:
             # form the spec gives a style-only picture. R29 holds the written path to it.
             lines.append(f"{m.label} is the style and composition reference for the target video, "
                          "defining its medium, line, palette, shading and composition.")
+        elif m.kind is AssetKind.VIDEO and m.role is Role.STRUCTURE:
+            # The structure sibling: the clip lends how it is shot and cut, never what is in it.
+            # R30 holds the written path to this form.
+            lines.append(f"{m.label} is the source video providing the camera movement and "
+                         "cutting rhythm for the target video.")
     for m in plan.manifest:
         if m.kind is not AssetKind.AUDIO:
             continue
@@ -152,6 +157,10 @@ def render_retention(plan: Plan) -> str:
             lines.append(f"{m.label} (style and composition): weak_reference - the target video "
                          "adheres to the reference's aesthetic, while its contents are not "
                          "reproduced.")
+        elif m.kind is AssetKind.VIDEO and m.role is Role.STRUCTURE:
+            lines.append(f"{m.label} (camera movement and cutting rhythm): weak_reference - the "
+                         "camera moves and edit timing are followed, while the video's contents "
+                         "are not reproduced.")
     for label, marker, note in audio_relations(plan):
         lines.append(f"{label}: {marker} - {note}.")
     return "\n".join(lines)

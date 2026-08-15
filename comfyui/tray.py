@@ -59,6 +59,7 @@ PICTURE_ROLES = {
 }
 VIDEO_ROLES = {
     "copy what is in it": "subject",
+    "copy how it is shot": "structure",
     "edit it": "edit_source",
     "carry on from it": "continuation_source",
 }
