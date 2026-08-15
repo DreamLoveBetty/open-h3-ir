@@ -253,6 +253,9 @@ class Context:
     prompt_tokens: int | None = None
     require_music_na: bool | None = None
     generation_task: bool = True             # editing tasks are exempt from the word range
+    # The caller pinned an exact shot count (1..PINNED_SHOTS_MAX). None means `auto`: the writer's
+    # designed freedom over the edit, under which no count is a defect.
+    pinned_shots: int | None = None
     # (label, role, marker) triples from the wiring, for marker-legality checks
     declared_roles: tuple[tuple[str, str, str], ...] = ()
     # (audio_label, video_label, audio_seconds, video_seconds)
@@ -999,6 +1002,15 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             add("T4-missing-cut-time", "ERROR", f"[Shot {n}] has no 'At MM:SS.mmm' cut time")
     if nums and nums != list(range(1, len(nums) + 1)):
         add("T8-shot-numbering", "ERROR", f"shot numbers must be contiguous from 1, got {nums}")
+    if ctx.pinned_shots and nums and len(nums) != ctx.pinned_shots:
+        # Fires only on an explicit pin: on `auto` the count is the writer's own call by design.
+        # The message licenses the restructure, because the generic fix instruction protects shot
+        # structure and this is the one finding whose fix IS the structure.
+        add("T11-shot-count-pinned", "ERROR",
+            f"the caller asked for exactly {ctx.pinned_shots} shot(s) and this document has "
+            f"{len(nums)}. Divide the same content into {ctx.pinned_shots} [Shot N] blocks -- "
+            "[Shot 1] with no timestamp, every later shot opening with its own 'At MM:SS.mmm' cut "
+            "time, strictly increasing -- inventing nothing new.")
     for i in range(1, len(seen)):
         if seen[i][1] <= seen[i - 1][1]:
             add("T5-non-increasing", "ERROR",

@@ -129,7 +129,9 @@ def fix_with_findings(backend: Backend, written: str, findings: list, *,
         "Your brief failed mechanical verification. Below are the exact findings, then your text.\n\n"
         f"FINDINGS\n{numbered}\n"
         f"{inventory}\n"
-        "Fix every finding and change nothing else. Keep your shots, your camera moves, your "
+        "Fix every finding and change nothing else. "
+        + ("" if any(f.rule == "T11-shot-count-pinned" for f in findings) else "Keep your shots, ")
+        + "Keep your camera moves, your "
         "performance beats, your wording. Do not rewrite, do not shorten, do not re-plan — this is "
         "a correction pass, not a second draft. Output the corrected "
         + (f"{len(sections)} sections ({', '.join(sections)})" if sections else "brief in full")
@@ -518,7 +520,9 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
     """One call. The model writes all six sections and decides everything creative in them.
 
     The facts are handed over and the craft is not. Labels, duration and dialogue are stated as
-    givens; shot count, cuts, camera, performance and the sound shape are the model's.
+    givens; cuts, camera, performance and the sound shape are the model's. Shot count is the
+    model's exactly while `shots` is unset: an explicit count is the caller's contract, stated in
+    the ask and enforced by T11-shot-count-pinned.
     """
     # `None` keeps the six-section shape, which is what every caller predating the split passes.
     is_ref = mode is None or mode is Mode.REF2VA
@@ -625,7 +629,18 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
     # the range is stated for a full-reference generation task, and editing descriptions are exempt
     # because they "scale with the complexity of the source video".
     if is_ref and generation_task:
-        ask += "\n" + LENGTH_TARGET + "\n"
+        # The caller's pin replaces the freedom clause: two instructions disagreeing about who owns
+        # the shot count is exactly how `shots: 3` shipped one shot, silently.
+        if brief.shots:
+            ask += "\n" + LENGTH_TARGET.replace(
+                "however many shots you choose",
+                f"exactly the {brief.shots} [Shot] blocks the request pins") + "\n"
+            ask += (f"\nThe caller asked for exactly {brief.shots} shot(s). The document must "
+                    f"contain exactly {brief.shots} [Shot N] blocks: [Shot 1] with no timestamp, "
+                    "every later shot opening with its own 'At MM:SS.mmm' cut time, strictly "
+                    "increasing.\n")
+        else:
+            ask += "\n" + LENGTH_TARGET + "\n"
     if brief.onscreen_text:
         ask += ("\nText that must be visible in frame, in straight double quotes, verbatim: "
                 + "; ".join(f'"{t}"' for t in brief.onscreen_text) + "\n")
@@ -671,15 +686,20 @@ def plan_shots(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
     """
     from .shots import shot_schema, validate_proposal
 
+    # An explicit pin overrides the profile ceiling: intake has already proven it fits the render,
+    # and the schema closes both ends so the count cannot come back wrong.
+    limit = brief.shots or max_shots
     ask = (
         f"Request: {brief.intent}\n\n"
         f"Total duration: {target.effective_seconds:.3f} seconds "
         f"({target.frames} frames at 24 fps). Every cut must fall inside it.\n\n"
         f"Available subject labels:\n{_asset_digest(cards, subjects)}\n\n"
-        f"Maximum {max_shots} shots. One shot is a legitimate answer.\n"
     )
     if brief.shots:
-        ask += f"\nThe caller asked for {brief.shots} shot(s); honour that.\n"
+        ask += (f"Exactly {brief.shots} shot(s): the caller asked for that count and it is kept "
+                "exactly.\n")
+    else:
+        ask += f"Maximum {limit} shots. One shot is a legitimate answer.\n"
     if brief.constraints:
         ask += "\nHard constraints:\n" + "\n".join(f"- {c}" for c in brief.constraints)
     if licence is not None:
@@ -699,9 +719,9 @@ def plan_shots(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
     raw = backend.json_call(
         [{"role": "system", "content": load_prompt(prompt_name)},
          {"role": "user", "content": ask}],
-        shot_schema(max_shots), required=("shots",), seed=seed, max_tokens=16000,
+        shot_schema(limit, exact=brief.shots), required=("shots",), seed=seed, max_tokens=16000,
         thinking=True if thinking is None else thinking)
-    return validate_proposal(raw, target, max_shots=max_shots)
+    return validate_proposal(raw, target, max_shots=limit)
 
 
 def beat_sheet(backend: Backend, brief: Brief, mode: Mode, subjects: list[SubjectPlan],

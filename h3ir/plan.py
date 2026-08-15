@@ -324,7 +324,9 @@ def build_speakers(brief: Brief, subjects: list[SubjectPlan],
 def shot_count(target: Target, brief: Brief, mode: Mode, opts: ProfileOptions,
                manifest: list[ManifestEntry]) -> int:
     if brief.shots:
-        return max(1, min(opts.max_shots, brief.shots))
+        # A pin is a contract, checked at intake (1..PINNED_SHOTS_MAX and it fits the render), so
+        # clamping it to the profile ceiling here would silently break the number the caller set.
+        return max(1, brief.shots)
     # Editing a source video preserves its structure; do not invent cuts into it.
     if any(m.role in (Role.EDIT_SOURCE, Role.CONTINUATION_SOURCE) for m in manifest):
         return 1
@@ -503,7 +505,7 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
     else:
         n = shot_count(target, brief, mode, opts, manifest)
         if beats:
-            n = max(1, min(len(beats), opts.max_shots))
+            n = max(1, min(len(beats), brief.shots or opts.max_shots))
         shots = allocate_shots(target, n, mode, opts)
     assign_dialogue(shots, brief.dialogue)
 

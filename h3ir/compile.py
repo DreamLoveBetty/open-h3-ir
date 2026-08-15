@@ -105,6 +105,20 @@ def check_request(brief: Brief) -> None:
             "aspect-invalid",
             f"`aspect` {brief.aspect!r} is not a ratio. Write it as W:H (16:9, 9:16, 1:1) or as "
             "WxH pixels; any canvas that is a multiple of 32 renders.") from e
+    if brief.shots is not None:
+        from .shots import MIN_SHOT_MS, PINNED_SHOTS_MAX
+        if not 1 <= brief.shots <= PINNED_SHOTS_MAX:
+            raise BriefRefused(
+                "shots-invalid",
+                f"`shots` is {brief.shots}. An explicit count is kept exactly, so it must be a "
+                f"number from 1 to {PINNED_SHOTS_MAX}; leave it unset and the writer decides.")
+        floor_s = brief.shots * MIN_SHOT_MS / 1000
+        if brief.seconds < floor_s:
+            raise BriefRefused(
+                "shots-do-not-fit",
+                f"{brief.shots} shots need at least {floor_s:.1f}s at {MIN_SHOT_MS / 1000:.1f}s a "
+                f"shot -- below that a cut reads as a glitch -- and this render is "
+                f"{brief.seconds:g}s. Ask for fewer shots or a longer video.")
 
 
 def check_capacity(brief: Brief) -> None:
@@ -648,6 +662,7 @@ def _written_context(brief: Brief, mode, plan, cards, n_tokens: int, style, lice
         prompt_tokens=n_tokens,
         require_music_na=True if brief.silent else None,
         generation_task="video editing" not in plan.task_types,
+        pinned_shots=brief.shots,
         declared_roles=declared, paired_audio=paired,
         standalone_audio=_standalone_audio(plan),
         audio_transcripts=_audio_transcripts(plan, cards),
@@ -854,6 +869,7 @@ def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
         prompt_tokens=n_tokens,
         require_music_na=True if brief.silent else None,
         generation_task="video editing" not in plan.task_types,
+        pinned_shots=brief.shots,
         declared_roles=declared,
         paired_audio=paired,
         standalone_audio=_standalone_audio(plan),

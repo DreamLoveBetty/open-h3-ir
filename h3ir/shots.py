@@ -40,11 +40,12 @@ FRAMINGS = ("extreme wide", "wide", "medium wide", "medium", "medium close", "cl
             "extreme close", "over the shoulder", "low angle", "high angle", "overhead", "pov")
 
 MIN_SHOT_MS = 1200          # below this a cut reads as a glitch rather than an edit
+PINNED_SHOTS_MAX = 10       # the ceiling on an explicit `shots` pin; `auto` has its own
 MAX_SHOTS = 4
 CUT_ROUNDING_MS = 100
 
 
-def shot_schema(max_shots: int = MAX_SHOTS) -> dict[str, Any]:
+def shot_schema(max_shots: int = MAX_SHOTS, exact: int | None = None) -> dict[str, Any]:
     return {
         "title": "ShotPlan",
         "type": "object",
@@ -58,7 +59,9 @@ def shot_schema(max_shots: int = MAX_SHOTS) -> dict[str, Any]:
             "suggestions": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
             "shots": {
                 "type": "array",
-                "minItems": 1,
+                # An exact pin closes both ends: guided decoding then cannot return a count the
+                # caller did not ask for, which beats asking nicely every time.
+                "minItems": exact or 1,
                 "maxItems": max_shots,
                 "items": {
                     "type": "object",
