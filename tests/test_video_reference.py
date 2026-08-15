@@ -186,3 +186,8 @@ def test_the_video_analyser_gets_the_deep_retry_budget():
         f.write(png)
     analyse_video(b, ref, frames=[f.name])
     assert b.kw.get("retries") == 5
+
+    from h3ir.analyse import analyse_image
+    ref_img = AssetRef(kind=AssetKind.IMAGE, path=f.name, sha256="b" * 64, role=None)
+    analyse_image(b, ref_img)
+    assert b.kw.get("retries") == 5, "the image analyser shares the deep budget"
