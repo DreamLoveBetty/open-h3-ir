@@ -140,6 +140,10 @@ def render_retention(plan: Plan) -> str:
             elif m.role is Role.CONTINUATION_SOURCE:
                 lines.append(f"{m.label} (continuation source): partially_preserved - the setting "
                              "and subject continue from its final state.")
+            elif m.role is Role.STRUCTURE:
+                lines.append(f"{m.label} (camera movement and cutting rhythm): weak_reference - "
+                             "the camera moves and edit timing are followed, while the video's "
+                             "contents are not reproduced.")
         elif m.kind is AssetKind.IMAGE and m.role is Role.FRAME_ANCHOR_FIRST:
             lines.append(f"{m.label} ([Shot 1] first frame): fully_preserved - the composition, "
                          "subject placement and lighting of the opening frame are held.")
@@ -157,10 +161,6 @@ def render_retention(plan: Plan) -> str:
             lines.append(f"{m.label} (style and composition): weak_reference - the target video "
                          "adheres to the reference's aesthetic, while its contents are not "
                          "reproduced.")
-        elif m.kind is AssetKind.VIDEO and m.role is Role.STRUCTURE:
-            lines.append(f"{m.label} (camera movement and cutting rhythm): weak_reference - the "
-                         "camera moves and edit timing are followed, while the video's contents "
-                         "are not reproduced.")
     for label, marker, note in audio_relations(plan):
         lines.append(f"{label}: {marker} - {note}.")
     return "\n".join(lines)
