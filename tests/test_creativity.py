@@ -571,3 +571,49 @@ def test_bold_does_not_oblige_the_model_to_spend_its_content_licence():
     assert not _rules(spare, build(PLAIN_REQUEST, level="bold"))
     assert not [r for r in _rules(spare, build(PLAIN_REQUEST, level="bold"), sev="WARN")
                 if r.startswith("Q")], "not even as a warning"
+
+
+# ---------------------------------------------------------------- the caller's own quotes
+# Measured 2026-08-15, matrix rows 8, 9, 11 and 13 on the tray surface: four briefs died on
+# CompilerInvariantError because the deterministic draft echoed the request's own quoted words and
+# Q2 read them as added lettering. @speaks resolution leaves spoken lines quoted in the sentence BY
+# DESIGN, and quoted sign text in the sentence is the node's documented mechanism for lettering.
+# What the caller's request already contains cannot be an addition.
+
+def test_quoted_lettering_in_the_request_is_supplied_not_added():
+    """Row 13's crash: the sign text is in the request, quoted; the brief rendering it is
+    obedience."""
+    scope = build('a hand hangs a wooden sign on the shop door that reads "BACK AT NOON" and '
+                  'straightens it', level="balanced")
+    assert ONSCREEN_TEXT in scope.requested
+    text = _brief(PLAIN_SHOT + ' The wooden sign reads "BACK AT NOON".')
+    assert "Q2-unlicensed-addition" not in _rules(text, scope)
+
+
+def test_quotes_that_are_the_dialogue_lines_do_not_license_lettering():
+    """The control on the fix above: a request whose only quotes are its spoken lines has supplied
+    speech, not lettering — the two channels must not blur."""
+    scope = build('the mechanic says "It was never the engine." and turns away',
+                  level="balanced", has_dialogue=True,
+                  dialogue_texts=("It was never the engine.",))
+    assert ONSCREEN_TEXT not in scope.requested
+
+
+def test_a_dialogue_line_echoed_in_prose_is_speech_not_lettering():
+    """Rows 8, 9, 11's crash: the draft echoes the sentence, the sentence quotes the line, and the
+    same line sits in its <d> block. The echo is the caller's own words twice, not lettering."""
+    line = "It was never the engine."
+    text = _brief(PLAIN_SHOT + f' The mechanic says "{line}" — she (S1) says: '
+                  f'<d>[English] {line}</d>')
+    ctx = Context(mode="t2va", duration_s=8.0, expected_dialogue=(line,),
+                  scope=build(PLAIN_REQUEST, level="balanced", has_dialogue=True,
+                              dialogue_texts=(line,)))
+    fired = {f.rule for f in validate(text, ctx) if f.severity == "ERROR"}
+    assert "Q2-unlicensed-addition" not in fired
+
+
+def test_invented_lettering_still_fails_at_balanced():
+    """The rule must survive its own fix: a quoted span that is in neither the request nor the
+    dialogue is still an addition."""
+    text = _brief(PLAIN_SHOT + ' A neon sign reads "OPEN ALL NIGHT".')
+    assert "Q2-unlicensed-addition" in _rules(text, build(PLAIN_REQUEST, level="balanced"))

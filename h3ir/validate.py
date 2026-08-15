@@ -1543,11 +1543,17 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
     # camera moves are NOT on this list at any setting -- they are how the same content is shown, and
     # putting them here would be shot count re-entering the validator through a side door.
     if ctx.scope is not None:
+        # Quoted spans outside <d> blocks are lettering — except the caller's own dialogue
+        # lines echoed in prose, which the draft does whenever the request quotes a line in the
+        # sentence. The caller's words are speech wherever they appear, never added lettering.
+        spoken = {" ".join(d.split()) for d in ctx.expected_dialogue}
+        bare_quotes = [q for q in re.findall(r'"([^"]*)"',
+                                             re.sub(r"<d>.*?</d>", " ", desc, flags=re.S))
+                       if " ".join(q.split()) not in spoken]
         present = {
             SPEECH: bool(re.search(r"<d>", text)),
             SCORE: music.strip() not in ("", "N/A"),
-            # quoted spans that are not dialogue: what the frame will actually render as lettering
-            ONSCREEN_TEXT: bool(re.findall(r'"[^"]*"', re.sub(r"<d>.*?</d>", " ", desc, flags=re.S))),
+            ONSCREEN_TEXT: bool(bare_quotes),
         }
         for element, is_present in present.items():
             if not is_present or ctx.scope.permits(element):

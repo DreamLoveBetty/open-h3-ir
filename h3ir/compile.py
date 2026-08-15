@@ -716,6 +716,7 @@ def _scope(brief: Brief, plan) -> Scope:
         brief.intent, level=brief.creativity, constraints=tuple(brief.constraints),
         has_dialogue=bool(brief.dialogue) or counts["Audio"] > 0,
         has_onscreen_text=bool(brief.onscreen_text),
+        dialogue_texts=tuple(d.text for d in brief.dialogue),
         silent=brief.silent)
 
 

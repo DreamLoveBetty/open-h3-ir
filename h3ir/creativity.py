@@ -317,6 +317,7 @@ class Scope:
 def build(intent: str, *, level: str | Creativity | None = None,
           constraints: tuple[str, ...] | list[str] = (),
           has_dialogue: bool = False, has_onscreen_text: bool = False,
+          dialogue_texts: tuple[str, ...] = (),
           silent: bool = False) -> Scope:
     """Read the scope off the request once.
 
@@ -336,6 +337,16 @@ def build(intent: str, *, level: str | Creativity | None = None,
         forbidden.add(SCORE)
     supplied = {el for el, present in ((SPEECH, has_dialogue),
                                        (ONSCREEN_TEXT, has_onscreen_text)) if present}
+    # A quoted span in the request is the caller supplying the words themselves — the strongest
+    # form of a request. Spans that are the caller's dialogue lines are speech (carried by
+    # `has_dialogue`); whatever quoted material remains is lettering the caller wants in frame.
+    # Measured (2026-08-15): four tray briefs died on their own Q2 because the sentence's quotes —
+    # the node's documented mechanism for both channels — licensed neither.
+    spoken = {" ".join(d.split()) for d in dialogue_texts}
+    lettering = [q for t in texts for q in re.findall(r'"([^"]+)"', t)
+                 if " ".join(q.split()) not in spoken]
+    if lettering:
+        supplied.add(ONSCREEN_TEXT)
     mentioned = set(mentions(*texts)) - forbidden
     forbidden -= supplied
     return Scope(level=parse(level), requested=frozenset(supplied | mentioned),
