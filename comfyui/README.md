@@ -292,6 +292,11 @@ Re-queue with a different `brief seed`.
 
 ## The example graph
 
+`example/openh3ir_base_workflow.json` is the place to start: the three nodes wired into the stock
+sampling chain (res_multistep, simple, 20 steps, no accelerator), an empty tray, previews on the
+brief and the report, and a save. It is the exact workflow that rendered its own first video before
+it shipped. Open it, pick your five files on Setup, type a sentence, run.
+
 `example/openh3ir_tray.api.json` is the first graph that ever rendered through the tray, byte for
 byte as submitted: two named pictures and a sound on the tray, a prompt that mentions them with @
 and locks one announcer line with @speaks, the full Turbo chain, and a save. Open it, or drag the

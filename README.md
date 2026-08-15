@@ -137,8 +137,13 @@ commit if you build on it.
 
 ## In ComfyUI: three nodes
 
+![The base workflow: Setup, Media and Main wired into a render subgraph and a save](docs/media/comfyui-base-workflow.png)
+
 The pack is the [`comfyui/`](comfyui/README.md) folder of this repository. Copy or link that one
-folder into `custom_nodes`, restart ComfyUI, and three nodes appear under **OpenH3-IR**.
+folder into `custom_nodes`, restart ComfyUI, and three nodes appear under **OpenH3-IR**. The graph
+in the picture ships with the pack:
+[`comfyui/example/openh3ir_base_workflow.json`](comfyui/example/openh3ir_base_workflow.json), the
+base sampling chain with no accelerator, ready to open, type into, and run.
 
 ```bash
 # from inside the clone, where Install left you
