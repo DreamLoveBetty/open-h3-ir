@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v12";
+const VERSION = "tray v13";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -440,6 +440,15 @@ app.registerExtension({
       const tray = new Tray(this, state);
       this._oh3Tray = tray;
       const panel = this.addDOMWidget("oh3_panel", "div", tray.root, { serialize: false });
+      // The host wraps the board in its own positioning container sized to whatever width it
+      // believes the widget has, and that belief has already been caught lying wide. An invisible
+      // wrapper that eats the mouse blocks canvas dragging past the node's edge, so the wrapper
+      // stops taking events and only the visible board does.
+      requestAnimationFrame(() => {
+        const wrap = tray.root.parentElement;
+        if (wrap && wrap !== document.body) wrap.style.pointerEvents = "none";
+        tray.root.style.pointerEvents = "auto";
+      });
       // Honoured by the canvas renderer; harmless where Vue owns layout, and the board's own
       // pinned CSS is what actually keeps it intact there.
       panel.computedHeight = PANEL_H;
