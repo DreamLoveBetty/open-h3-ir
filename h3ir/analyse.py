@@ -162,7 +162,10 @@ def analyse_image(backend: Backend, ref: AssetRef, *, seed: int | None = None) -
     obj = backend.json_call(
         [{"role": "system", "content": IMAGE_INSTRUCTIONS},
          user_message("Catalogue this image." + hint, [ref.path] if ref.path else None)],
-        IMAGE_SCHEMA, required=("summary", "subjects"), seed=seed, max_tokens=6000)
+        IMAGE_SCHEMA, required=("summary", "subjects"), seed=seed, max_tokens=6000,
+        # The same deep budget as analyse_video, for the same reason: vision is this endpoint's
+        # flakiest structured caller, and a card that cannot be built kills the whole brief.
+        retries=5)
 
     return AssetCard(
         sha256=ref.sha256, kind=AssetKind.IMAGE,
