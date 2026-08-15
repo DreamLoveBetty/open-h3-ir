@@ -842,6 +842,22 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                     "their viewpoint, subject placement, and shot order.'")
                 break
 
+    # The same defect one role over, measured on the tray surface: a style plate's gnome walked
+    # into the video as a fully_preserved subject against the caller's own note. A style reference
+    # lends its look; its contents stay out.
+    for label, role, _marker in ctx.declared_roles:
+        if role != "style" or not label.startswith("<Picture"):
+            continue
+        for line_ in defs.splitlines():
+            if re.match(r"\s*<Subject \d+>", line_) and label in line_:
+                add("R29-style-cited-as-content", "ERROR",
+                    f"{label} is declared a style reference: it lends its look and its contents "
+                    f"never appear in the target video, and this defines a subject from it: "
+                    f"{line_.strip()[:120]!r}. Remove it from every <Subject N> definition and "
+                    f"give it its own standalone line instead: '{label} is the style and "
+                    "composition reference for the target video, defining ...'.")
+                break
+
     # An invented PROVENANCE claim. The first video+audio brief anyone compiled wrote "<Audio 1> is the
     # ambient sound track from <Video 1>" for an audio asset wired standalone (`ref_audio_1`), not as
     # that video's soundtrack (`ref_video_audio_1`). The model cannot know the wiring and guessed from

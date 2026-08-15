@@ -373,6 +373,31 @@ def storyboard_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
     return "\n".join(lines)
 
 
+def style_facts(picture_roles: tuple[tuple[str, str], ...]) -> str:
+    """What a style-role plate is, stated where the document is written.
+
+    The storyboard role needed this exact statement (measured: the board became scenery) and got it;
+    style had the same defect unfixed. Measured on the tray surface: a line drawing declared
+    `style`, whose note said its gnome must stay out, came back with the gnome as Subject 1,
+    fully_preserved, in the scene. The role travels in the manifest; nothing told the writer what it
+    means. R29-style-cited-as-content is the deterministic check behind this statement.
+    """
+    plates = [label for label, role in picture_roles if role == "style"]
+    if not plates:
+        return ""
+    lines = []
+    for label in plates:
+        lines.append(
+            f"{label} is a STYLE REFERENCE, declared by the caller: it lends its look — medium, "
+            f"line, palette, shading, composition — and nothing else. Its contents never appear in "
+            f"the target video. Give {label} one standalone line in subject_definitions in the "
+            f"form '{label} is the style and composition reference for the target video, defining "
+            f"...', name the aesthetic in detailed_description, and in retention_analysis give it "
+            f"one line as '{label} (style and composition): ...'. Never define a <Subject N> from "
+            f"{label} and never place anything drawn or photographed in it into any shot.")
+    return "\n".join(lines)
+
+
 def reference_picture_facts() -> str:
     """The one thing a full-reference brief must not say about its pictures.
 
@@ -544,6 +569,9 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         board_facts = storyboard_facts(picture_roles)
         if board_facts:
             label_facts += ("\n" if label_facts else "") + board_facts
+        look_facts = style_facts(picture_roles)
+        if look_facts:
+            label_facts += ("\n" if label_facts else "") + look_facts
         unnamed = [lb for lb in labels if lb not in label_facts]
         if unnamed:
             label_facts += ("\n" if label_facts else "") + (
