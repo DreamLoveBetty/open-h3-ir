@@ -468,7 +468,12 @@ def analyse_video(backend: Backend, ref: AssetRef, frames: list[str] | None = No
           "`summary` sentence, and describe the subject once rather than once per frame."},
          user_message("Catalogue this clip." + (f"\n\nCaller's note: {ref.note}" if ref.note else ""),
                       frames)],
-        IMAGE_SCHEMA, required=("summary", "subjects"), seed=seed, max_tokens=6000)
+        IMAGE_SCHEMA, required=("summary", "subjects"), seed=seed, max_tokens=6000,
+        # Multi-frame vision is this endpoint's flakiest structured call: measured 2026-08-15, the
+        # same clip failed the schema-echo check twice and passed on the third attempt, and one
+        # brief burned all three attempts three requests running. Six attempts, because a video
+        # card that cannot be built kills the whole brief.
+        retries=5)
     return AssetCard(sha256=ref.sha256, kind=AssetKind.VIDEO,
                      summary=obj.get("summary", ""), subjects=obj.get("subjects") or [],
                      environment=obj.get("environment", ""), lighting=obj.get("lighting", ""),

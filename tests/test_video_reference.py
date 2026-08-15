@@ -157,3 +157,21 @@ def test_the_frames_are_presented_as_one_clip_rather_than_separate_references(cl
     assert "SAME clip" in system
     assert "not separate" in system
     assert "describe the subject once" in system
+
+
+def test_the_video_analyser_gets_the_deep_retry_budget():
+    """Multi-frame vision is the endpoint's flakiest structured call (measured: the same clip
+    failed the schema-echo check twice, passed third), and a card that cannot be built kills the
+    whole brief. The budget is part of the call's contract, so it is pinned."""
+    from h3ir.analyse import analyse_video
+    from h3ir.models import AssetKind, AssetRef
+
+    class Recorder:
+        def json_call(self, messages, schema, **kw):
+            self.kw = kw
+            return {"summary": "a clip", "subjects": []}
+
+    b = Recorder()
+    ref = AssetRef(kind=AssetKind.VIDEO, path="", sha256="a" * 64, role=None)
+    analyse_video(b, ref, frames=["data:image/png;base64,x"])
+    assert b.kw.get("retries") == 5
