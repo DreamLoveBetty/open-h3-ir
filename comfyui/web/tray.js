@@ -17,10 +17,11 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v5";
+const VERSION = "tray v6";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
-const NODE_W = 560;
+const NODE_W = 578;
+const NODE_H_EXTRA = 84;
 const PANEL_H = 476;
 const CAPACITY = { picture: 9, video: 3, sound: 3 };
 const MAX_FILES = 12;
@@ -315,7 +316,7 @@ const CSS = `
 .oh3-panel{font-family:system-ui,sans-serif;color:#d7dbe2;font-size:11px;
   background:#191c22;border:1px solid #2a2f3a;border-radius:8px;padding:7px;
   display:flex;flex-direction:column;gap:6px;box-sizing:border-box;
-  width:546px;max-width:100%;height:${PANEL_H}px;min-height:${PANEL_H}px;overflow:hidden;}
+  width:100%;max-width:546px;height:${PANEL_H}px;min-height:${PANEL_H}px;overflow:hidden;}
 .oh3-panel *{box-sizing:border-box;min-width:0;}
 .oh3-panel.oh3-hot{border-color:#e8873a;}
 .oh3-top{flex:0 0 auto;display:flex;align-items:center;gap:8px;overflow:hidden;}
@@ -399,25 +400,22 @@ app.registerExtension({
       // pinned CSS is what actually keeps it intact there.
       panel.computedHeight = PANEL_H;
       panel.computeSize = (w) => [w || NODE_W, PANEL_H];
-      const min = this.computeSize?.();
-      this.size[0] = Math.max(NODE_W, this.size?.[0] || 0);
-      this.size[1] = Math.max(min?.[1] || 0, PANEL_H + 110, this.size?.[1] || 0);
+      this.size[0] = NODE_W;
+      this.size[1] = PANEL_H + NODE_H_EXTRA;
       requestAnimationFrame(() => tray.render());
       return r;
     };
-    const computeSize = nodeType.prototype.computeSize;
     nodeType.prototype.computeSize = function () {
-      const out = computeSize?.apply(this, arguments) || [NODE_W, PANEL_H + 110];
-      out[0] = Math.max(NODE_W, out[0]);
-      out[1] = Math.max(PANEL_H + 110, out[1]);
-      return out;
+      // The node hugs the board exactly: a pinned board inside a fluid node is what left gray
+      // slack around the panel. Nothing about this node benefits from being resized.
+      return [NODE_W, PANEL_H + NODE_H_EXTRA];
     };
 
     const onResize = nodeType.prototype.onResize;
     nodeType.prototype.onResize = function (size) {
       try {
-        size[0] = Math.max(NODE_W, size[0]);
-        size[1] = Math.max(PANEL_H + 110, size[1]);
+        size[0] = NODE_W;
+        size[1] = PANEL_H + NODE_H_EXTRA;
       } catch (e) { /* leave the size alone */ }
       return onResize?.apply(this, arguments);
     };
