@@ -153,6 +153,15 @@ app.registerExtension({
     const onCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       const r = onCreated?.apply(this, arguments);
+      // Six lines of prompt, not the stock three: the sentence IS the interface here, and half of
+      // a two-clause sentence hidden behind a scrollbar reads as a smaller tool than this is.
+      const w0 = (this.widgets || []).find((x) => x.name === "intent");
+      if (w0) {
+        w0.options = w0.options || {};
+        w0.options.getMinHeight = () => 124;
+        const fit = this.computeSize();
+        this.setSize([Math.max(this.size[0], fit[0]), Math.max(this.size[1], fit[1])]);
+      }
       // The multiline widget's element appears after creation; attach when it exists.
       requestAnimationFrame(() => {
         const w = (this.widgets || []).find((x) => x.name === "intent");
