@@ -598,7 +598,7 @@ class OpenH3IRSetup(io.ComfyNode):
                          "graph needs one: the compile node loads what you pick here."),
             inputs=[
                 io.String.Input(
-                    "server", display_name="service", default=DEFAULT_SERVER,
+                    "server", display_name="OpenH3-IR service", default=DEFAULT_SERVER,
                     tooltip="Where the OpenH3-IR service is listening. Start one from the repo with "
                             "h3ir serve. It can be another machine."),
                 io.Combo.Input(
