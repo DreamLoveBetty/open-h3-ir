@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v6";
+const VERSION = "tray v7";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -42,13 +42,17 @@ const ROLE_TOKEN = {
   "sound effect": "sfx", "voice to match": "voice_timbre",
 };
 const SOUNDTRACKS = ["off", "paired", "alone"];
-// What a filled cell wears so its settings are visible without opening the editor. The default
-// role wears nothing: a badge that is always there says nothing.
-const BADGE = {
-  environment: "setting", style: "style", frame_anchor_first: "first", frame_anchor_last: "last",
-  storyboard: "sketch", edit_source: "edit", continuation_source: "continue",
-  music_style: "style", beat_reference: "beat", sfx: "sfx", voice_timbre: "voice",
+// What a filled cell wears so its settings are visible without opening the editor. Every slot
+// wears its role, because a missing badge reads as "not set" rather than "default": the default
+// wears quiet gray and anything chosen wears the accent, so special still stands out at a glance.
+const BADGE_BY_KIND = {
+  picture: { subject: "in shot", environment: "setting", style: "style",
+             frame_anchor_first: "first", frame_anchor_last: "last", storyboard: "sketch" },
+  video: { subject: "copy", edit_source: "edit", continuation_source: "continue" },
+  sound: { bgm: "play", music_style: "style", beat_reference: "beat", sfx: "sfx",
+           voice_timbre: "voice" },
 };
+const DEFAULT_ROLE = { picture: "subject", video: "subject", sound: "bgm" };
 
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -226,8 +230,10 @@ class Tray {
 
   badges(slot, inline = false) {
     const wrap = el("span", { class: inline ? "oh3-badges oh3-inlinebadges" : "oh3-badges" });
-    if (BADGE[slot.role]) wrap.append(el("span", { class: "oh3-badge oh3-rolebadge",
-      textContent: BADGE[slot.role], title: "what it is: set in the editor below" }));
+    const word = (BADGE_BY_KIND[slot.kind] || {})[slot.role];
+    if (word) wrap.append(el("span", {
+      class: "oh3-badge" + (slot.role === DEFAULT_ROLE[slot.kind] ? "" : " oh3-rolebadge"),
+      textContent: word, title: "what it is: set in the editor below" }));
     if ((slot.note || "").trim()) wrap.append(el("span", { class: "oh3-badge",
       textContent: "✎", title: "described: " + slot.note }));
     if ((slot.transcript || "").trim()) wrap.append(el("span", { class: "oh3-badge",
