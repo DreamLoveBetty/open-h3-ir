@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v7";
+const VERSION = "tray v8";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -379,8 +379,8 @@ select.oh3-in{flex:1;}
 .oh3-hint{color:#6b7484;font-size:10px;padding-top:14px;text-align:center;}
 .oh3-badges{position:absolute;top:3px;right:3px;display:flex;gap:3px;z-index:1;}
 .oh3-inlinebadges{position:static;flex:0 0 auto;}
-.oh3-badge{background:rgba(10,12,16,.85);border:1px solid #3a4252;border-radius:3px;
-  color:#c9cfda;font-size:8px;padding:0 3px;line-height:1.5;font-family:ui-monospace,monospace;}
+.oh3-badge{background:rgba(10,12,16,.85);border:1px solid #333a46;border-radius:3px;
+  color:#7d8695;font-size:8px;padding:0 3px;line-height:1.5;font-family:ui-monospace,monospace;}
 .oh3-rolebadge{color:#e8873a;border-color:#6d5527;}
 `;
 
