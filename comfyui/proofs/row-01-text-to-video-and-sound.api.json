@@ -15,12 +15,12 @@
   "30": {
     "class_type": "OpenH3IRCompile",
     "inputs": {
-      "intent": "the courier stops at the guard desk in the rain and says @speaks(\"The gate stays shut tonight.\"), the guard answers @speaks(\"Not for me.\"), and then both of them shout @speaks(\"Move!\") together as the barrier light starts flashing under a sign that reads \"NO ENTRY\"",
+      "intent": "a street musician plays saxophone under a bridge at night while rain pours past the streetlight, and a woman walking by stops, listens, and finally says @speaks(\"You should be famous.\")",
       "seconds": 10.0,
       "aspect": "16:9",
       "creativity": "bold",
       "silent": false,
-      "shots": "3",
+      "shots": "auto",
       "megapixels": 0.0,
       "spoken_language": "English",
       "seed": 7,
@@ -181,7 +181,7 @@
         "150",
         0
       ],
-      "filename_prefix": "OpenH3IR_matrix/row01_t2va",
+      "filename_prefix": "OpenH3IR_matrix/row01_t2va_v2",
       "format": "auto",
       "codec": "auto"
     }

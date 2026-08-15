@@ -11,28 +11,29 @@ staging, speech, ambience and score, all from the text.
 `row-01-text-to-video-and-sound.api.json` beside this file, byte for byte the graph that was
 submitted and rendered. The same graph is embedded in the rendered video itself: drag the mp4 onto
 the ComfyUI canvas and the whole wiring appears, runnable. Every class_type and input name in the
-embedded copy was checked against the live `/object_info` before this file was written.
+embedded copy was checked against the live `/object_info`, and every input value in it matches the
+committed file exactly.
 
-The sentence, three spoken lines locked with `@speaks`, one line of on-screen text in plain quotes:
+The sentence, one spoken line locked with `@speaks`:
 
-> the courier stops at the guard desk in the rain and says @speaks("The gate stays shut
-> tonight."), the guard answers @speaks("Not for me."), and then both of them shout
-> @speaks("Move!") together as the barrier light starts flashing under a sign that reads
-> "NO ENTRY"
+> a street musician plays saxophone under a bridge at night while rain pours past the streetlight,
+> and a woman walking by stops, listens, and finally says @speaks("You should be famous.")
 
-Settings: 10.0s · 16:9 · bold · sound on · shots 3 · seed 7. No media input connected.
+Settings: 10.0s · 16:9 · bold · sound on · shots auto · seed 7. No media input connected.
 
 ## What came back
 
 The document arrived in the three-field form the first guide prescribes for a text job, with no
-picture alignment line. All three spoken lines sit in dialogue blocks, letter for letter, each with
-a speaker number — S1, S2, then the shared shout (S1,S2):
+picture alignment line. The locked line sits in a dialogue block, letter for letter, on the right
+speaker:
 
-> `<d>[English] The gate stays shut tonight.</d>` … `<d>[English] Not for me.</d>` …
-> `<d>[English] Move!</d>`
+> The woman (S2), with a warm, clear voice, steps closer and says:
+> `<d>[English] You should be famous.</d>`
 
-`overall_soundscape` wrote the rain and the barrier motor; `non_diegetic_music` wrote a percussive
-electronic build synced to the flashing light. The report:
+`integrated_multimodal_description` cast the two people distinctly — the musician in a dark trench
+coat (S1), the woman in a red raincoat (S2) — staged her entrance, her stop, the line, and his
+pause and grateful smile. `overall_soundscape` wrote the rain, the saxophone's metallic resonance
+and the footsteps; `non_diegetic_music` a quiet synth pad under the sax. The report:
 
 ```
 mode           t2va
@@ -46,26 +47,16 @@ The right checkpoint for a text job, said out loud.
 
 ## The render, verified
 
-`ffprobe`: h264, 1344x768, exactly 243 frames at 24 fps, 10.125s, stereo AAC. The frame count and
+`ffprobe`: h264, 1344x768, exactly 243 frames at 24 fps, 10.125s, stereo AAC. Frame count and
 duration match the report to the frame.
 
-**Heard.** Whisper (large-v3-turbo) on the rendered audio: all three lines are spoken, in order, at
-sensible times — line one at 0.0–2.5s, the reply at 4.1–4.8s, the shared shout at 8.9–10.1s. The
-performance adds a small lead-in breath-phrase before line one; whether locked lines survive letter
-for letter in the *performance* is row 9's measurement, made there.
+**Heard.** Whisper (large-v3-turbo) on the rendered audio: the only speech in the clip is
+"You should be famous." — the locked line, letter for letter, nothing added.
 
-**Watched.** Twelve full-resolution frames across the clip, including the last second: two men at a
-rain-slicked guard desk under heavy rain, the sign reading exactly "NO ENTRY", the barrier light
-dark through the dialogue and flashing red from the shout onward, both mouths open on the shared
-"Move!", and the final frames pushing in hard onto the flashing light under the sign — the camera
-move the document wrote.
-
-## Noted, not row 1's claim
-
-- `shots 3` was asked; the service's plan layer carries three timed shots, and the writer merged
-  them into one continuous `[Shot 1]`. This is the shot-count caveat the matrix measures at row 6.
-- The "courier" renders as a second uniformed officer; the two men are near-twins. Casting
-  divergence from prose is a model-side matter, not a compiler or node failure.
+**Watched.** Twelve full-resolution frames across the clip, including the last second: the musician
+alone under the bridge in the opening, rain past the streetlight on wet pavement, the woman in the
+red raincoat entering from the left exactly as written, stopping to listen, and the final frames
+holding his pause and small smile toward her — the closing beat the document wrote.
 
 ## Reproduce
 
