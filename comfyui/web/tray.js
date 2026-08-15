@@ -369,7 +369,7 @@ const CSS = `
   display:flex;flex-direction:column;gap:5px;overflow:hidden;}
 .oh3-editrow{display:flex;align-items:center;gap:5px;overflow:hidden;}
 .oh3-at{flex:0 0 auto;color:#eb8219;font-family:ui-monospace,monospace;}
-.oh3-in{background:#12151b;border:1px solid #2e3440;color:#f3efe6;border-radius:4px;
+.oh3-in{background:#101016;border:1px solid rgba(243,239,230,.22);color:#f3efe6;border-radius:4px;
   padding:3px 6px;font-size:11px;}
 .oh3-name{flex:0 0 110px;}
 select.oh3-in{flex:1;}
