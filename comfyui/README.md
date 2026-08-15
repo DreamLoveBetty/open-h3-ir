@@ -68,7 +68,7 @@ dashes. The name is how the prompt refers to the file.
 
 These decide the books mechanically. A clip set to "edit it" produces an editing brief whatever the
 sentence says; a track set to "match its style" can never be claimed as copied. First and last frame
-switch the job to H3's frame weights, which take no references at all, so mixing them with reference
+switch the job to H3's fl2va model, which takes no references at all, so mixing frames with reference
 slots is refused before any model call, with the reason.
 
 **A line about it.** Optional for pictures, which get looked at. Nearly essential for sounds, which
@@ -127,7 +127,7 @@ other, the report says so in plain words and the render still happens:
 weights        minimax_h3_fl2va_pruned_int8_convrot.safetensors  via UNETLoader
 WARNING        minimax_h3_fl2va_pruned_int8_convrot.safetensors names H3's fl2va family, and
                this graph is a reference or text job, which runs on the ref2va checkpoint.
-               Check the reference weights field on the Setup node: it will render either way,
+               Check the ref2va model field on the Setup node: it will render either way,
                and it will be wrong in a way nothing on screen explains.
 ```
 

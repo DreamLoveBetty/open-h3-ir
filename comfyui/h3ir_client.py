@@ -443,7 +443,7 @@ def family_warning(chosen: str, *, frames_job: bool) -> str:
     if other not in name or wanted in name:
         return ""
     job = "a first and last frame job" if frames_job else "a reference or text job"
-    slot = "frame weights" if frames_job else "reference weights"
+    slot = "fl2va model" if frames_job else "ref2va model"
     return (f"{chosen} names H3's {other} family, and this graph is {job}, which runs on the "
             f"{wanted} checkpoint. Check the {slot} field on the Setup node: it will render either "
             "way, and it will be wrong in a way nothing on screen explains.")
@@ -470,7 +470,7 @@ def setup_bundle(*, server: str, reference_model: str, frames_model: str, text_e
             f"the service address {address!r} has no scheme, so nothing can be requested from it. "
             f"Write it in full, for example {DEFAULT_SERVER}.")
     if weight_dtype not in WEIGHT_DTYPES:
-        raise ServiceError(f"weight precision {weight_dtype!r} is not one of {WEIGHT_DTYPES}.")
+        raise ServiceError(f"weight_dtype {weight_dtype!r} is not one of {WEIGHT_DTYPES}.")
     return {"server": address.rstrip("/"), "reference_model": reference_model,
             "frames_model": frames_model, "text_encoder": text_encoder, "video_vae": video_vae,
             "audio_vae": audio_vae, "weight_dtype": weight_dtype, "timeout_s": int(timeout_s)}
@@ -654,7 +654,7 @@ def length_notes(asked_seconds: float, frames: int) -> list[str]:
 
 
 def precision_ignored_note() -> str:
-    return line("note", "weight precision does not apply to a GGUF checkpoint, which carries its "
+    return line("note", "weight_dtype does not apply to a GGUF checkpoint, which carries its "
                         "own quantisation, so it was ignored.")
 
 

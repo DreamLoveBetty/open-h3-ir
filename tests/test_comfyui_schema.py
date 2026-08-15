@@ -190,9 +190,12 @@ def test_the_first_line_of_a_placeholder_stands_alone():
 
 def test_no_label_is_an_identifier():
     """An underscore in a label means the identifier leaked onto the canvas, which is what happened:
-    `sound_notes` and `spoken_words` were showing as-is."""
+    `sound_notes` and `spoken_words` were showing as-is. `weight_dtype` is the one exception, and it
+    is the opposite of a leak: it quotes Load Diffusion Model's own widget name letter for letter,
+    because that exact string is the name people relate the setting to."""
     offenders = [f"{n}.{i} -> {_str(kw.get('display_name'))!r}" for n, _k, i, kw in ALL
-                 if "_" in _str(kw.get("display_name"))]
+                 if "_" in _str(kw.get("display_name"))
+                 and _str(kw.get("display_name")) != "weight_dtype"]
     assert not offenders, f"identifiers used as labels: {offenders}"
 
 

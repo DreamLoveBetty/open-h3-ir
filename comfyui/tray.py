@@ -331,7 +331,7 @@ def exclusivity(slots: list[Slot]) -> None:
         raise ServiceError(
             f"a storyboard cannot ride along with a first or last frame. {board[0]} plans the "
             f"shots and {anchors[0].label} is a frame of the video, and a frame job runs on H3's "
-            "frame weights, whose node takes the two frames and no reference picture at all: the "
+            "fl2va model, whose node takes the two frames and no reference picture at all: the "
             "brief would lay the shots out from your sketch and H3 would never receive it. On the "
             "OpenH3-IR Media node, change the sketch or change the frame.")
     others = [s for s in slots if s.role not in ANCHORS]
@@ -341,7 +341,7 @@ def exclusivity(slots: list[Slot]) -> None:
             "this is two different jobs at once. " + f"{anchors[0].label} is set to "
             f"{anchors[0].words}, which says a picture IS a frame of the video, and {one.label} is "
             f"set to {one.words}, which says a file is something the shot should contain. H3 does "
-            "one or the other, and its frame weights take no reference picture, clip or sound at "
+            "one or the other, and its fl2va model takes no reference picture, clip or sound at "
             "all, so the brief would name your file and H3 would never receive it. Change one of "
             "them on the OpenH3-IR Media node.")
 

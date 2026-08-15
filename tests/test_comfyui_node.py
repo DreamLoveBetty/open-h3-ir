@@ -96,13 +96,13 @@ def test_a_reference_checkpoint_in_the_frame_slot_is_warned_about():
     the frames, so the filename's own family word is read back to the user."""
     said = C.family_warning("minimax_h3_ref2va_pruned_int8_convrot.safetensors", frames_job=True)
     assert "ref2va" in said and "fl2va" in said, "name what was picked and what the job wants"
-    assert "frame weights" in said, "name the field on the node that fixes it"
+    assert "fl2va model" in said, "name the field on the node that fixes it"
     assert "render either way" in said, "it is a warning, not a refusal"
 
 
 def test_a_frame_checkpoint_in_the_reference_slot_is_warned_about():
     said = C.family_warning("minimax_h3_fl2va_pruned_int8_convrot.safetensors", frames_job=False)
-    assert "fl2va" in said and "reference weights" in said
+    assert "fl2va" in said and "ref2va model" in said
 
 
 def test_the_right_checkpoint_says_nothing_at_all():

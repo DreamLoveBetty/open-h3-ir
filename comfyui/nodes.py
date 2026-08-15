@@ -250,9 +250,9 @@ class OpenH3IRCompile(io.ComfyNode):
                                  tooltip="Empty picture and sound latent, already the length the "
                                          "brief was written for."),
                 io.Vae.Output(display_name="vae",
-                              tooltip="H3's picture VAE for the decode, so the graph needs no "
+                              tooltip="H3's video VAE for the decode, so the graph needs no "
                                       "loader boxes."),
-                io.Vae.Output(display_name="audio_vae", tooltip="H3's sound VAE."),
+                io.Vae.Output(display_name="audio_vae", tooltip="H3's audio VAE."),
                 io.String.Output(display_name="prompt",
                                  tooltip="The compiled brief, to read or to keep."),
                 io.String.Output(display_name="report",
@@ -290,8 +290,8 @@ class OpenH3IRCompile(io.ComfyNode):
         if not setup:
             raise ServiceError(
                 "this node has no setup. Add an OpenH3-IR Setup node, pick the five H3 files it "
-                "asks for (the reference weights, the frame weights, the text encoder, the picture "
-                "VAE and the sound VAE) and wire its setup output into this node's setup socket. "
+                "asks for (the ref2va and fl2va models, the clip, and the two VAEs) and wire "
+                "its setup output into this node's setup socket. "
                 "Which files those are cannot be worked out from their names, so they are your "
                 "choice rather than a guess this node makes for you.")
         machine = setup
@@ -301,7 +301,7 @@ class OpenH3IRCompile(io.ComfyNode):
         slots = [entry["slot"] for entry in loaded]
 
         # Refused before a file is written or a model call is spent. Both refusals are about the
-        # graph rather than about the brief: H3's frame weights run through a node with sockets for
+        # graph rather than about the brief: H3's fl2va model runs through a node with sockets for
         # the two frames and nothing else, so anything else in the tray would be described in the
         # brief, numbered in the report, and never handed to H3 at all.
         T.exclusivity(slots)
@@ -501,15 +501,15 @@ class OpenH3IRCompile(io.ComfyNode):
         import comfy.sd
         if not hasattr(comfy.sd.CLIPType, "MINIMAX"):
             raise ServiceError(
-                "this ComfyUI does not know MiniMax H3's text encoder family (comfy.sd.CLIPType "
+                "this ComfyUI does not know MiniMax H3's clip family (comfy.sd.CLIPType "
                 "has no MINIMAX member), so the encoder would be loaded as the wrong family and "
                 "the render would be wrong with nothing on screen to say so. Update ComfyUI to a "
                 "version whose own MiniMax H3 nodes work.")
         if is_gguf(name):
             loader = cls._node("CLIPLoaderGGUF",
-                               f"{name} is a GGUF text encoder, and the ComfyUI-GGUF pack that "
+                               f"{name} is a GGUF clip, and the ComfyUI-GGUF pack that "
                                "reads one is not installed. Install ComfyUI-GGUF, or pick a "
-                               ".safetensors encoder on the Setup node.")
+                               ".safetensors clip on the Setup node.")
             return loader.load_clip(name, "minimax")[0]
         loader = cls._node("CLIPLoader", "ComfyUI's own CLIPLoader is missing from this install, "
                                          "which no custom node can work around.")
@@ -602,33 +602,34 @@ class OpenH3IRSetup(io.ComfyNode):
                     tooltip="Where the OpenH3-IR service is listening. Start one from the repo with "
                             "h3ir serve. It can be another machine."),
                 io.Combo.Input(
-                    "reference_model", display_name="reference weights",
+                    "reference_model", display_name="ref2va model",
                     options=_model_options("diffusion_models", "unet_gguf"),
-                    tooltip="H3's checkpoint for reference and text jobs, named ref2va by MiniMax. "
-                            "Both formats are in this list: pick a .gguf and it loads through Unet "
-                            "Loader (GGUF), pick a .safetensors and it loads natively."),
+                    tooltip="H3's checkpoint for reference and text jobs. Both formats are in "
+                            "this list: pick a .gguf and it loads through Unet Loader (GGUF), "
+                            "pick a .safetensors and it loads like Load Diffusion Model does."),
                 io.Combo.Input(
-                    "frames_model", display_name="frame weights",
+                    "frames_model", display_name="fl2va model",
                     options=_model_options("diffusion_models", "unet_gguf"),
-                    tooltip="H3's checkpoint for first and last frame jobs, named fl2va by MiniMax. "
-                            "The compile node uses this one or the reference weights depending on "
-                            "which sockets you filled, and says which in its report. Both formats "
-                            "are in this list."),
+                    tooltip="H3's checkpoint for first and last frame jobs. The compile node "
+                            "uses this one or the ref2va model depending on which slots you "
+                            "filled, and says which in its report. Both formats are in this "
+                            "list."),
                 io.Combo.Input(
-                    "text_encoder", display_name="text encoder",
+                    "text_encoder", display_name="clip",
                     options=_model_options("text_encoders", "clip_gguf"),
-                    tooltip="The Qwen3-VL encoder H3 was trained against. Both formats are in this "
-                            "list, chosen independently of the checkpoint: a GGUF encoder works "
-                            "with safetensors weights and the other way round."),
+                    tooltip="The Qwen3-VL encoder H3 was trained against, the same file a Load "
+                            "CLIP node takes. Both formats are in this list, chosen independently "
+                            "of the checkpoint: a GGUF clip works with safetensors weights and "
+                            "the other way round."),
                 io.Combo.Input(
-                    "video_vae", display_name="picture VAE", options=_model_options("vae"),
-                    tooltip="H3's picture VAE, used for the decode as well."),
+                    "video_vae", display_name="vae", options=_model_options("vae"),
+                    tooltip="H3's video VAE, used for the decode as well."),
                 io.Combo.Input(
-                    "audio_vae", display_name="sound VAE", options=_model_options("vae"),
-                    tooltip="H3's sound VAE, a different file from the picture VAE. Needed even for "
+                    "audio_vae", display_name="audio vae", options=_model_options("vae"),
+                    tooltip="H3's audio VAE, a different file from the video VAE. Needed even for "
                             "a silent piece, because H3 writes picture and sound together."),
                 io.Combo.Input(
-                    "weight_dtype", display_name="weight precision", options=list(WEIGHT_DTYPES),
+                    "weight_dtype", display_name="weight_dtype", options=list(WEIGHT_DTYPES),
                     default="default", advanced=True,
                     tooltip="The same setting a UNET loader has. Leave alone unless you are short "
                             "of VRAM. It does not apply to a GGUF checkpoint, which carries its own "
