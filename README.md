@@ -11,7 +11,8 @@ Open-source local Context-IR for MiniMax H3.
 *Same model, same seed, same reference image. The only difference is the words.*
 
 H3 does not want a prompt. It wants a structured document: named sections in a fixed order, every
-subject bound to a numbered picture label, cut times that land on a legal frame grid. MiniMax
+subject bound to a numbered picture label, cut times that land on a legal frame grid. That document is
+what MiniMax calls the Context-IR, and writing it is the whole job here. MiniMax
 open-sourced the model but not the stage that writes that document, saying only that
 ["H3-Context-IR is critical to the quality of the final output"](https://huggingface.co/MiniMaxAI/MiniMax-H3)
 and that you should call their hosted service for it.
@@ -80,14 +81,15 @@ Both briefs are committed too, so you can read exactly what the flag did:
 
 ## Two ways in
 
-**In ComfyUI it is three nodes.** One plain sentence with `@` mentions stands in for the text box, the
-resolution picker, the frame-count arithmetic, four loaders and the H3 conditioning node. One node in,
-model and conditioning and latent out. [**In ComfyUI: three nodes**](#in-comfyui-three-nodes) below,
-then [`comfyui/README.md`](comfyui/README.md) for the whole surface.
+**In ComfyUI it is three nodes**, and a workflow that ships already wired, so once you have pointed it
+at your own H3 files it is a sentence and a run. That one sentence stands in for the text box, the
+resolution picker, the frame-count arithmetic, four file loaders and the H3 conditioning node.
+[**In ComfyUI: three nodes**](#in-comfyui-three-nodes) below, then
+[`comfyui/README.md`](comfyui/README.md) for the whole surface.
 
-**Over HTTP it is a service.** One `POST` with a sentence in it comes back with a validated brief and
-the asset wiring that brief is true for, in three layers, so nothing in your application ever has to
-understand H3's format. [**Over HTTP, from anything**](#over-http-from-anything) below, then
+**Over HTTP it is a service.** One `POST` with a sentence in it comes back with a validated brief and a
+list of which file belongs where, so nothing in your application ever has to understand H3's format.
+[**Over HTTP, from anything**](#over-http-from-anything) below, then
 [`docs/calling-the-api.md`](docs/calling-the-api.md) for what it guarantees and what it only attempts.
 
 Install is the same work for both, because both doors are the same service: the ComfyUI nodes carry no
@@ -106,7 +108,8 @@ pictures get read. Text-only prompts never send an image, so they work against a
 
 Every brief on this page was written by Qwen3.6 27B, 4-bit, served by vLLM at 262K context on two RTX
 3090s, and H3 rendered the videos from those briefs. That is what the project is proven against, and
-it is the bar to size your own box against: a 27B-class local model with a vision tower is enough.
+it is the bar to size your own box against: a 27B-class local model that can also look at images is
+enough.
 `h3ir eval` is there to measure what a different endpoint does to brief quality rather than guess at
 it.
 
@@ -137,13 +140,10 @@ commit if you build on it.
 
 ## In ComfyUI: three nodes
 
-![The base workflow: Setup, Media and Main wired into a render subgraph and a save](docs/media/comfyui-base-workflow.png)
+![Setup, Media and Main on a ComfyUI canvas, wired to a box called Render and a save, beside the video they produced](docs/media/comfyui-base-workflow.png)
 
-The pack is the [`comfyui/`](comfyui/README.md) folder of this repository. Copy or link that one
-folder into `custom_nodes`, restart ComfyUI, and three nodes appear under **OpenH3-IR**. The graph
-in the picture ships with the pack:
-[`comfyui/example/openh3ir_base_workflow.json`](comfyui/example/openh3ir_base_workflow.json), the
-base sampling chain with no accelerator, ready to open, type into, and run.
+The pack is the [`comfyui/`](comfyui/README.md) folder of this repository. Copy or link that one folder
+into `custom_nodes` and restart ComfyUI.
 
 ```bash
 # from inside the clone, where Install left you
@@ -158,23 +158,30 @@ mklink /J "C:\ComfyUI\custom_nodes\openh3ir" "C:\path\to\open-h3-ir\comfyui"
 
 It adds no packages to ComfyUI's Python. The nodes speak HTTP to `h3ir serve` with the standard
 library alone, so the compiler's dependencies can never break a ComfyUI install and the service is
-free to sit on another machine.
+free to sit on another machine. Besides that service, the pack needs what any H3 render needs: a
+ComfyUI with the MiniMax H3 nodes, which ship with ComfyUI itself, and H3's own model files on disk.
 
-Besides that service, the pack needs what any H3 render needs: a ComfyUI with the MiniMax H3 nodes,
-which ship with ComfyUI itself, and H3's own model files on disk.
+Then open the workflow in the picture, which ships with the pack:
+[`comfyui/example/openh3ir_base_workflow.json`](comfyui/example/openh3ir_base_workflow.json). Point
+Setup at your own five H3 files, type a sentence over the one that is in there, press run. Seven boxes
+on the canvas and that is the whole thing: the three of this pack, one called **Render** with the
+rendering machinery folded up inside it, one that saves the video, and two panels that show you the
+brief that got written and the report of what happened. Nothing in it is set up to be fast or clever,
+so what comes out is H3 as it ships. The balloon clip in the corner is that workflow's own output, from
+the sentence you can read on the node beside it.
 
 **OpenH3-IR Main** is the sentence and the knobs, and it is the node that removes the boxes: no text
-box to paste a document into, no resolution picker, no frame-count arithmetic, no row of loaders. It
-loads the checkpoint the job needs plus the encoder and both VAEs, and hands out `model`, `positive`,
-`latent`, `vae` and `audio_vae`, along with the compiled `prompt` and a `report` in plain words. The
-committed example graph renders in sixteen nodes, three of which are this pack's.
+box to paste a document into, no resolution picker, no frame-count arithmetic, no row of file loaders.
+It works out which of H3's files this particular job needs, opens them, and hands the render everything
+it takes to run, which is why nothing else on the canvas needs setting up. It also hands you the brief
+it wrote and a report of what it did.
 
 Beside the sentence sit the knobs you would expect and no more: the length, the frame shape, how much
 the writer may invent, a switch for no music, the shot count (`auto`, or a number from 1 to 10 that is
 kept exactly), the frame size in megapixels, and the language every locked line is spoken in.
 
 **OpenH3-IR Media** is the tray: nine pictures, three clips and three sounds on one panel, dropped or
-picked. Every slot carries three things no socket can say.
+picked. Every slot carries three things, and no amount of wiring could say any of them.
 
 - **A name**, which is what the sentence calls the file by.
 - **What it is**, in plain words. A picture is *something in the shot*, *the setting*, *a style to
@@ -186,10 +193,10 @@ picked. Every slot carries three things no socket can say.
   ever know what a track sounds like.
 
 **OpenH3-IR Setup** holds the service address and the five H3 files to load. It is a picker and
-nothing else: your install's files in both formats, and the file you choose is the file that loads.
-No search by name, no preferred build, no option meaning "work it out". A filename cannot tell anyone
-which of two H3 checkpoints you meant, so the answer is yours, it is visible on the node, and the
-`report` output names every file that was loaded and the loader that read it.
+nothing else: it lists what is actually on your disk, and the file you choose is the file that loads.
+No search by name, no preferred build, no option meaning "work it out". H3 ships two models that do
+different jobs, and no filename can tell anyone which one you meant today, so the answer stays yours,
+it stays readable on the node, and the report names every file that was opened.
 
 The prompt on Main is ordinary prose, and `@` is how it points at the tray:
 
@@ -202,28 +209,26 @@ word and mark for mark, because a brief that rewords a locked line is refused an
 mention that names no slot is refused on the canvas, listing the names that do exist, before any
 model call is spent. That is the whole syntax: mentions, locked lines, prose, nothing else.
 
-The `report` output prints what actually happened, one line per attachment, matched to the tray by
-the file's own hash:
+Whatever it did, it tells you. The report panel in the picture is that output: the length it really
+rendered, every file it opened, and one line per attachment tying the slot you named to the picture H3
+actually received, matched by the file's own contents rather than by position. A name landing on the
+wrong file is the kind of mistake you would otherwise spend an evening blaming on the model.
 
-```
-attachments
-  carguy         ->  <Picture 1>  ref_image_1  fully_preserved  sizing=match  sha256=0f7a56597541
-```
+Some combinations stay impossible, and the nodes say so instead of rendering something wrong. A picture
+that *is* the first frame of the video and a picture that is merely something the shot should contain
+are two different jobs, and H3 released a separate model for each. The frame one accepts no references
+at all, so setting one slot to *first frame* while another slot holds a reference is two jobs at once.
+That is refused on the canvas, in a full sentence naming both slots, before a file is written or the
+writing model is called.
 
-Some combinations stay impossible, and the nodes say so instead of rendering something wrong. H3's
-released weights split the two jobs across two checkpoints: `fl2va` takes a first and a last frame
-and no references at all, `ref2va` takes references and no frames. So a picture set to *first frame*
-sitting beside a picture set to *something in the shot* is two jobs at once, and it is refused on the
-canvas, in a full sentence naming both slots, before a file is written or a model call is made.
+Two more things worth knowing before you wire anything. There is one `seconds` field and it is the only
+place length is set, because H3's frame grid has to be snapped once and then used for the brief and the
+render together. And the tray is an ordinary text field under the panel, so a saved workflow and a
+rendered video both carry it: drag the mp4 back onto the canvas and the slots come back, names, roles
+and notes intact.
 
-Two more things worth knowing before you wire anything. There is one `seconds` field and it is the
-only duration control in the graph, because H3's frame grid has to be snapped once and then used for
-both the brief and the latent. And the tray is an ordinary field holding ordinary text, so a saved
-workflow and a rendered video carry it: drag the mp4 back onto the canvas and the slots come back,
-names, roles and notes intact.
-
-The wiring table, the GGUF rule, every failure message, the example graph and what the pack does not
-do: [`comfyui/README.md`](comfyui/README.md).
+The wiring, the two file formats, every failure message and what the pack will not do:
+[`comfyui/README.md`](comfyui/README.md).
 
 ## Over HTTP, from anything
 
@@ -333,25 +338,27 @@ attach few. The arithmetic is in [`docs/design.md`](docs/design.md).
 
 ## Attach an image and it picks the mode for you
 
-T2VA, I2VA, FL2VA, L2VA and Ref2VA are decided by what you attached, because the wiring is the only
-thing that can decide them correctly. You never pick one, and no screen built on this should ask.
+H3 does not have one mode, it has five, and each wants the document written differently. Which one a
+request needs is settled by what you attached, because that is the only thing that can settle it
+correctly. You never pick one and no screen built on this should ask. The names show up in the report
+if you are curious: `t2va`, `i2va`, `fl2va`, `l2va`, `ref2va`.
 
-Attach two images and two subjects come back, bound to the labels the runtime will actually emit, each
-one carrying its own retention contract and cited in every shot it appears in. If an image is
-ambiguous about which of several things in it you care about, `--image path.png:"the pilot"` passes
-that straight to the vision model as a hint about what it is looking at. In ComfyUI the same hint is
-the slot's own line about the file.
+Attach two images and two subjects come back, each with its own numbered label, its own stated promise
+about what has to stay the same about it, and a mention in every shot it appears in. If an image is
+ambiguous about which of several things in it you care about, `--image path.png:"the pilot"` says which,
+straight to the model that looks at it. In ComfyUI the same hint is the slot's own line about the file.
 
 ## What it will not do
 
-- **It does not sample.** No sampler, no scheduler, no save. Over HTTP you get a brief and its asset
-  wiring; in ComfyUI you get model, conditioning and latent, and the sampler you already trust does
-  the rest.
+- **It does not make the video itself.** It writes the words and hands over everything the render needs.
+  Over HTTP that is a brief plus which file belongs where; in ComfyUI it is the wires that feed the
+  Render box, and every box inside there is ComfyUI's own rather than ours.
 - **It does not judge whether the writing is good.** It can tell you a shot dropped the wardrobe. It
   cannot tell you the edit is dull.
-- **It cannot hear.** There is a vision tower and no audio tower, and a model asked about a waveform
-  invents a plausible answer rather than admitting it cannot listen. Audio references are described
-  from typed metadata plus a transcript you supply.
+- **It cannot hear.** The model that reads your files can look and cannot listen, and a model asked
+  what a piece of music is like will invent a confident answer rather than admit that. So a sound is
+  described from the line you type about it, plus its own file details, plus a transcript if you have
+  one.
 - **It does not guarantee a face survives the render.** The brief binds the reference and states what
   must be preserved. Whether the model delivers is a render outcome.
 - **It is H3-only, all the way down.** The rules, the frame grid and the section names are H3's.
@@ -382,15 +389,15 @@ $ pytest -q
 896 passed, 2 skipped, 1 warning in 2.24s
 ```
 
-No model, no GPU, no network. The two skips are environmental rather than holes: one wants `torch`
-installed to check the ComfyUI media helpers against real tensors, the other wants an `ffprobe` that
-can measure a webp.
+No model, no GPU, no network. The two skips are about this machine rather than holes in the suite: one
+wants `torch` installed so it can check the ComfyUI file readers against real image data, the other
+wants an `ffprobe` that can measure a webp.
 
 ## Where to look next
 
 | file | what it is for |
 |---|---|
-| [`comfyui/README.md`](comfyui/README.md) | **the node pack**: the tray, the `@` prompt, the wiring table, GGUF, every failure message |
+| [`comfyui/README.md`](comfyui/README.md) | **the node pack**: the workflow that ships with it, the tray, the `@` prompt, the wiring, every failure message |
 | [`HANDOFF.md`](HANDOFF.md) | **installing the service and making it run**, step by step, with a check on every step. Written so you can hand the path to an agent and walk away |
 | [`AGENTS.md`](AGENTS.md) | **changing the compiler**: the rules that are not preferences, which file owns what, the known gaps |
 | [`docs/calling-the-api.md`](docs/calling-the-api.md) | driving the service from an application: what it guarantees, what it only attempts, what comes back |

@@ -1,14 +1,14 @@
 # OpenH3-IR for ComfyUI
 
-Type one sentence. Get a MiniMax H3 job that is ready to sample.
+Type one sentence. Get a MiniMax H3 render that is ready to run.
 
 This folder is the ComfyUI half of [OpenH3-IR](../README.md), which is one compiler with two front
 doors onto it: these three nodes, and an HTTP service anything else can call. Both doors run the same
 service. What the compiler does to a render, shown side by side, is on that page.
 
-One node writes the brief H3 actually wants, loads the weights the job needs plus the encoder and both
-VAEs, and hands out the model, the conditioning and the latent. There is no text box to paste into, no
-resolution picker, no frame-count arithmetic and no row of loaders.
+One node writes the brief H3 actually wants, opens the H3 files this particular job needs, and hands
+the render everything it takes to run. There is no text box to paste a document into, no resolution
+picker, no frame-count arithmetic and no row of file loaders.
 
 Three nodes in all: the sentence and its knobs on one, everything the piece looks at or listens to on
 the second, the five H3 files on the third. A piece with no media needs only the first and the third.
@@ -40,6 +40,10 @@ It adds nothing to ComfyUI's Python. The nodes speak HTTP to the service with th
 only, so the compiler's dependencies can never break your install and the service can live on
 another machine.
 
+Then open the workflow that ships with it, which is already wired and runs on a sentence alone:
+[the two workflows that ship with this](#the-two-workflows-that-ship-with-this). That is the fastest
+way to see the thing work before you read another word.
+
 ## The three nodes
 
 **OpenH3-IR Main** is the sentence and the knobs. **OpenH3-IR Media** is the tray: everything the
@@ -53,12 +57,14 @@ Wire `report` into ComfyUI's own **Preview as Text** node to read what happened 
 
 ## The knobs on Main
 
+![The OpenH3-IR Main node: one sentence about a hot air balloon, then its widgets](../docs/media/comfyui-main-node.png)
+
 Eight fields, and the first one is the work:
 
 | field | what it decides |
 | --- | --- |
 | the prompt box | one plain sentence, saying what happens, with `@` for anything in the tray |
-| `seconds` | the only length control in the graph, snapped onto H3's frame grid once and used for both the brief and the latent |
+| `seconds` | the only place length is set, snapped onto H3's frame grid once and then used for the brief and the render together |
 | `frame shape` | 16:9, 21:9, 4:3, 1:1, 3:4 or 9:16. The canvas is sized from it, so there is no resolution box to keep in step with anything |
 | `invention` | how much the writer may add where your sentence is silent: `restrained`, `balanced`, `bold`, `extreme` |
 | `no music` | turns off the score only. Ambient and physical sound are still written, because H3 writes sound in the same pass as the picture |
@@ -66,10 +72,14 @@ Eight fields, and the first one is the work:
 | `size, in megapixels` | 0 is H3's native size, 768 on the short edge, which is what it was trained at. A stated size runs from 0.25 to 2.5, and is sharper, slower and hungrier for VRAM in proportion |
 | `spoken in` | the language every `@speaks` line is spoken in, which becomes the tag H3 reads. It decides nothing while no line is locked |
 
-Three more sit under advanced and are rarely touched: `reference size`, `brief seed` (the compiler's
-seed, not the sampler's) and `writing effort`.
+The last three rows on the node are marked advanced and are rarely touched: `reference size`,
+`brief seed` and `writing effort`. `brief seed` changes the writing rather than the picture, so a new
+number is a different take on the same sentence; `control after generate` beside it is ComfyUI's own,
+added to any seed field, and it decides whether that number moves on the next run.
 
 ## The tray
+
+![The OpenH3-IR Media node: nine empty picture slots, three clip rows, three sound rows](../docs/media/comfyui-media-node.png)
 
 Drop files on the OpenH3-IR Media panel, or click it to pick them. Pictures, clips and sounds sort
 themselves into their sections. Nine pictures, three clips and three sounds are H3's own per-kind
@@ -130,6 +140,8 @@ locked line. There is no other syntax: mentions, locked lines, prose, nothing el
 
 ## The five files are yours to pick
 
+![The OpenH3-IR Setup node: the service address and five file pickers](../docs/media/comfyui-setup-node.png)
+
 The Setup node is a picker and nothing else. Each combo lists what your install actually has, in both
 formats, and the file you choose is the file that loads. Nothing here searches by name, prefers a
 build, or offers an option meaning "work it out".
@@ -170,6 +182,9 @@ the node says it in its own words: add an OpenH3-IR Setup node, pick the five fi
 
 ## Wiring the graph
 
+You do not have to do any of this by hand. The workflow below ships wired, and opening it is the
+short way in. This is here for building your own around the three nodes.
+
 Setup into Main's `setup`. Media into Main's `media` when there is media. Then the five outputs that
 carry the render:
 
@@ -181,7 +196,7 @@ carry the render:
 | `vae` | VAE Decode |
 | `audio_vae` | VAE Decode Audio |
 
-`prompt` is the compiled brief if you want to keep it, and `report` is what happened in plain words:
+`prompt` is the compiled brief if you want to keep it, and `report` is an account of what happened:
 the job it ran, the real length, every file loaded, what each mention became, and which files went
 unmentioned. What stays on your canvas is what you actually tune: the LoRAs, the sigma shift, steps,
 the sampler, decode and save.
@@ -247,19 +262,19 @@ Text-only prompts still work, attachments do not, and the node says so instead o
 
 ## What it does not do
 
-It does not sample and it does not save. It produces the model, conditioning and latent; the sampler
-you already trust does the rest.
+These three nodes do not sample and do not save. They produce the model, the conditioning and the
+latent, and the sampler you already trust does the rest. In the workflow that ships, that rest is
+ComfyUI's own boxes, gathered inside Render.
 
-It cannot hear. Sounds are described from what you type plus their metadata.
+It cannot hear. Sounds are described from what you type plus what their own file details say.
 
 It takes nine pictures, three clips and three standalone sounds, which are H3's own limits, and twelve
 files in total, which is the tray's.
 
-A picture made elsewhere in the same graph cannot be fed in. The tray holds files rather than tensors,
-and that is deliberate: the service opens the attachment from disk and H3 receives the same file
-decoded, so a path and a tensor can never end up describing different pictures. The cost is real
-enough to name, though. An `IMAGE` coming out of another node has to be saved to disk first and then
-dropped on the tray.
+A picture made elsewhere in the same graph cannot be fed in. The tray holds files on disk rather than
+pictures arriving down a wire, and that is deliberate: the service opens the file and H3 renders the
+same file, so the thing described and the thing rendered cannot come apart. The cost is real enough to
+name, though. An `IMAGE` coming out of another node has to be saved first and then dropped on the tray.
 
 Nothing stops you choosing two roles that cannot coexist. Set one picture to first frame while another
 slot holds a reference and the panel accepts it; the refusal comes when the graph runs, naming both
@@ -290,17 +305,26 @@ Occasionally a brief comes back as a fallback rather than a written one, when th
 satisfy the validator in two passes. The report says so plainly instead of passing it off as written.
 Re-queue with a different `brief seed`.
 
-## The example graph
+## The two workflows that ship with this
 
-`example/openh3ir_base_workflow.json` is the place to start: the three nodes wired into the stock
-sampling chain (res_multistep, simple, 20 steps, no accelerator), an empty tray, previews on the
-brief and the report, and a save. It is the exact workflow that rendered its own first video before
-it shipped. Open it, pick your five files on Setup, type a sentence, run.
+![Setup, Media and Main on a ComfyUI canvas, wired to a box called Render and a save, beside the video they produced](../docs/media/comfyui-base-workflow.png)
 
-`example/openh3ir_tray.api.json` is the first graph that ever rendered through the tray, byte for
-byte as submitted: two named pictures and a sound on the tray, a prompt that mentions them with @
-and locks one announcer line with @speaks, the full Turbo chain, and a save. Open it, or drag the
-video it produced onto the canvas, and the whole thing comes back.
+**`example/openh3ir_base_workflow.json` is the place to start.** Open it, pick your five files on
+Setup, type a sentence, run. Seven boxes on the canvas: these three, one called **Render** with the
+rendering chain folded up inside it, one that saves the video, and two panels showing the brief that
+got written and the report of what happened. The tray starts empty, so it runs on a sentence alone.
+
+Nothing in it is set up to be fast. It renders H3 as it ships, at plain settings, which makes it the
+honest baseline to judge a change against and the slower of the two workflows here. Everything you
+would reach for to speed it up lives on that side of the graph, inside the Render box or just before
+it, out of the way of the part you are actually typing into. The picture above is that workflow, and
+the balloon beside it is its own output.
+
+**`example/openh3ir_tray.api.json` is the tray one**, kept because it is the first graph that ever
+rendered through the tray, byte for byte as submitted: two named pictures and a sound on the tray, a
+sentence that mentions them with `@` and locks one announcer line with `@speaks`, the speed-up chain
+in place, and a save. Open it, or drag the video it produced onto the canvas, and the whole thing
+comes back.
 
 ## Known limits of this machine, not of the pack
 
@@ -314,8 +338,8 @@ tested; no `.gguf` file has ever been loaded through this pack.
 
 **ComfyUI-MiniMax-H3-Turbo cannot run a clip with its soundtrack.** With `ref_video_audios` connected
 its adaln patch receives three timestep entries where it expects two and raises. This was confirmed on
-ComfyUI's own `MiniMaxH3ReferenceToVideo` node with the same inputs, so it is that accelerator's limit
-rather than this pack's. Footage renders fine without the Turbo LoRA, and a clip with no soundtrack
+ComfyUI's own `MiniMaxH3ReferenceToVideo` node with the same inputs, so it is that pack's limit rather
+than this one's. Footage renders fine without the Turbo LoRA, and a clip with no soundtrack
 renders with it.
 
 ## Borrowed technique
