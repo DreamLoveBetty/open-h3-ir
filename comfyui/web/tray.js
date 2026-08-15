@@ -17,12 +17,12 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v10";
+const VERSION = "tray v11";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
 const NODE_H_EXTRA = 84;
-const PANEL_H = 476;
+const PANEL_H = 532;
 const CAPACITY = { picture: 9, video: 3, sound: 3 };
 const MAX_FILES = 12;
 const PREFIX = { picture: "picture", video: "video", sound: "audio" };
@@ -246,10 +246,23 @@ class Tray {
 
   // ---------------------------------------------------------------- the editor strip
 
+  widgetRow(labelText, input) {
+    return el("div", { class: "oh3-wrow" },
+      el("span", { class: "oh3-wlabel", textContent: labelText }), input);
+  }
+
+  header() {
+    return el("div", { class: "oh3-edithead" },
+      el("div", { class: "oh3-edittitle", textContent: "What is this file to your clip?" }),
+      el("div", { class: "oh3-editsub", textContent:
+        "Name it to mention it, choose what it is, describe it. The brief is written from "
+        + "exactly these." }));
+  }
+
   renderEditor() {
     const slot = this.slots().find((s) => s.label === this.selected);
     if (!slot) {
-      this.editor.replaceChildren(el("div", { class: "oh3-hint", textContent:
+      this.editor.replaceChildren(this.header(), el("div", { class: "oh3-hint", textContent:
         "drop files anywhere on this panel, or click an empty slot. Click a filled one to name it "
         + "and say what it is." }));
       return;
@@ -278,23 +291,26 @@ class Tray {
     note.addEventListener("change", () => this.update(slot.label, { note: note.value }));
 
     const first = el("div", { class: "oh3-editrow" },
-      el("span", { class: "oh3-at", textContent: "@" }), label, role);
+      this.widgetRow("name", el("span", { class: "oh3-atwrap" },
+        el("span", { class: "oh3-at", textContent: "@" }), label)),
+      this.widgetRow("what it is", role));
     if (slot.kind === "video") {
       const st = el("select", { class: "oh3-in oh3-st", title:
         "its own soundtrack: off sends none, paired sends it as this clip's sound, alone sends it as a track in its own right" });
       for (const v of SOUNDTRACKS) st.append(el("option", { value: v,
-        textContent: "soundtrack " + v, selected: v === (slot.soundtrack || "off") }));
+        textContent: v, selected: v === (slot.soundtrack || "off") }));
       st.addEventListener("change", () => this.update(slot.label, { soundtrack: st.value }));
-      first.append(st);
+      first.append(this.widgetRow("soundtrack", st));
     }
-    const rows = [first, el("div", { class: "oh3-editrow" }, note)];
+    const rows = [this.header(), first,
+                  el("div", { class: "oh3-editrow" }, this.widgetRow("about it", note))];
     // Only the roles for which a recording's own words mean anything: a voice to imitate, or a
     // track played outright whose lyrics must ride along. Style, beat and effects have no words.
     if (slot.kind === "sound" && (slot.role === "voice_timbre" || slot.role === "bgm")) {
       const words = el("input", { class: "oh3-in oh3-wide", value: slot.transcript || "",
         placeholder: "the words in this recording, exactly as spoken — nothing here can hear" });
       words.addEventListener("change", () => this.update(slot.label, { transcript: words.value }));
-      rows.push(el("div", { class: "oh3-editrow" }, words));
+      rows.push(el("div", { class: "oh3-editrow" }, this.widgetRow("its words", words)));
     }
     this.editor.replaceChildren(...rows);
   }
@@ -365,8 +381,21 @@ const CSS = `
   color:rgba(243,239,230,.80);font-size:10px;line-height:1;cursor:pointer;flex:0 0 auto;padding:0;}
 .oh3-seg{flex:0 0 auto;width:96px;background:#101016;border:1px solid rgba(243,239,230,.22);color:rgba(243,239,230,.80);
   border-radius:4px;font-size:10px;padding:2px;}
-.oh3-edit{flex:0 0 auto;height:88px;border-top:1px solid rgba(243,239,230,.12);padding-top:6px;
+.oh3-edit{flex:0 0 auto;height:144px;border-top:1px solid rgba(243,239,230,.12);padding-top:6px;
   display:flex;flex-direction:column;gap:5px;overflow:hidden;}
+.oh3-edithead{display:flex;flex-direction:column;gap:1px;overflow:hidden;}
+.oh3-edittitle{font-size:11px;color:#f3efe6;}
+.oh3-editsub{font-size:9px;color:rgba(243,239,230,.38);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+.oh3-wrow{flex:1;min-width:0;display:flex;align-items:center;gap:6px;
+  background:var(--oh3-wbg);border:1px solid var(--oh3-wline);border-radius:12px;
+  padding:2px 9px;overflow:hidden;}
+.oh3-wlabel{flex:0 0 auto;font-size:10px;color:var(--oh3-wmuted);white-space:nowrap;}
+.oh3-wrow .oh3-in{flex:1;min-width:0;background:none;border:0;padding:2px 0;
+  color:var(--oh3-wtext);}
+.oh3-wrow select.oh3-in{background:none;}
+.oh3-atwrap{flex:1;min-width:0;display:flex;align-items:center;gap:2px;}
+.oh3-atwrap .oh3-in{flex:1;min-width:0;}
 .oh3-editrow{display:flex;align-items:center;gap:5px;overflow:hidden;}
 .oh3-at{flex:0 0 auto;color:#eb8219;font-family:ui-monospace,monospace;}
 .oh3-in{background:#101016;border:1px solid rgba(243,239,230,.22);color:#f3efe6;border-radius:4px;
@@ -386,7 +415,15 @@ select.oh3-in{flex:1;}
 app.registerExtension({
   name: "openh3ir.tray",
   init() {
-    document.head.append(el("style", { textContent: CSS }));
+    // The editor's rows dress as native ComfyUI widgets, and the surest way to match the theme is
+    // to ask it: LiteGraph carries the widget colors the canvas actually draws with.
+    const LG = window.LiteGraph || {};
+    const css = CSS
+      .replaceAll("var(--oh3-wbg)", LG.WIDGET_BGCOLOR || "#222")
+      .replaceAll("var(--oh3-wline)", LG.WIDGET_OUTLINE_COLOR || "#666")
+      .replaceAll("var(--oh3-wtext)", LG.WIDGET_TEXT_COLOR || "#ddd")
+      .replaceAll("var(--oh3-wmuted)", LG.WIDGET_SECONDARY_TEXT_COLOR || "#999");
+    document.head.append(el("style", { textContent: css }));
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE) return;
