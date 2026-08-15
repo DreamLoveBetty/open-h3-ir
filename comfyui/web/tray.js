@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v9";
+const VERSION = "tray v10";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -28,14 +28,14 @@ const MAX_FILES = 12;
 const PREFIX = { picture: "picture", video: "video", sound: "audio" };
 const ROLES = {
   picture: ["something in the shot", "the setting", "a style to copy",
-            "first frame", "last frame", "staging sketch"],
+            "first frame", "last frame", "storyboard"],
   video: ["copy what is in it", "edit it", "carry on from it"],
   sound: ["play it", "match its style", "cut to its beat", "sound effect", "voice to match"],
 };
 const ROLE_TOKEN = {
   "something in the shot": "subject", "the setting": "environment", "a style to copy": "style",
   "first frame": "frame_anchor_first", "last frame": "frame_anchor_last",
-  "staging sketch": "storyboard",
+  "storyboard": "storyboard",
   "copy what is in it": "subject", "edit it": "edit_source",
   "carry on from it": "continuation_source",
   "play it": "bgm", "match its style": "music_style", "cut to its beat": "beat_reference",
@@ -47,7 +47,7 @@ const SOUNDTRACKS = ["off", "paired", "alone"];
 // panel's.
 const BADGE_BY_KIND = {
   picture: { subject: "in shot", environment: "setting", style: "style",
-             frame_anchor_first: "first", frame_anchor_last: "last", storyboard: "sketch" },
+             frame_anchor_first: "first", frame_anchor_last: "last", storyboard: "storyboard" },
   video: { subject: "copy", edit_source: "edit", continuation_source: "continue" },
   sound: { bgm: "play", music_style: "style", beat_reference: "beat", sfx: "sfx",
            voice_timbre: "voice" },
@@ -318,69 +318,69 @@ class Tray {
 
 /* The board: every dimension pinned, nothing negotiated with the host. */
 const CSS = `
-.oh3-panel{font-family:system-ui,sans-serif;color:#d7dbe2;font-size:11px;
-  background:#191c22;border:1px solid #2a2f3a;border-radius:8px;padding:7px;
+.oh3-panel{font-family:system-ui,sans-serif;color:#f3efe6;font-size:11px;
+  background:#0a0a0d;border:1px solid rgba(243,239,230,.12);border-radius:8px;padding:7px;
   display:flex;flex-direction:column;gap:6px;box-sizing:border-box;
   width:100%;max-width:546px;height:${PANEL_H}px;min-height:${PANEL_H}px;overflow:hidden;}
 .oh3-panel *{box-sizing:border-box;min-width:0;}
-.oh3-panel.oh3-hot{border-color:#e8873a;}
+.oh3-panel.oh3-hot{border-color:#eb8219;}
 .oh3-top{flex:0 0 auto;display:flex;align-items:center;gap:8px;overflow:hidden;}
-.oh3-counts{font-family:ui-monospace,monospace;font-size:10px;color:#8a93a3;flex:0 0 auto;}
-.oh3-msg{flex:1;min-width:0;font-size:10px;color:#8a93a3;overflow:hidden;
+.oh3-counts{font-family:ui-monospace,monospace;font-size:10px;color:rgba(243,239,230,.38);flex:0 0 auto;}
+.oh3-msg{flex:1;min-width:0;font-size:10px;color:rgba(243,239,230,.56);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;}
 .oh3-msg.oh3-bad{color:#f07070;}
-.oh3-ver{flex:0 0 auto;font-size:8px;color:#4d5563;font-family:ui-monospace,monospace;}
+.oh3-ver{flex:0 0 auto;font-size:8px;color:rgba(243,239,230,.22);font-family:ui-monospace,monospace;}
 .oh3-cols{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 .oh3-col{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;}
-.oh3-sec{flex:0 0 auto;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7484;}
+.oh3-sec{flex:0 0 auto;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:rgba(243,239,230,.38);}
 .oh3-pics{flex:1;min-height:0;display:grid;gap:5px;
   grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));}
 .oh3-vids{flex:1;min-height:0;display:grid;grid-template-rows:repeat(3,minmax(0,1fr));gap:5px;
   grid-template-columns:minmax(0,1fr);}
 .oh3-auds{flex:1;min-height:0;display:grid;grid-template-rows:repeat(3,minmax(0,1fr));gap:5px;
   grid-template-columns:minmax(0,1fr);}
-.oh3-slot{border:1px dashed #2b313d;border-radius:6px;background:#141820;
-  display:flex;align-items:center;justify-content:center;color:#4d5563;font-size:10px;
+.oh3-slot{border:1px dashed rgba(243,239,230,.12);border-radius:6px;background:#101016;
+  display:flex;align-items:center;justify-content:center;color:rgba(243,239,230,.22);font-size:10px;
   cursor:pointer;overflow:hidden;min-width:0;min-height:0;}
-.oh3-slot:hover{border-color:#59637a;color:#8a93a3;}
-.oh3-filled{border-style:solid;border-color:#2e3440;background:#12151b;cursor:pointer;
+.oh3-slot:hover{border-color:rgba(243,239,230,.38);color:rgba(243,239,230,.56);}
+.oh3-filled{border-style:solid;border-color:rgba(243,239,230,.22);background:#101016;cursor:pointer;
   display:block;position:relative;}
-.oh3-filled.oh3-pic{border-color:#6d5527;}
-.oh3-filled.oh3-vid{border-color:#255c6b;}
-.oh3-filled.oh3-aud{border-color:#4c3d6e;}
-.oh3-sel{outline:1px solid #e8873a;outline-offset:1px;}
+.oh3-filled.oh3-pic{border-color:rgba(243,239,230,.22);}
+.oh3-filled.oh3-vid{border-color:rgba(243,239,230,.22);}
+.oh3-filled.oh3-aud{border-color:rgba(243,239,230,.22);}
+.oh3-sel{outline:1px solid #eb8219;outline-offset:1px;}
 .oh3-fit{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;
-  background:#0d1015;}
+  background:#0a0a0d;}
 .oh3-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:4px;
-  padding:1px 4px;background:rgba(10,12,16,.82);overflow:hidden;}
+  padding:1px 4px;background:rgba(10,10,13,.85);overflow:hidden;}
 .oh3-tag{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:ui-monospace,monospace;font-size:9px;color:#e0a94c;text-align:left;}
-.oh3-vid .oh3-tag{color:#4cc3e0;} .oh3-aud .oh3-tag{color:#b48ce8;}
-.oh3-x{flex:0 0 auto;cursor:pointer;color:#7a8393;font-size:11px;line-height:1;}
-.oh3-x:hover{color:#e05a5a;}
+  font-family:ui-monospace,monospace;font-size:9px;color:rgba(243,239,230,.80);text-align:left;}
+
+.oh3-x{flex:0 0 auto;cursor:pointer;color:rgba(243,239,230,.38);font-size:11px;line-height:1;}
+.oh3-x:hover{color:#ff9a2e;}
 .oh3-rowline{display:flex;align-items:center;gap:6px;padding:0 6px;height:100%;overflow:hidden;}
 .oh3-vthumb{width:56px;height:32px;min-width:56px;border-radius:4px;object-fit:contain;
-  background:#0d1015;flex:0 0 auto;}
-.oh3-play{width:20px;height:20px;border-radius:50%;border:1px solid #3a4252;background:#20242d;
-  color:#c9cfda;font-size:10px;line-height:1;cursor:pointer;flex:0 0 auto;padding:0;}
+  background:#0a0a0d;flex:0 0 auto;}
+.oh3-play{width:20px;height:20px;border-radius:50%;border:1px solid rgba(243,239,230,.22);background:#101016;
+  color:rgba(243,239,230,.80);font-size:10px;line-height:1;cursor:pointer;flex:0 0 auto;padding:0;}
 .oh3-seg{flex:0 0 auto;width:96px;background:#12151b;border:1px solid #2e3440;color:#c9cfda;
   border-radius:4px;font-size:10px;padding:2px;}
-.oh3-edit{flex:0 0 auto;height:88px;border-top:1px solid #2a2f3a;padding-top:6px;
+.oh3-edit{flex:0 0 auto;height:88px;border-top:1px solid rgba(243,239,230,.12);padding-top:6px;
   display:flex;flex-direction:column;gap:5px;overflow:hidden;}
 .oh3-editrow{display:flex;align-items:center;gap:5px;overflow:hidden;}
-.oh3-at{flex:0 0 auto;color:#e8873a;font-family:ui-monospace,monospace;}
-.oh3-in{background:#12151b;border:1px solid #2e3440;color:#d7dbe2;border-radius:4px;
+.oh3-at{flex:0 0 auto;color:#eb8219;font-family:ui-monospace,monospace;}
+.oh3-in{background:#12151b;border:1px solid #2e3440;color:#f3efe6;border-radius:4px;
   padding:3px 6px;font-size:11px;}
 .oh3-name{flex:0 0 110px;}
 select.oh3-in{flex:1;}
 .oh3-st{flex:0 0 132px;}
 .oh3-wide{flex:1;width:100%;}
-.oh3-hint{color:#6b7484;font-size:10px;padding-top:14px;text-align:center;}
+.oh3-hint{color:rgba(243,239,230,.38);font-size:10px;padding-top:14px;text-align:center;}
 .oh3-badges{position:absolute;top:3px;right:3px;display:flex;gap:3px;z-index:1;}
 .oh3-inlinebadges{position:static;flex:0 0 auto;}
-.oh3-badge{background:rgba(10,12,16,.85);border:1px solid #333a46;border-radius:3px;
-  color:#7d8695;font-size:8px;padding:0 3px;line-height:1.5;font-family:ui-monospace,monospace;}
-.oh3-rolebadge{color:#e8873a;border-color:#6d5527;}
+.oh3-badge{background:rgba(10,10,13,.85);border:1px solid rgba(243,239,230,.12);border-radius:3px;
+  color:rgba(243,239,230,.56);font-size:8px;padding:0 3px;line-height:1.5;font-family:ui-monospace,monospace;}
+.oh3-rolebadge{color:#eb8219;border-color:#b85a0e;}
 `;
 
 app.registerExtension({

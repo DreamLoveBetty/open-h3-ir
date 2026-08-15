@@ -62,7 +62,7 @@ dashes. The name is how the prompt refers to the file.
 
 | Kind | The choices |
 | --- | --- |
-| picture | something in the shot · the setting · a style to copy · first frame · last frame · staging sketch |
+| picture | something in the shot · the setting · a style to copy · first frame · last frame · storyboard |
 | clip | copy what is in it · edit it · carry on from it |
 | sound | play it · match its style · cut to its beat · sound effect · voice to match |
 
@@ -238,7 +238,7 @@ A per-picture role is not offered. The service also has `environment` and `style
 exposing them would need a wrapper node per picture, and a wrapper node means a plain `IMAGE` from a
 Load Image node would refuse to connect to the picture list. That is the worst possible first
 impression for a node whose whole pitch is that it removes boxes. Write "the empty showroom" in the
-notes line instead. The storyboard role earned its own socket because a staging sketch is a different
+notes line instead. The storyboard role earned its own socket because a storyboard is a different
 job, not a different description: a picture that must never appear in the video cannot ride a socket
 that means "put this in the video". The frontend can already grow several inputs per item; the Python
 side takes one template input, so per-picture roles stay reachable if that changes.

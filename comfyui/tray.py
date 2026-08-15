@@ -55,7 +55,7 @@ PICTURE_ROLES = {
     "a style to copy": "style",
     "first frame": "frame_anchor_first",
     "last frame": "frame_anchor_last",
-    "staging sketch": "storyboard",
+    "storyboard": "storyboard",
 }
 VIDEO_ROLES = {
     "copy what is in it": "subject",
@@ -329,7 +329,7 @@ def exclusivity(slots: list[Slot]) -> None:
     board = [s.label for s in slots if s.role == BOARD]
     if board:
         raise ServiceError(
-            f"a staging sketch cannot ride along with a first or last frame. {board[0]} plans the "
+            f"a storyboard cannot ride along with a first or last frame. {board[0]} plans the "
             f"shots and {anchors[0].label} is a frame of the video, and a frame job runs on H3's "
             "frame weights, whose node takes the two frames and no reference picture at all: the "
             "brief would lay the shots out from your sketch and H3 would never receive it. On the "
