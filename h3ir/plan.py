@@ -208,7 +208,9 @@ def build_subjects(manifest: list[ManifestEntry],
     for e in manifest:
         if e.kind is AssetKind.AUDIO:
             continue
-        if e.role in (Role.STORYBOARD,):
+        # A style plate lends its look; like a storyboard it is planning material, never a
+        # visible unit, so it gets no <Subject N> and earns its standalone line in render.py.
+        if e.role in (Role.STORYBOARD, Role.STYLE):
             continue
         card = cards.get(e.sha256)
         if card is None:

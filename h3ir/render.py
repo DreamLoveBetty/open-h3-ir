@@ -75,6 +75,12 @@ def render_subject_definitions(plan: Plan) -> str:
             shots = " and ".join(f"[Shot {s.n}]" for s in plan.shots) or "[Shot 1]"
             lines.append(f"{m.label} is a storyboard reference for {shots}, defining their "
                          "viewpoint, subject placement, and shot order.")
+        elif m.kind is AssetKind.IMAGE and m.role is Role.STYLE:
+            # The same standalone-line logic as the storyboard above: `build_subjects` skips a
+            # style plate so its contents cannot walk into the video, and this line is the one
+            # form the spec gives a style-only picture. R29 holds the written path to it.
+            lines.append(f"{m.label} is the style and composition reference for the target video, "
+                         "defining its medium, line, palette, shading and composition.")
     for m in plan.manifest:
         if m.kind is not AssetKind.AUDIO:
             continue
@@ -142,6 +148,10 @@ def render_retention(plan: Plan) -> str:
             lines.append(f"{m.label} (storyboard reference): weak_reference - the viewpoint, "
                          "subject placement and shot order are followed, while the drawing itself "
                          "is not reproduced.")
+        elif m.kind is AssetKind.IMAGE and m.role is Role.STYLE:
+            lines.append(f"{m.label} (style and composition): weak_reference - the target video "
+                         "adheres to the reference's aesthetic, while its contents are not "
+                         "reproduced.")
     for label, marker, note in audio_relations(plan):
         lines.append(f"{label}: {marker} - {note}.")
     return "\n".join(lines)
