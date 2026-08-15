@@ -232,7 +232,7 @@ WRITTEN = (
     "5.17-second mark of the target video.\n\n"
     "integrated_multimodal_description: [Shot 1] Cinematic, live-action, the empty showroom shown "
     "in <Picture 1>. The camera pushes in with small amplitude at slow speed. [Shot 2] At "
-    "00:04.500, the shot cuts to the composition shown in <Picture 2>.\n\n"
+    "00:03.500, the shot cuts to the composition shown in <Picture 2>.\n\n"
     "overall_soundscape: Tyres roll over polished concrete.\n\nnon_diegetic_music: N/A\n")
 
 
@@ -250,7 +250,7 @@ def test_the_written_path_gets_the_notation_the_renderer_already_uses():
     assert "<Picture" not in out.text
     assert any("bare spec form" in r for r in out.repairs), out.repairs
     # The shot markers in the body are mandated in every mode and must survive untouched.
-    assert "[Shot 1] Cinematic" in out.text and "[Shot 2] At 00:04.500" in out.text
+    assert "[Shot 1] Cinematic" in out.text and "[Shot 2] At 00:03.500" in out.text
 
 
 def test_the_repaired_brief_still_binds_both_pictures():

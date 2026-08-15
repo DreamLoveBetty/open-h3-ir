@@ -1037,6 +1037,20 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                 add("T6-time-past-end", "ERROR",
                     f"[Shot {n}] cuts at {t:.3f}s, at or beyond the real duration "
                     f"{ctx.duration_s:.3f}s — the render never reaches it")
+        # The floor the plan validator has always enforced, now held on the written text too.
+        # Measured: a writer placed a cut at 5.000s of a 5.167s render — a four-frame final shot,
+        # which reads as a glitch rather than an edit (shots.MIN_SHOT_MS records the constant).
+        floor_s = 1.2
+        marks = [0.0] + [t for _n, t in seen] + [ctx.duration_s]
+        names = ["the start"] + [f"[Shot {n}]'s cut" for n, _t in seen] + ["the end"]
+        for i in range(1, len(marks)):
+            gap = marks[i] - marks[i - 1]
+            if 0 <= gap < floor_s:
+                add("T12-cut-inside-the-floor", "ERROR",
+                    f"{names[i]} at {marks[i]:.3f}s leaves only {gap:.3f}s after {names[i - 1]} "
+                    f"({marks[i - 1]:.3f}s); every shot needs at least 1.2s or the cut reads as "
+                    "a glitch. Move the cut so each shot gets its floor")
+                break
         if not is_on_grid(ctx.duration_s):
             add("T7-illegal-duration", "ERROR",
                 f"{ctx.duration_s}s is {frames_for(ctx.duration_s)} frames, which is not on the "

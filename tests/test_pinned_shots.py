@@ -165,3 +165,28 @@ def test_the_fix_ask_still_protects_the_shots_otherwise():
     fix_with_findings(b, "text", [Finding("T4-missing-cut-time", "ERROR", "[Shot 2] has no time")],
                       labels=(), sections=())
     assert "Keep your shots" in b.asks[0]
+
+
+# --------------------------------------------------------------------------- the cut floor
+# Measured 2026-08-15, matrix row 12's first take: the writer placed a cut at 5.000s of a 5.167s
+# render - a 167ms final shot, four frames, which reads as a glitch rather than an edit. The plan
+# validator has always clamped cuts to MIN_SHOT_MS; the written document had no equivalent rule, so
+# a writer's cut could land inside the floor and ship.
+
+def test_a_cut_inside_the_final_shot_floor_is_an_error():
+    found = validate(_text(2).replace("At 00:06.000", "At 00:14.500"),
+                     _ctx(duration_s=15.125))
+    hits = [f for f in found if f.rule == "T12-cut-inside-the-floor"]
+    assert hits and hits[0].severity == "ERROR", [str(f) for f in found if f.severity == "ERROR"]
+    assert "1.2" in hits[0].msg
+
+
+def test_cuts_too_close_together_are_an_error():
+    text = _text(3).replace("At 00:06.000", "At 00:05.000").replace("At 00:10.000", "At 00:05.500")
+    found = validate(text, _ctx(duration_s=15.125))
+    assert any(f.rule == "T12-cut-inside-the-floor" for f in found)
+
+
+def test_legal_cuts_are_untouched_by_the_floor():
+    found = validate(_text(3), _ctx(duration_s=15.125))
+    assert not any(f.rule == "T12-cut-inside-the-floor" for f in found)
