@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v8";
+const VERSION = "tray v9";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -43,8 +43,8 @@ const ROLE_TOKEN = {
 };
 const SOUNDTRACKS = ["off", "paired", "alone"];
 // What a filled cell wears so its settings are visible without opening the editor. Every slot
-// wears its role, because a missing badge reads as "not set" rather than "default": the default
-// wears quiet gray and anything chosen wears the accent, so special still stands out at a glance.
+// wears its role in the same style: which role matters more is the user's business, not the
+// panel's.
 const BADGE_BY_KIND = {
   picture: { subject: "in shot", environment: "setting", style: "style",
              frame_anchor_first: "first", frame_anchor_last: "last", storyboard: "sketch" },
@@ -231,8 +231,7 @@ class Tray {
   badges(slot, inline = false) {
     const wrap = el("span", { class: inline ? "oh3-badges oh3-inlinebadges" : "oh3-badges" });
     const word = (BADGE_BY_KIND[slot.kind] || {})[slot.role];
-    if (word) wrap.append(el("span", {
-      class: "oh3-badge" + (slot.role === DEFAULT_ROLE[slot.kind] ? "" : " oh3-rolebadge"),
+    if (word) wrap.append(el("span", { class: "oh3-badge oh3-rolebadge",
       textContent: word, title: "what it is: set in the editor below" }));
     if ((slot.note || "").trim()) wrap.append(el("span", { class: "oh3-badge",
       textContent: "✎", title: "described: " + slot.note }));
