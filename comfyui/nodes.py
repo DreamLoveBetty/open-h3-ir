@@ -179,10 +179,10 @@ class OpenH3IRCompile(io.ComfyNode):
                             "by your sentence and by invention."),
                 io.Combo.Input(
                     "shots", display_name="shots", options=list(SHOTS), default="auto",
-                    tooltip="auto is usually right: cut times have to land on the frame grid too, "
-                            "and the compiler knows where they can go. Set a number when the piece "
-                            "has to be one continuous take, or exactly two. Four is the compiler's "
-                            "ceiling."),
+                    tooltip="auto is usually right: the writer decides the edit, and cut times "
+                            "have to land on the frame grid too. A number is kept exactly, up to "
+                            "10. Every shot needs 1.2 seconds, so a count that cannot fit the "
+                            "video's length is refused with the arithmetic."),
                 # The machine, and the only required socket. It sits here because ComfyUI groups every
                 # required input ahead of every optional one when it publishes the schema, so a
                 # declaration order that read better in this file would be a different node from the

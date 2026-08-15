@@ -49,7 +49,7 @@ DIALOGUE_LANGUAGES = ("English", "Spanish", "Portuguese", "French", "German", "I
 FPS = 24
 # h3ir/shots.py MAX_SHOTS. The compiler clamps to this, so offering more would promise a cut count
 # the engine drops without saying so.
-MAX_SHOTS = 4
+MAX_SHOTS = 10   # the service's PINNED_SHOTS_MAX; auto has its own lower heuristic ceiling
 SHOTS = ("auto", *(str(i) for i in range(1, MAX_SHOTS + 1)))
 # h3ir/grid.py TRAINED_MIN_FRAMES / TRAINED_MAX_FRAMES. Outside this band a render still happens;
 # the report says so rather than the surface forbidding it.
