@@ -15,7 +15,7 @@ Nothing here decides anything about a render. The probe route exists so the pane
 is not on this machine" instead of drawing an empty square, and the node re-reads every file itself
 when the graph runs: a stale duration in a saved workflow cannot change what gets sent.
 
-Route shape and the `input/<pack>/` convention follow ComfyUI-MiniMax-H3-Prompt-Builder's
+Route shape and the `input/<pack>/` convention follow ComfyUI-Fantastic-MiniMaxH3-PromptBuilder's
 `web_api.py` (MIT), which is credited in README.md.
 """
 from __future__ import annotations

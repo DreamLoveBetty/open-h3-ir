@@ -165,7 +165,7 @@ because my first draft of that rule fired on "he gives an okay sign".
 | `comfy.py` | ComfyUI over HTTP; graph prompt substitution that refuses to guess. |
 | `acceptance.py` | the five-arm comparison, built without touching the GPU. |
 
-The ComfyUI pack in `comfyui/` is three files and imports nothing from `h3ir`:
+The ComfyUI pack in `comfyui/` is six Python files plus a `web/` folder of three JS files, and imports nothing from `h3ir`:
 
 | file | what it owns |
 |---|---|

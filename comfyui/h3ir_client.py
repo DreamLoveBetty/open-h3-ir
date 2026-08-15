@@ -266,6 +266,12 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
     # native 768 short edge, exactly as every graph before the knob existed. A stated value is the
     # caller stating the budget, and the report's canvas line shows what it bought.
     if megapixels and float(megapixels) > 0:
+        # The widget steps from 0.05 and the service's floor is 0.25, so the gap used to travel
+        # and come back as a nameless 422. Refused here instead, with the range.
+        if float(megapixels) < 0.25:
+            raise ServiceError(
+                f"size, in megapixels is {float(megapixels):g}, and the smallest stated size the "
+                "service renders is 0.25. Set 0 for H3's native size, or a value from 0.25 to 2.5.")
         payload["megapixels"] = round(float(megapixels), 2)
     # Empty means absent. No lines in the prompt is not "no lines were asked for" stated in a field,
     # it is the same request this node made before a line could be locked, so the key is dropped
@@ -520,8 +526,8 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
             raise ServiceError(
                 f"the service opened your attachment and could not use it: "
                 f"{_sentence(det.get('message', code))} That is about the file rather than about the wiring: a "
-                "different path would fail the same way. Check what the socket is fed from, and that "
-                "a clip goes to a Footage node and a sound to a Sound node.")
+                "different path would fail the same way. Check the file in the tray slot the message "
+                "names on the OpenH3-IR Media node.")
         if code == "over-capacity":
             raise ServiceError(
                 f"more references than H3 has sockets for: {_sentence(det.get('message', code))} Nothing "

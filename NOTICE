@@ -42,3 +42,21 @@ carries obligations this licence does not, including a territorial restriction
 and a user-interface attribution requirement for commercial use. Anyone running
 a model against briefs produced here is bound by that agreement, not by this
 one. See the README's licence section, and read theirs.
+
+--------------------------------------------------------------------------------
+Adapted third-party work
+--------------------------------------------------------------------------------
+
+comfyui/web/tray.js, comfyui/media.py, comfyui/web_api.py
+
+    The media tray's widget sizing and upload idioms, and the technique for
+    reading media out of ComfyUI's input tree, are adapted from
+    ComfyUI-Fantastic-MiniMaxH3-PromptBuilder by Adudeguyman
+    (https://github.com/Adudeguyman/ComfyUI-Fantastic-MiniMaxH3-PromptBuilder),
+    published under the MIT License.
+
+comfyui/web/prompt.js
+
+    The prompt editor's state idioms are adapted from ComfyUI-MiniMaxH3-Easy
+    by nkxx188 (https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy), published
+    under the MIT License.

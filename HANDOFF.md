@@ -49,7 +49,7 @@ These three need no model, no GPU and no network. Run all three. They are the ho
 the install is sound, because nothing in them can be broken by a misconfigured endpoint.
 
 ```bash
-.venv/bin/h3ir controls        # -> "20 controls, 0 failing", exit 0
+.venv/bin/h3ir controls        # -> "22 controls, 0 failing", exit 0
 .venv/bin/python -m pytest -q  # -> all tests passing, exit 0
 .venv/bin/h3ir budget --seconds 10   # -> "243 frames = 10.125s", exit 0
 ```

@@ -26,7 +26,7 @@ video container, the service needs a file per asset, and a `.mp4` handed over as
 file whose bytes contradict its declaration. So it is decoded and written as a wav named by its own
 content, which is also what keeps an unchanged clip's soundtrack on an unchanged path.
 
-Technique for reading media out of ComfyUI's input tree follows ComfyUI-MiniMax-H3-Prompt-Builder's
+Technique for reading media out of ComfyUI's input tree follows ComfyUI-Fantastic-MiniMaxH3-PromptBuilder's
 `media_io.py` (MIT), which is credited in README.md.
 """
 from __future__ import annotations

@@ -25,6 +25,11 @@ const NODE_H_EXTRA = 84;
 const PANEL_H = 532;
 const CAPACITY = { picture: 9, video: 3, sound: 3 };
 const MAX_FILES = 12;
+// The count the service enforces: every slot is a file, and a clip whose soundtrack is sent
+// along ("paired") carries a second one. Counting slots here let a full-looking legal tray
+// through to a queue-time refusal, with the panel's N/12 disagreeing with the enforcer.
+const fileCount = (slots) =>
+  slots.length + slots.filter((s) => s.kind === "video" && s.soundtrack === "paired").length;
 const PREFIX = { picture: "picture", video: "video", sound: "audio" };
 const ROLES = {
   picture: ["something in the shot", "the setting", "a style to copy",
@@ -48,7 +53,8 @@ const SOUNDTRACKS = ["off", "paired", "alone"];
 const BADGE_BY_KIND = {
   picture: { subject: "in shot", environment: "setting", style: "style",
              frame_anchor_first: "first", frame_anchor_last: "last", storyboard: "storyboard" },
-  video: { subject: "copy", edit_source: "edit", continuation_source: "continue" },
+  video: { subject: "copy", structure: "how it's shot", edit_source: "edit",
+           continuation_source: "continue" },
   sound: { bgm: "play", music_style: "style", beat_reference: "beat", sfx: "sfx",
            voice_timbre: "voice" },
 };
@@ -158,8 +164,9 @@ class Tray {
     const kind = data.kind;
     if (slots.filter((s) => s.kind === kind).length >= CAPACITY[kind])
       throw new Error(`all ${CAPACITY[kind]} ${kind} slots are full.`);
-    if (slots.length >= MAX_FILES)
-      throw new Error(`the tray takes at most ${MAX_FILES} files, and it is full.`);
+    if (fileCount(slots) >= MAX_FILES)
+      throw new Error(`the tray takes at most ${MAX_FILES} files, and it is full. A clip `
+        + `whose soundtrack is sent along counts as two.`);
     const slot = { kind, label: autoLabel(kind, slots.map((s) => s.label)), file: data.file,
                    role: ROLE_TOKEN[ROLES[kind][0]], note: "" };
     if (kind === "video") slot.soundtrack = data.has_audio ? "paired" : "off";
@@ -321,7 +328,7 @@ class Tray {
     if (this.selected && !slots.some((s) => s.label === this.selected)) this.selected = null;
 
     this.counts.textContent =
-      `${slots.length} / ${MAX_FILES}`;
+      `${fileCount(slots)} / ${MAX_FILES}`;
     this.picGrid.replaceChildren(
       ...Array.from({ length: 9 }, (_, i) => this.cell("picture", i, of("picture")[i])));
     this.vidRows.replaceChildren(

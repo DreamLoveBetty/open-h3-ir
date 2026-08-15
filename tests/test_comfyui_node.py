@@ -585,3 +585,28 @@ def test_the_asset_failure_actually_carries_that_code(monkeypatch):
     with pytest.raises(C.ServiceError) as e:
         C.compile_brief("http://x", {"intent": "a"})
     assert C.retranslate(e.value) is True
+
+
+def test_a_megapixels_value_below_the_services_floor_is_refused_with_the_range():
+    """The widget steps from 0.05 while the service floor is 0.25, so 0.05-0.20 used to travel to
+    the service and come back as a nameless 422. The dead zone gets a sentence instead."""
+    with pytest.raises(C.ServiceError) as e:
+        C.build_payload("a shot", seconds=5.0, aspect="16:9", creativity="balanced",
+                        effort="standard", seed=7, silent=False, shots="auto", assets=[],
+                        transcripts={}, megapixels=0.1)
+    msg = str(e.value)
+    assert "0.25" in msg and "0" in msg
+
+
+def test_zero_megapixels_still_means_native_and_omits_the_field():
+    p = C.build_payload("a shot", seconds=5.0, aspect="16:9", creativity="balanced",
+                        effort="standard", seed=7, silent=False, shots="auto", assets=[],
+                        transcripts={}, megapixels=0.0)
+    assert "megapixels" not in p
+
+
+def test_a_legal_megapixels_value_travels():
+    p = C.build_payload("a shot", seconds=5.0, aspect="16:9", creativity="balanced",
+                        effort="standard", seed=7, silent=False, shots="auto", assets=[],
+                        transcripts={}, megapixels=0.6)
+    assert p["megapixels"] == 0.6
