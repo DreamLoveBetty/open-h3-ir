@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v4";
+const VERSION = "tray v5";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 560;
@@ -217,15 +217,6 @@ class Tray {
     }
     row.append(el("span", { class: "oh3-tag", textContent: "@" + slot.label }));
     row.append(this.badges(slot, true));
-    if (kind === "video") {
-      const st = el("select", { class: "oh3-seg", title:
-        "its soundtrack: off sends none, paired sends it as this clip's own sound, alone sends it as a track in its own right",
-        onclick: (e) => e.stopPropagation() });
-      for (const v of SOUNDTRACKS) st.append(el("option", { value: v, textContent: "sound " + v,
-        selected: v === (slot.soundtrack || "off") }));
-      st.addEventListener("change", () => this.update(slot.label, { soundtrack: st.value }));
-      row.append(st);
-    }
     row.append(el("span", { class: "oh3-x", textContent: "×",
       onclick: (e) => { e.stopPropagation(); this.remove(slot.label); } }));
     cell.append(row);
@@ -240,6 +231,10 @@ class Tray {
       textContent: "✎", title: "described: " + slot.note }));
     if ((slot.transcript || "").trim()) wrap.append(el("span", { class: "oh3-badge",
       textContent: "abc", title: "its words are typed in" }));
+    if (slot.kind === "video" && slot.soundtrack && slot.soundtrack !== "paired")
+      wrap.append(el("span", { class: "oh3-badge",
+        textContent: "sound " + slot.soundtrack,
+        title: "its soundtrack: set in the editor below" }));
     return wrap;
   }
 
@@ -260,15 +255,36 @@ class Tray {
     for (const words of ROLES[slot.kind]) role.append(el("option", {
       value: ROLE_TOKEN[words], textContent: words, selected: ROLE_TOKEN[words] === slot.role }));
     role.addEventListener("change", () => this.update(slot.label, { role: role.value }));
+    // The description asks in the words of the chosen role, and fields a role cannot use do not
+    // appear: a sound effect has no lyrics, so it gets no words box.
+    const NOTE_ASK = {
+      voice_timbre: "how the voice sounds: hoarse, unhurried, mid-forties",
+      sfx: "what it is: a heavy door slamming, close, no reverb",
+      bgm: "timbre, tempo, instruments: slow synth score, no drums",
+      music_style: "timbre, tempo, instruments: slow synth score, no drums",
+      beat_reference: "the rhythm: a steady 90 bpm pulse, one hit per bar",
+    };
     const note = el("input", { class: "oh3-in oh3-wide", value: slot.note || "", placeholder:
-      slot.kind === "sound" ? "what it sounds like — the only description the model will ever have"
-                            : "what it is, in a few words" });
+      slot.kind === "sound"
+        ? (NOTE_ASK[slot.role] || "what it sounds like") +
+          " — the only description the model will ever have"
+        : "what it is, in a few words" });
     note.addEventListener("change", () => this.update(slot.label, { note: note.value }));
 
-    const rows = [el("div", { class: "oh3-editrow" },
-      el("span", { class: "oh3-at", textContent: "@" }), label, role),
-      el("div", { class: "oh3-editrow" }, note)];
-    if (slot.kind === "sound") {
+    const first = el("div", { class: "oh3-editrow" },
+      el("span", { class: "oh3-at", textContent: "@" }), label, role);
+    if (slot.kind === "video") {
+      const st = el("select", { class: "oh3-in oh3-st", title:
+        "its own soundtrack: off sends none, paired sends it as this clip's sound, alone sends it as a track in its own right" });
+      for (const v of SOUNDTRACKS) st.append(el("option", { value: v,
+        textContent: "soundtrack " + v, selected: v === (slot.soundtrack || "off") }));
+      st.addEventListener("change", () => this.update(slot.label, { soundtrack: st.value }));
+      first.append(st);
+    }
+    const rows = [first, el("div", { class: "oh3-editrow" }, note)];
+    // Only the roles for which a recording's own words mean anything: a voice to imitate, or a
+    // track played outright whose lyrics must ride along. Style, beat and effects have no words.
+    if (slot.kind === "sound" && (slot.role === "voice_timbre" || slot.role === "bgm")) {
       const words = el("input", { class: "oh3-in oh3-wide", value: slot.transcript || "",
         placeholder: "the words in this recording, exactly as spoken — nothing here can hear" });
       words.addEventListener("change", () => this.update(slot.label, { transcript: words.value }));
@@ -313,9 +329,9 @@ const CSS = `
 .oh3-sec{flex:0 0 auto;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7484;}
 .oh3-pics{flex:1;min-height:0;display:grid;gap:5px;
   grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));}
-.oh3-vids{flex:0 0 auto;display:grid;grid-template-rows:repeat(3,44px);gap:5px;
+.oh3-vids{flex:1;min-height:0;display:grid;grid-template-rows:repeat(3,minmax(0,1fr));gap:5px;
   grid-template-columns:minmax(0,1fr);}
-.oh3-auds{flex:0 0 auto;display:grid;grid-template-rows:repeat(3,36px);gap:5px;
+.oh3-auds{flex:1;min-height:0;display:grid;grid-template-rows:repeat(3,minmax(0,1fr));gap:5px;
   grid-template-columns:minmax(0,1fr);}
 .oh3-slot{border:1px dashed #2b313d;border-radius:6px;background:#141820;
   display:flex;align-items:center;justify-content:center;color:#4d5563;font-size:10px;
@@ -351,6 +367,7 @@ const CSS = `
   padding:3px 6px;font-size:11px;}
 .oh3-name{flex:0 0 110px;}
 select.oh3-in{flex:1;}
+.oh3-st{flex:0 0 132px;}
 .oh3-wide{flex:1;width:100%;}
 .oh3-hint{color:#6b7484;font-size:10px;padding-top:14px;text-align:center;}
 .oh3-badges{position:absolute;top:3px;right:3px;display:flex;gap:3px;z-index:1;}
