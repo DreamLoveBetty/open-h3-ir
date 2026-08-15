@@ -17,7 +17,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v11";
+const VERSION = "tray v12";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -393,7 +393,9 @@ const CSS = `
 .oh3-wlabel{flex:0 0 auto;font-size:10px;color:var(--oh3-wmuted);white-space:nowrap;}
 .oh3-wrow .oh3-in{flex:1;min-width:0;background:none;border:0;padding:2px 0;
   color:var(--oh3-wtext);}
-.oh3-wrow select.oh3-in{background:none;}
+.oh3-wrow select.oh3-in{background:transparent;color:var(--oh3-wtext);}
+.oh3-wrow select.oh3-in option,.oh3-role option,.oh3-seg option{
+  background:#101016;color:#f3efe6;}
 .oh3-atwrap{flex:1;min-width:0;display:flex;align-items:center;gap:2px;}
 .oh3-atwrap .oh3-in{flex:1;min-width:0;}
 .oh3-editrow{display:flex;align-items:center;gap:5px;overflow:hidden;}
