@@ -171,7 +171,14 @@ def test_the_video_analyser_gets_the_deep_retry_budget():
             self.kw = kw
             return {"summary": "a clip", "subjects": []}
 
+    import base64
+    import tempfile
+
     b = Recorder()
     ref = AssetRef(kind=AssetKind.VIDEO, path="", sha256="a" * 64, role=None)
-    analyse_video(b, ref, frames=["data:image/png;base64,x"])
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        f.write(png)
+    analyse_video(b, ref, frames=[f.name])
     assert b.kw.get("retries") == 5
