@@ -1,0 +1,51 @@
+{
+  "10": {
+    "class_type": "OpenH3IRSetup",
+    "inputs": {
+      "server": "http://127.0.0.1:8420",
+      "reference_model": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "frames_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "video_vae": "minimax_h3_video_vae_fp16.safetensors",
+      "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+      "weight_dtype": "default",
+      "timeout_s": 900
+    }
+  },
+  "30": {
+    "class_type": "OpenH3IRCompile",
+    "inputs": {
+      "intent": "morning mist drifts through a pine forest as the first light comes through",
+      "seconds": 8.0,
+      "aspect": "16:9",
+      "creativity": "balanced",
+      "silent": false,
+      "shots": "1",
+      "megapixels": 0.0,
+      "spoken_language": "English",
+      "seed": 7,
+      "setup": [
+        "10",
+        0
+      ]
+    }
+  },
+  "40": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "30",
+        5
+      ]
+    }
+  },
+  "41": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "30",
+        6
+      ]
+    }
+  }
+}
