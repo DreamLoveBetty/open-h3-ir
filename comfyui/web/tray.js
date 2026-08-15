@@ -363,7 +363,7 @@ const CSS = `
   background:#0a0a0d;flex:0 0 auto;}
 .oh3-play{width:20px;height:20px;border-radius:50%;border:1px solid rgba(243,239,230,.22);background:#101016;
   color:rgba(243,239,230,.80);font-size:10px;line-height:1;cursor:pointer;flex:0 0 auto;padding:0;}
-.oh3-seg{flex:0 0 auto;width:96px;background:#12151b;border:1px solid #2e3440;color:#c9cfda;
+.oh3-seg{flex:0 0 auto;width:96px;background:#101016;border:1px solid rgba(243,239,230,.22);color:rgba(243,239,230,.80);
   border-radius:4px;font-size:10px;padding:2px;}
 .oh3-edit{flex:0 0 auto;height:88px;border-top:1px solid rgba(243,239,230,.12);padding-top:6px;
   display:flex;flex-direction:column;gap:5px;overflow:hidden;}
