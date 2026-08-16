@@ -6,11 +6,11 @@ Open-source local Context-IR for MiniMax H3.
 
 **Type one sentence. Get better video out of MiniMax H3.**
 
-![A man sandboarding down a dune with a giant white dragon running alongside him, ending on the title OpenH3-IR](docs/media/openh3ir-title.webp)
+![A man sandboarding down a dune with a giant white dragon running alongside him, ending on the title OpenH3-IR](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/openh3ir-title.webp)
 
 *That title card was made by the workflow that ships in this repo: plain prose in, three named
 reference pictures, and H3 wrote the score in the same pass as the picture.* **Watch it with sound:**
-[openh3ir-title.mp4](docs/media/openh3ir-title.mp4).
+[openh3ir-title.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/openh3ir-title.mp4).
 
 ## What this is
 
@@ -40,7 +40,7 @@ commit if you build on it.
 
 ## The difference, a clip of something vs a performance
 
-![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
+![The same request, sent raw on the left and compiled on the right](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/off-vs-on.webp)
 
 *Same model, same seed, same reference image. The only difference is the words.*
 
@@ -62,22 +62,22 @@ compiled side keeps arriving with more direction in it: sometimes mild, sometime
 overdone. The difference I care about is the one between a clip of the thing and a clip of the thing
 that actually means something.
 
-**Watch it with sound:** [off-vs-on.mp4](docs/media/off-vs-on.mp4). H3 generates the rain and the
+**Watch it with sound:** [off-vs-on.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/off-vs-on.mp4). H3 generates the rain and the
 score in the same pass as the picture, and GitHub cannot play a repo-hosted mp4 inline, so the
 animation above is the silent version and the file is the one with audio. The brief that produced the
 right half is committed beside it:
-[`off-vs-on.compiled-brief.txt`](docs/media/off-vs-on.compiled-brief.txt).
+[`off-vs-on.compiled-brief.txt`](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/off-vs-on.compiled-brief.txt).
 
 ## In ComfyUI: three nodes
 
-![The three OpenH3-IR nodes on a ComfyUI canvas, tray holding three named pictures, wired to a box called Render and a save that is playing the finished title card](docs/media/comfyui-base-workflow.png)
+![The three OpenH3-IR nodes on a ComfyUI canvas, tray holding three named pictures, wired to a box called Render and a save that is playing the finished title card](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/comfyui-base-workflow.png)
 
 - **OpenH3-IR Main** takes the sentence and hands the render everything it needs to run.
 - **OpenH3-IR Media** is the tray: every picture, clip and sound the piece uses, on one panel.
 - **OpenH3-IR Setup** holds the service address and the five H3 files to load.
 
 The workflow in the picture ships with the pack:
-[`comfyui/example/openh3ir_base_workflow.json`](comfyui/example/openh3ir_base_workflow.json). Seven
+[`comfyui/example/openh3ir_base_workflow.json`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/example/openh3ir_base_workflow.json). Seven
 boxes on the canvas and that is all of it: those three, one called **Render** with the rendering
 machinery folded up inside it, one that saves the video, and two panels showing the brief that got
 written and the report of what happened. Nothing in it is set up to be fast or clever, so what comes
@@ -164,11 +164,11 @@ jobs at once. That is refused on the canvas, in a full sentence naming both slot
 written or the writing model is called.
 
 Every node, every widget, every failure message and the wiring for building your own graph:
-[`comfyui/README.md`](comfyui/README.md).
+[`comfyui/README.md`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/README.md).
 
 ## A dial, for how far it goes
 
-![the same request at restrained on the left and extreme on the right](docs/media/dial-restrained-vs-extreme.webp)
+![the same request at restrained on the left and extreme on the right](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/dial-restrained-vs-extreme.webp)
 
 *"the car rolls into the showroom and stops under the lights."* Run twice, changing one flag.
 
@@ -191,10 +191,10 @@ Swap `extreme` for `restrained` and you get the left half. Four positions in all
 `balanced` (the default), `bold`, `extreme`. What changes is how much the writer may introduce that
 you never asked for, and an explicit "no dialogue" at `extreme` still means no dialogue.
 
-**Watch it with sound:** [dial-restrained-vs-extreme.mp4](docs/media/dial-restrained-vs-extreme.mp4).
+**Watch it with sound:** [dial-restrained-vs-extreme.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/dial-restrained-vs-extreme.mp4).
 Both briefs are committed too, so you can read exactly what the flag did:
-[restrained](docs/media/dial-restrained.brief.txt) and
-[extreme](docs/media/dial-extreme.brief.txt).
+[restrained](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/dial-restrained.brief.txt) and
+[extreme](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/dial-extreme.brief.txt).
 
 ## Or call it from anything
 
@@ -217,7 +217,7 @@ so a caller never hardcodes them.
 Under-specification never fails. `{"intent":"make a video of my dog"}` and nothing else comes back
 `201` with a complete, zero-error brief: five seconds, widescreen, the edit and the sound picked for
 you. Routes, request shapes, and what the service guarantees against what it only attempts:
-[`docs/calling-the-api.md`](docs/calling-the-api.md).
+[`docs/calling-the-api.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/calling-the-api.md).
 
 ## Why this is a compiler, not a prompt enhancer
 
@@ -258,7 +258,7 @@ the report says so plainly instead of the surface pretending the option does not
 The lines cut off above price your references, which is the other thing that command is for. Words are
 nearly free and attachments are what cost: one reference image at its full size costs roughly ten times
 what the entire written brief does. Write long, attach few. The arithmetic is in
-[`docs/design.md`](docs/design.md).
+[`docs/design.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/design.md).
 
 ## References decide the job
 
@@ -395,7 +395,7 @@ Every brief on this page was written by Qwen3.6 27B, 4-bit, served by vLLM at 26
 bar to size your own box against: a 27B-class local model that can also look at images is enough.
 `h3ir eval` is there to measure what a different endpoint does to brief quality rather than guess at it.
 
-Every setting, with the reason for each default, is in [`.env.example`](.env.example).
+Every setting, with the reason for each default, is in [`.env.example`](https://github.com/ruashots/open-h3-ir/blob/main/.env.example).
 
 ## What OpenH3-IR does not do
 
@@ -418,17 +418,17 @@ Every setting, with the reason for each default, is in [`.env.example`](.env.exa
 
 | file | what it is for |
 | --- | --- |
-| [`comfyui/README.md`](comfyui/README.md) | **the node pack in full**: every node and widget, the tray, the `@` prompt, the wiring, every failure message |
-| [`comfyui/example/openh3ir_base_workflow.json`](comfyui/example/openh3ir_base_workflow.json) | the ready-to-run ComfyUI workflow in the picture above |
-| [`HANDOFF.md`](HANDOFF.md) | **installing it and verifying it works**, top to bottom, with a check on every step and what to do when one fails |
-| [`AGENTS.md`](AGENTS.md) | **contributing**: the rules that are not preferences, which file owns what, the known gaps |
-| [`docs/calling-the-api.md`](docs/calling-the-api.md) | driving the service from an application: what it guarantees, what it only attempts, what comes back |
-| [`docs/design.md`](docs/design.md) | why every rule exists: what the encoder sees, the cost model, the contract between stages |
-| [`docs/build-log.md`](docs/build-log.md) | a dated record of what the build measured, including the positions it reversed |
+| [`comfyui/README.md`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/README.md) | **the node pack in full**: every node and widget, the tray, the `@` prompt, the wiring, every failure message |
+| [`comfyui/example/openh3ir_base_workflow.json`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/example/openh3ir_base_workflow.json) | the ready-to-run ComfyUI workflow in the picture above |
+| [`HANDOFF.md`](https://github.com/ruashots/open-h3-ir/blob/main/HANDOFF.md) | **installing it and verifying it works**, top to bottom, with a check on every step and what to do when one fails |
+| [`AGENTS.md`](https://github.com/ruashots/open-h3-ir/blob/main/AGENTS.md) | **contributing**: the rules that are not preferences, which file owns what, the known gaps |
+| [`docs/calling-the-api.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/calling-the-api.md) | driving the service from an application: what it guarantees, what it only attempts, what comes back |
+| [`docs/design.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/design.md) | why every rule exists: what the encoder sees, the cost model, the contract between stages |
+| [`docs/build-log.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/build-log.md) | a dated record of what the build measured, including the positions it reversed |
 
 ## Licence
 
-Apache 2.0. See [LICENSE](LICENSE), and [NOTICE](NOTICE) for what belongs to whom.
+Apache 2.0. See [LICENSE](https://github.com/ruashots/open-h3-ir/blob/main/LICENSE), and [NOTICE](https://github.com/ruashots/open-h3-ir/blob/main/NOTICE) for what belongs to whom.
 
 **That covers this compiler and this node pack. It does not cover the model you point them at, and
 H3's own licence is more restrictive than you might assume.** Three terms worth knowing before you
