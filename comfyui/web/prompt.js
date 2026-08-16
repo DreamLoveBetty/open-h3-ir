@@ -1,25 +1,117 @@
-/* OpenH3-IR Main: the @ picker on the prompt.
+/* OpenH3-IR Main: the @ picker on the prompt, and the mentions drawn as objects.
  *
  * Sugar only. The prompt is plain text carrying @label and @speaks("...") and works untouched with
  * this file absent; what this adds is the popup that makes the labels findable: type @ and the
  * tray's slots appear, filtered as you type, Enter or click to insert. The first entry is always
  * the spoken-line form, so @speaks is discoverable in the same motion.
  *
- * Editor state idioms follow ComfyUI-MiniMaxH3-Easy's ui (MIT), credited in README.md.
+ * The second half of the file draws those mentions as objects rather than loose characters, and the
+ * one thing it may not do is change the string. A textarea cannot contain elements, so a MIRROR div
+ * sits behind it rendering the same characters with the mentions wrapped in spans, and the textarea
+ * keeps its own text transparent. Selection, undo, paste and IME stay exactly as the browser
+ * implements them, which a contenteditable rewrite would hand to us, and the widget's value is the
+ * sentence the user typed, character for character.
+ *
+ * Two things about that mirror are load-bearing, and both are the reason it is built this way rather
+ * than the obvious way.
+ *
+ * A mention has to advance the text by exactly the width of its own glyphs. Padding, a margin or a
+ * border on a mention would move every character after it, the mirror's lines would wrap at
+ * different places than the textarea's, and the error compounds line after line. So the ring around
+ * a mention is an OUTER box-shadow spread, which paints beyond the box without occupying space, and
+ * box-decoration-break keeps the ring intact when a mention lands on a line break.
+ *
+ * The metrics are MEASURED off the textarea, not declared. The reference this technique comes from
+ * owns its own textarea and can declare both halves identically; ours belongs to ComfyUI, whose
+ * theme, font and padding are its business and may change under us. So the mirror copies the font,
+ * the line height and the wrapping rules from whatever the host settled on, and re-copies them
+ * whenever the box changes size. The wrapper the host puts the textarea in is not touched: its
+ * inline style is recomposed by Vue on every frame, so anything written there is gone by the next
+ * one. Everything here is a stylesheet rule and a style on elements we own.
+ *
+ * If the paint ever throws, the transparency comes straight back off and the box degrades to plain
+ * readable text. An invisible prompt is the one failure this must not have.
+ *
+ * Editor state idioms follow ComfyUI-MiniMaxH3-Easy's ui (MIT), and the mirrored-textarea technique
+ * follows ComfyUI-Fantastic-MiniMaxH3-PromptBuilder's promptbuilder.js (MIT). Both credited in
+ * README.md.
  */
 import { app } from "../../scripts/app.js";
 
 const NODE = "OpenH3IRCompile";
 
-function trayOf(node) {
-  // The media input's origin node, walked live so the popup always shows the tray as it is now.
+/* The prompt's whole grammar, and the same three literals comfyui/tray.py reads it with. A mention
+ * is @ and a label; a locked line runs from @speaks(" to the first ") . Nothing else is a construct.
+ *
+ * The character class is `\w-` in tray.py under re.UNICODE, which is letters, digits and underscore
+ * -- Python's \w excludes combining marks, so \p{M} is deliberately absent here and `@cafe` followed
+ * by a combining accent ends at the same character on both sides. Matching more than a label may
+ * legally contain is the safe direction anyway: `@some_thing` is drawn as one mention nobody named
+ * and refused by that name, rather than as `@some` plus stray text the user never meant.
+ */
+const MENTION = /@[\p{L}\p{N}_-]+/uy;
+const SPEAKS_OPEN = '@speaks("';
+const SPEAKS_CLOSE = '")';
+
+/** The prompt as pieces, exactly as tray.py's parse_intent splits it, and never throwing.
+ *
+ * Where that function raises -- an opener with no closer -- this returns the piece marked wrong, so
+ * the box can say so while it is being typed instead of at the moment somebody presses Run.
+ */
+function pieces(text) {
+  const src = String(text ?? "");
+  const out = [];
+  let plain = [];
+  const flush = () => {
+    if (plain.length) out.push({ kind: "text", text: plain.join("") });
+    plain = [];
+  };
+  let i = 0;
+  while (i < src.length) {
+    const at = src.indexOf("@", i);
+    if (at < 0) { plain.push(src.slice(i)); break; }
+    plain.push(src.slice(i, at));
+    if (src.startsWith(SPEAKS_OPEN, at)) {
+      const start = at + SPEAKS_OPEN.length;
+      const end = src.indexOf(SPEAKS_CLOSE, start);
+      flush();
+      if (end < 0) {
+        out.push({ kind: "unclosed", text: src.slice(at) });
+        i = src.length;
+        continue;
+      }
+      out.push({ kind: "spoken", words: src.slice(start, end) });
+      i = end + SPEAKS_CLOSE.length;
+      continue;
+    }
+    MENTION.lastIndex = at;
+    const m = MENTION.exec(src);
+    if (!m) { plain.push("@"); i = at + 1; continue; }
+    flush();
+    out.push({ kind: "mention", label: m[0].slice(1) });
+    i = at + m[0].length;
+  }
+  flush();
+  return out;
+}
+
+function trayState(node) {
+  // The media input's origin node, walked live so the popup and the mentions always read the tray
+  // as it is now rather than as it was when this node was made.
   try {
     const input = (node.inputs || []).find((i) => i.name === "media");
     if (!input || input.link == null) return null;
     const link = node.graph.links[input.link];
     const origin = node.graph.getNodeById(link.origin_id);
-    const state = (origin?.widgets || []).find((w) => w.name === "tray");
-    const slots = JSON.parse(state?.value || "[]");
+    return (origin?.widgets || []).find((w) => w.name === "tray") || null;
+  } catch {
+    return null;
+  }
+}
+
+function trayOf(node) {
+  try {
+    const slots = JSON.parse(trayState(node)?.value || "[]");
     return Array.isArray(slots) ? slots : null;
   } catch {
     return null;
@@ -120,14 +212,174 @@ class Picker {
     const pos = this.ta.selectionStart;
     const before = this.ta.value.slice(0, this.at + 1);
     const after = this.ta.value.slice(pos);
-    this.ta.value = before + it.insert + after;
+    // A mention is a word in a sentence and the next thing typed is the next word, so the space
+    // belongs to the insertion: picking a slot used to leave the caret jammed against the label.
+    // Not doubled when the sentence already has one there, which is what happens when a mention is
+    // picked in the middle of a line the user is editing.
+    const gap = /^[ \t\n]/.test(after) ? "" : " ";
+    this.ta.value = before + it.insert + gap + after;
     const cursor = it.kind === "say"
       ? before.length + it.insert.length - 2   // inside the empty quotes
-      : before.length + it.insert.length;
+      : before.length + it.insert.length + gap.length;
     this.ta.setSelectionRange(cursor, cursor);
     this.ta.dispatchEvent(new Event("input", { bubbles: true }));
     if (it.kind !== "say") this.hide();
     this.ta.focus();
+  }
+}
+
+/* Everything that decides where a character lands. Copied off the host's textarea rather than
+ * declared, because a difference in any one of them wraps the mirror's lines somewhere else. */
+const METRICS = [
+  "fontFamily", "fontSize", "fontWeight", "fontStyle", "fontVariant", "fontStretch",
+  "lineHeight", "letterSpacing", "wordSpacing", "textIndent", "textTransform", "textAlign",
+  "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction",
+];
+
+class Chips {
+  constructor(textarea, node) {
+    this.ta = textarea;
+    this.node = node;
+    this.mirror = document.createElement("div");
+    this.mirror.className = "oh3-mirror";
+    this.mirror.setAttribute("aria-hidden", "true");
+    textarea.parentElement.insertBefore(this.mirror, textarea);
+    this.live = false;
+    this.was = null;      // the text last painted
+    this.wasTray = null;  // the tray's own text when it was last painted
+
+    textarea.addEventListener("input", () => this.paint());
+    textarea.addEventListener("scroll", () => this.follow());
+    // While an input method is composing, its unconfirmed characters live in the textarea and
+    // nowhere else, so the mirror stands down and the real text shows until the word is committed.
+    textarea.addEventListener("compositionstart", () => this.reveal(false));
+    textarea.addEventListener("compositionend", () => this.paint());
+    // The one event that reports the box's real geometry, including the first time it has any.
+    this.watch = new ResizeObserver(() => { this.metrics(); this.paint(); });
+    this.watch.observe(textarea);
+  }
+
+  /** Plain readable text, sugar off. Called on composition and on the one failure this must
+   *  survive: whatever went wrong, the sentence stays legible. */
+  reveal(permanently) {
+    this.live = false;
+    // `was` is the text the mirror is currently SHOWING, so hiding the mirror has to clear it.
+    // Leaving it set told the next paint that the drawing was already up to date and there was
+    // nothing to do, and the chips never came back after an input method finished composing.
+    this.was = null;
+    this.ta.classList.remove("oh3-chiptext");
+    this.mirror.style.display = "none";
+    if (permanently) {
+      this.dead = true;
+      this.watch.disconnect();
+      this.mirror.remove();
+    }
+  }
+
+  metrics() {
+    const cs = getComputedStyle(this.ta);
+    const n = (v) => parseFloat(v) || 0;
+    const [pl, pr, pt, pb] = [cs.paddingLeft, cs.paddingRight, cs.paddingTop, cs.paddingBottom]
+      .map(n);
+    const [bl, bt] = [cs.borderLeftWidth, cs.borderTopWidth].map(n);
+    const s = this.mirror.style;
+    for (const k of METRICS) s[k] = cs[k];
+    // The mirror IS the textarea's content box: no padding of its own, and a width taken from
+    // clientWidth, which already excludes the scrollbar. A mirror sized to the outer box would
+    // wrap a line later than the textarea does the moment the text is long enough to scroll.
+    s.left = `${this.ta.offsetLeft + bl + pl}px`;
+    s.top = `${this.ta.offsetTop + bt + pt}px`;
+    s.width = `${Math.max(0, this.ta.clientWidth - pl - pr)}px`;
+    s.height = `${Math.max(0, this.ta.clientHeight - pt - pb)}px`;
+    this.boxWidth = this.ta.clientWidth;
+    this.ready = this.boxWidth > 0;
+  }
+
+  follow() {
+    this.mirror.scrollTop = this.ta.scrollTop;
+    this.mirror.scrollLeft = this.ta.scrollLeft;
+  }
+
+  span(cls, text) {
+    const e = document.createElement("span");
+    e.className = cls;
+    e.textContent = text;
+    return e;
+  }
+
+  build(text) {
+    const known = new Set((trayOf(this.node) || []).map((s) => String(s.label).toLowerCase()));
+    const kids = [];
+    for (const p of pieces(text)) {
+      if (p.kind === "text") { kids.push(document.createTextNode(p.text)); continue; }
+      if (p.kind === "mention") {
+        // The same case-blind lookup resolve_intent does, so a mention the tray cannot answer is
+        // drawn as wrong here and refused by that name there, instead of looking fine until Run.
+        const ok = known.has(p.label.toLowerCase());
+        kids.push(this.span("oh3-m" + (ok ? "" : " oh3-mbad"), "@" + p.label));
+        continue;
+      }
+      if (p.kind === "unclosed") {
+        kids.push(this.span("oh3-m oh3-mbad", p.text));
+        continue;
+      }
+      const band = document.createElement("span");
+      band.className = "oh3-say";
+      band.append(this.span("oh3-saymark", SPEAKS_OPEN),
+                  this.span("oh3-saywords", p.words),
+                  this.span("oh3-saymark", SPEAKS_CLOSE));
+      kids.push(band);
+    }
+    return kids;
+  }
+
+  paint() {
+    if (this.dead) return;
+    // The keystroke that makes the prompt long enough to scroll is also the one that takes a
+    // scrollbar's width out of the box, on the platforms where a scrollbar occupies room rather than
+    // floating over the text. Reading clientWidth flushes layout and reports the width the text will
+    // actually wrap in, so the mirror narrows in the same frame instead of a frame later, when the
+    // resize observer would otherwise be the one to notice.
+    if (this.ta.clientWidth !== this.boxWidth) this.metrics();
+    const text = this.ta.value || "";
+    const trayText = trayState(this.node)?.value ?? null;
+    // One keystroke arrives here twice: once from the textarea's own input event, and once because
+    // ComfyUI's handler for that same event assigns the widget's value, which runs the setValue this
+    // class wraps. Both routes are kept, since either one alone would be a bet on how the host wires
+    // its own widget, and a redraw of text that did not change is skipped instead.
+    if (this.live && text === this.was && trayText === this.wasTray) return this.follow();
+    this.was = text;
+    this.wasTray = trayText;
+    try {
+      if (!text) {
+        // Nothing to draw, so the sugar comes off entirely and the box shows the host's own
+        // placeholder, which is this widget's only label. Drawing a second copy of it in the mirror
+        // put two of them on top of each other.
+        this.mirror.replaceChildren();
+        this.ta.classList.remove("oh3-chiptext");
+      } else {
+        // The trailing newline keeps the mirror's last line in step with the textarea's when the
+        // text ends on one.
+        this.mirror.replaceChildren(...this.build(text), document.createTextNode("\n"));
+        if (this.ready) this.ta.classList.add("oh3-chiptext");
+      }
+      this.mirror.style.display = "";
+      this.live = true;
+      this.follow();
+    } catch (err) {
+      console.error("[OpenH3-IR] the prompt's mentions could not be drawn, so the box is showing "
+                    + "plain text. The sentence itself is untouched.", err);
+      this.reveal(true);
+    }
+  }
+
+  /** Repaint when something outside this box changed what it should say: a slot renamed on the
+   *  Media node, or a value written straight into the widget by a workflow load or an undo. Two
+   *  string comparisons, on the canvas's own redraw, and no layout is read. */
+  check() {
+    if (!this.live) return;
+    if (this.ta.value === this.was && (trayState(this.node)?.value ?? null) === this.wasTray) return;
+    this.paint();
   }
 }
 
@@ -139,6 +391,35 @@ const CSS = `
 .oh3-pickrow:hover,.oh3-picksel{background:#232735;}
 .oh3-pickthumb{width:28px;height:20px;object-fit:cover;border-radius:3px;flex:0 0 auto;}
 .oh3-pickdot{width:28px;text-align:center;color:#e8873a;flex:0 0 auto;}
+
+/* The mirror. Every metric that decides where a character lands is written from the textarea's own
+   computed style, so nothing about type is declared here -- only the things that cannot be
+   inherited from an element this div is not inside. */
+.oh3-mirror{position:absolute;margin:0;padding:0;border:0;overflow:hidden;pointer-events:none;
+  color:#f3efe6;background:none;}
+/* The textarea over it: its own glyphs transparent, its caret and its selection not. The selection
+   deliberately paints opaque text, so what you have selected stays readable on top of the mirror. */
+textarea.oh3-chiptext{background:transparent;color:transparent;caret-color:#f3efe6;}
+textarea.oh3-chiptext::selection{background:rgba(235,130,25,.34);color:#f3efe6;}
+/* A mention, drawn as one object. No padding, no margin and no border, because any of them would
+   move the characters after it and the mirror would stop lining up with the text: the ring is an
+   outer box-shadow spread, which paints outside the box without taking any room, and
+   box-decoration-break keeps it whole when a mention falls on a line break. */
+.oh3-m{border-radius:3px;background:rgba(235,130,25,.16);color:#ffb066;
+  box-shadow:0 0 0 2px rgba(235,130,25,.16), inset 0 0 0 1px rgba(235,130,25,.55);
+  -webkit-box-decoration-break:clone;box-decoration-break:clone;}
+/* A name the tray cannot answer, and an opener with no closer. Both are refused when the graph
+   runs, so both say so while they are being typed. */
+.oh3-m.oh3-mbad{background:rgba(240,112,112,.16);color:#f28b8b;
+  box-shadow:0 0 0 2px rgba(240,112,112,.16), inset 0 0 0 1px rgba(240,112,112,.55);}
+/* A locked line. Bone rather than the accent, because it is speech and not a reference to a file:
+   the words come up bright and the marks around them dim, since those are punctuation the model
+   never says. */
+.oh3-say{border-radius:3px;background:rgba(243,239,230,.13);
+  box-shadow:0 0 0 2px rgba(243,239,230,.13), inset 0 0 0 1px rgba(243,239,230,.36);
+  -webkit-box-decoration-break:clone;box-decoration-break:clone;}
+.oh3-saymark{color:rgba(243,239,230,.38);}
+.oh3-saywords{color:#f3efe6;}
 `;
 
 app.registerExtension({
@@ -165,10 +446,27 @@ app.registerExtension({
       // The multiline widget's element appears after creation; attach when it exists.
       requestAnimationFrame(() => {
         const w = (this.widgets || []).find((x) => x.name === "intent");
-        const ta = w?.inputEl || w?.element?.querySelector?.("textarea");
-        if (ta && !ta._oh3Picker) ta._oh3Picker = new Picker(ta, this);
+        // `element` on a current frontend, `inputEl` only as a fallback: it is the same textarea
+        // under a deprecated name, and reading it prints a deprecation notice in the console.
+        const el = w?.element;
+        const ta = el?.tagName === "TEXTAREA" ? el
+          : (el?.querySelector?.("textarea") || w?.inputEl);
+        if (!ta || ta._oh3Picker) return;
+        ta._oh3Picker = new Picker(ta, this);
+        this._oh3Chips = new Chips(ta, this);
+        // A value written straight into the widget -- a workflow being loaded, an undo, the API --
+        // never fires an input event, so the mirror is told after the widget has taken it.
+        const set = w.options?.setValue;
+        if (set) w.options.setValue = (v) => { set.call(w.options, v); this._oh3Chips.paint(); };
       });
       return r;
+    };
+    // The canvas redraws when anything changes, including a slot being renamed on the Media node,
+    // which is the one thing that can turn a mention wrong without this box being touched.
+    const onDraw = nodeType.prototype.onDrawForeground;
+    nodeType.prototype.onDrawForeground = function () {
+      this._oh3Chips?.check();
+      return onDraw?.apply(this, arguments);
     };
   },
 });
