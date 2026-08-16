@@ -97,6 +97,15 @@ Every slot carries three things:
 **A name.** Auto-given (`picture1`, `video1`, `audio1`) and yours to change, letters, digits and
 dashes. The name is how the prompt refers to the file.
 
+The field corrects a name as you type it rather than refusing it when you queue. A space becomes a
+dash, and so do an underscore, a dot and a slash, because `the man` typed straight through would run
+two words into one and name something else. Accents fold, so josé piñata arrives as jose-pinata. A
+character that cannot be in a name never lands, and the panel says which one it turned away. Four
+things it cannot fix by correcting, so it declines the name instead and says why: a name that is
+empty, a name of nothing but dashes, `speaks`, which is taken because `@speaks(` is how a spoken line
+starts, and a name another slot already holds, which is compared without case, so `SHOWROOM` is taken
+when the tray shows `showroom`.
+
 **What it is.** A choice in plain words, defaulting to the ordinary reading:
 
 | Kind | The choices |
@@ -131,6 +140,21 @@ pops up with every slot, thumbnails included; keep typing to filter, Enter to in
 
 *"@carguy walks onto the wet gantry and stops when he sees @the-city"*
 
+Once it is in the sentence a mention reads as one object rather than a run of characters, and two
+things about it are visible without clicking anything. The shape says which construct it is: a ring is
+a mention, a box is a locked spoken line. The colour says whether the graph will accept it. A mention
+of a picture is orange, of a clip teal, of a sound violet, a locked line is green, and red is anything
+that will be refused, which is a mention naming a slot the tray does not hold or a spoken line opened
+and never closed. Rename a slot and the mentions of its old name turn red where they stand.
+
+Hovering a mention shows what it points at: the picture itself for a picture, a frame from it for a
+clip, and for a sound its name and the note you wrote, since there is nothing to look at. The note
+shows for the others too.
+
+None of that is stored. The widget's value is the sentence and nothing else, exactly the text you
+could have typed by hand, and the drawing sits behind it. Delete `web/` and both nodes still work,
+still API-drive, and still restore from a saved workflow, with the sentence visible as itself.
+
 A mention becomes that slot's description in the document, bound mechanically to the file, so the
 compiler never guesses which words mean which picture. A mention that names no slot is refused
 before any model call, listing the names that exist. Files you never mention still get used, the
@@ -144,6 +168,12 @@ Whatever is inside `@speaks("...")` comes back in the brief word for word and ma
 a brief that rewords it is refused and rewritten. Words merely quoted in the sentence stay free for
 signs and flavor, and the writer may polish them. The `spoken in` choice names the language of every
 locked line. There is no other syntax: mentions, locked lines, prose, nothing else.
+
+The whole construct draws as one green object, the `@speaks`, the brackets, the quotes and the words
+together, because they are one thing and splitting them would suggest the quotes are separate from the
+line they hold. Green rather than something quieter for a reason worth knowing: this is the one span
+in the sentence that reaches the model letter for letter, so it is marked as live, not as inert. Open
+one and never close it and the same box turns red, because an unclosed line is refused.
 
 ## The five files are yours to pick
 
@@ -356,9 +386,16 @@ renders with it.
 
 ## Borrowed technique
 
-The tray panel's widget and upload idioms follow ComfyUI-Fantastic-MiniMaxH3-PromptBuilder (MIT),
-and the prompt editor's state handling follows ComfyUI-MiniMaxH3-Easy (MIT). Both are credited here
-because reading working frontends beats inventing broken ones.
+Two packs, both MIT, both credited because reading working frontends beats inventing broken ones. The
+full attribution with links and authors is in [NOTICE](../NOTICE).
+
+ComfyUI-Fantastic-MiniMaxH3-PromptBuilder, by Adudeguyman, is behind three things here. The tray
+panel's widget sizing and upload idioms, the way media is read out of ComfyUI's input tree, and the
+technique that draws the mentions: a mirror element behind a textarea whose own text is transparent,
+with the marks on a mention paid for in outer shadow so they take up no room in the line. Hit-testing
+those marks through the textarea above them is what makes hovering one show the file it names.
+
+ComfyUI-MiniMaxH3-Easy, by nkxx188, is behind the prompt editor's state handling.
 
 ## Licence
 
