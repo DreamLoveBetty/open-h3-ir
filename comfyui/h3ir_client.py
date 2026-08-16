@@ -100,23 +100,16 @@ PATH_MAY_BE_WRONG = "path-may-be-wrong"
 SEND_THE_BYTES = "send-the-bytes"
 
 
-def retranslate(error: Exception) -> bool:
-    """True when the failure was the service being unable to find an attachment.
-
-    That is the only failure a different spelling of the path could fix, so it is the only one worth
-    retrying. Retrying anything else would hide a real problem behind repeated attempts: a corrupt
-    clip is corrupt under every spelling, and a machine with no ffmpeg still has none on the third
-    attempt.
-    """
-    return getattr(error, "code", "") == PATH_MAY_BE_WRONG
-
-
 def send_the_bytes(error: Exception) -> bool:
-    """True when the fix is to upload the files rather than to spell a path differently.
+    """True when this failure is worth another attempt at getting the media there.
 
-    Two failures say so. The service refusing paths outright is the explicit one. The service being
-    unable to find a file under every spelling ComfyUI's folder has is the implicit one, and it is
-    the one that matters: it is what a service on another machine looks like from here.
+    The two markers above, and nothing else. Anything else would hide a real problem behind repeated
+    attempts: a corrupt clip is corrupt under every spelling and in the service's own store too, and
+    a machine with no ffmpeg still has none on the third try.
+
+    One predicate rather than two. It replaced `retranslate`, which asked the narrower question of
+    whether another SPELLING was worth trying, and was the only question there was when running out
+    of spellings was the end of the road.
     """
     return getattr(error, "code", "") in (SEND_THE_BYTES, PATH_MAY_BE_WRONG)
 

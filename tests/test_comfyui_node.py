@@ -277,7 +277,8 @@ def test_a_file_that_opened_and_could_not_be_decoded_is_not_a_path_problem(monke
     msg = str(e.value)
     assert "declared kind: video but its bytes are a PNG" in msg, "pass the analyser's words through"
     assert "a different path would fail the same way" in msg
-    assert C.retranslate(e.value) is False, "THE control: retrying this is three waits for one answer"
+    assert C.send_the_bytes(e.value) is False, \
+        "THE control: another attempt at this is three waits for one answer"
 
 
 def test_a_missing_ffmpeg_is_not_reported_as_a_dead_language_model(monkeypatch):
@@ -603,20 +604,22 @@ def test_there_is_nothing_to_type_and_no_second_argument_to_type_it_into():
     assert list(inspect.signature(C.path_candidates).parameters) == ["comfy_root"]
 
 
-def test_only_an_unfindable_attachment_is_worth_another_spelling():
-    """Retrying anything else would hide a real problem behind repeated attempts, and retrying a
+def test_only_an_unreachable_attachment_is_worth_another_attempt():
+    """Trying again on anything else would hide a real problem behind repeated attempts, and asking a
     dead model endpoint three times is three times the wait for the same answer."""
-    assert C.retranslate(C.ServiceError("nope", C.PATH_MAY_BE_WRONG)) is True
-    assert C.retranslate(C.ServiceError("llm is down")) is False
-    assert C.retranslate(ValueError("something else")) is False
+    assert C.send_the_bytes(C.ServiceError("nope", C.PATH_MAY_BE_WRONG)) is True
+    assert C.send_the_bytes(C.ServiceError("nope", C.SEND_THE_BYTES)) is True
+    assert C.send_the_bytes(C.ServiceError("llm is down")) is False
+    assert C.send_the_bytes(ValueError("something else")) is False
 
 
 def test_the_retry_marker_is_not_named_after_the_one_failure_it_must_not_retry():
     """The service's own code for a file it opened and could not decode is `asset-unreadable`. If the
     retry marker carried that string, the next person to wire the service's code straight into
-    `retranslate` would earn three attempts at a corrupt clip for the same answer."""
+    `send_the_bytes` would earn a transfer, and then three attempts, at a corrupt clip for the same
+    answer."""
     assert C.PATH_MAY_BE_WRONG != "asset-unreadable"
-    assert C.retranslate(C.ServiceError("corrupt", "asset-unreadable")) is False
+    assert C.send_the_bytes(C.ServiceError("corrupt", "asset-unreadable")) is False
 
 
 def test_the_asset_failure_actually_carries_that_code(monkeypatch):
@@ -625,7 +628,7 @@ def test_the_asset_failure_actually_carries_that_code(monkeypatch):
     _fake(monkeypatch, (422, {"detail": {"code": "asset-missing", "message": "no such file"}}))
     with pytest.raises(C.ServiceError) as e:
         C.compile_brief("http://x", {"intent": "a"})
-    assert C.retranslate(e.value) is True
+    assert C.send_the_bytes(e.value) is True
 
 
 def test_a_megapixels_value_below_the_services_floor_is_refused_with_the_range():
