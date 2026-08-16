@@ -329,7 +329,7 @@ trip the rule that defect earns, by name. The whole gate runs in under a second 
 ```console
 $ pytest -q
 […]
-899 passed, 2 skipped, 1 warning in 2.96s
+1024 passed, 2 skipped, 1 warning in 2.71s
 ```
 
 That suite needs no model, no GPU and no network, which is the point: everything decidable without a
