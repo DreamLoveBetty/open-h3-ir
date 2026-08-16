@@ -37,8 +37,15 @@ mklink /J "C:\ComfyUI\custom_nodes\openh3ir" "C:\path\to\open-h3-ir\comfyui"
 ```
 
 It adds nothing to ComfyUI's Python. The nodes speak HTTP to the service with the standard library
-only, so the compiler's dependencies can never break your install and the service can live on
-another machine.
+only, so the compiler's dependencies can never break your install.
+
+The service can also live on another machine. Where it can open your media off disk it does, because
+nothing is copied and a long clip costs nothing to hand over. Where it cannot, the nodes send the
+bytes to it and name each file by the sha256 of its own contents, so the same file is never sent
+twice. There is nothing to configure and no mechanism to choose: the nodes try the paths first, and
+send the bytes when no spelling of ComfyUI's folder works. A service on another machine keeps the
+uploads for two days, 512 MiB per file at most, and the exact figures come from its own
+`/v1/capabilities`.
 
 Then open the workflow that ships with it, which is already wired and runs on a sentence alone:
 [the two workflows that ship with this](#the-two-workflows-that-ship-with-this). That is the fastest

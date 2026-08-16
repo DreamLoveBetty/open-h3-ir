@@ -26,8 +26,43 @@ wiring that brief is true for**. Nothing else in your system has to understand H
 | `PATCH` | `/v1/briefs/{id}` | refine in plain language: `{"change":"make it darker"}` → `200`, new version |
 | `GET` | `/v1/briefs/{id}/prompt` | the prompt text alone |
 | `GET` | `/v1/loras` | available styles, by id and prose |
+| `PUT` | `/v1/assets/{sha256}` | send one attachment's bytes. `201` when stored, `422` when the bytes do not hash to the name |
 
 The only required field is `intent`. Everything else has a defensible default.
+
+## Sending the files
+
+Every attachment says where its bytes are, one way or the other, and never both. `path` is a path on
+the service's own host: nothing is copied, and the bytes the brief is written about are the bytes you
+already had. `sha256` names an attachment you have already sent to `PUT /v1/assets/{sha256}`, which is
+the way in when you and the service do not share a filesystem. Both at once is refused rather than one
+quietly winning, because they can disagree and a request that says two things about which file it means
+renders something plausible about the wrong one.
+
+A clip whose soundtrack travels with it has a second field, `paired_video_sha256`, naming the clip that
+sound belongs to, so the pairing survives when both arrive as uploads rather than as paths.
+
+The upload is one `PUT` with the raw bytes as the body, and the name in the URL is the sha256 the
+service computes as they arrive. Nothing else about the request matters. That name is why a second
+render of the same graph sends nothing: the store already holds those bytes. If you name a digest the
+service does not hold, `POST /v1/briefs` answers `422` with `code: asset-not-uploaded` and a `missing`
+list of exactly the digests to send, so the correct reaction is to upload those and ask once more.
+
+Assets are write-only. `GET`, `HEAD`, `DELETE`, `POST` and `PATCH` on one all answer `405`, so nothing
+you send can be read back out of the service by anyone who knows a hash.
+
+Four ceilings, published in the `assets` block of `GET /v1/capabilities` so you read them rather than
+copy them: `upload_max_bytes` is 512 MiB for one file, `upload_store_bytes` is 8 GiB for the whole
+store, `upload_ttl_hours` is 48, and the store drops the least recently used first when it fills. An
+upload that worked an hour ago can therefore need sending again, which the `422` above says out loud.
+The same block carries `paths`, which is `false` on a service that has filesystem reads switched off.
+
+**Two facts for whoever runs it, rather than whoever calls it.** `h3ir serve` binds `0.0.0.0`, so it is
+reachable from the network the moment it starts; pass `--host 127.0.0.1` if that is not what you meant.
+And a `path` is read with the service's own permissions, with the file's contents then described in the
+brief, which on a reachable service is a way to read files off that host. `H3IR_ALLOW_ASSET_PATHS=0`
+turns path reads off entirely and leaves uploads as the only way in. Both settings and the reason for
+each are in [`../.env.example`](../.env.example).
 
 ## Mode selection is never the user's problem
 

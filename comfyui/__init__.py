@@ -5,7 +5,9 @@ your choosing and restart ComfyUI. Installation and wiring are in README.md besi
 
 Nothing here imports the `h3ir` package. The nodes speak to a running OpenH3-IR service over HTTP, so
 the compiler's dependencies can never collide with the ones ComfyUI needs, and the service is free to
-live on another machine.
+live on another machine: the media goes to it as a filesystem path when the two share a disk, and as
+uploaded bytes named by their own sha256 when they do not. `h3ir_client` owns that choice and makes it
+by trying, never by asking anyone to declare which case they are in.
 
 The node registration lives in `nodes.py` as a `comfy_entrypoint`, which is ComfyUI's current way of
 declaring nodes and the same one the built-in MiniMax H3 nodes use. It is imported lazily below so

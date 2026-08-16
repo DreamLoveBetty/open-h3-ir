@@ -117,9 +117,15 @@ is actually on your disk, and the file you choose is the file that loads: no sea
 preferred build, no option meaning "work it out". The report then names every file that was opened.
 
 The pack adds no packages to ComfyUI's Python. The nodes speak HTTP to `h3ir serve` with the standard
-library alone, so the compiler's dependencies can never break a ComfyUI install and the service is
-free to sit on another machine. Besides that service, the pack needs what any H3 render needs: a
-ComfyUI with the MiniMax H3 nodes, which ship with ComfyUI itself, and H3's model files on disk.
+library alone, so the compiler's dependencies can never break a ComfyUI install.
+
+That service can also sit on another machine, media included. When it can reach your files on disk it
+opens them where they are and nothing is copied. When it cannot, which is what another machine looks
+like, the nodes send the bytes over the same connection instead. You configure none of that and there
+is no switch for it: the graph is the same either way, and a file already sent is not sent again.
+
+Besides that service, the pack needs what any H3 render needs: a ComfyUI with the MiniMax H3 nodes,
+which ship with ComfyUI itself, and H3's model files on disk.
 
 ### The sentence points at the tray
 
