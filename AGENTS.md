@@ -162,6 +162,7 @@ because my first draft of that rule fired on "he gives an okay sign".
 | `validate.py` | the rules. Proved by `evalloop/controls.py` in both directions. |
 | `compile.py` | the orchestrator and the stage order (with the reason for that order). |
 | `service.py` | the HTTP surface and the three response layers. |
+| `uploads.py` | the content-addressed store behind `PUT /v1/assets/{sha256}`: the digest is computed as the bytes arrive, the ceilings and the age limit come from `config.py`, and eviction is least-recently-used. Write-only by design, so every other method on an asset is a 405. |
 | `comfy.py` | ComfyUI over HTTP; graph prompt substitution that refuses to guess. |
 | `acceptance.py` | the five-arm comparison, built without touching the GPU. |
 
