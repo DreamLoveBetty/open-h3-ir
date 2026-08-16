@@ -380,15 +380,17 @@ class Chips {
         kids.push(chip);
         continue;
       }
+      // Opened and never closed: the same object, unfinished. It wears the box rather than a
+      // mention's ring, so the shape still says which construct it is while the colour says the
+      // graph will refuse it.
       if (p.kind === "unclosed") {
-        kids.push(this.span("oh3-m oh3-mbad", p.text));
+        kids.push(this.span("oh3-say oh3-saybad", p.text));
         continue;
       }
-      // The box goes around the WORDS and not the whole construct, because the box says "this is
-      // said exactly": @speaks(" and ") are how you write that down, not part of the line.
-      kids.push(this.span("oh3-saymark", SPEAKS_OPEN),
-                this.span("oh3-say", p.words),
-                this.span("oh3-saymark", SPEAKS_CLOSE));
+      // The whole construct is one object, sigil and quotes and words together. Boxing only the
+      // words made @speaks(" and ") read as scaffolding standing outside the thing, and they are
+      // part of how the line is written: nothing inside it is dimmed or set apart.
+      kids.push(this.span("oh3-say", SPEAKS_OPEN + p.words + SPEAKS_CLOSE));
     }
     return kids;
   }
@@ -476,14 +478,21 @@ textarea.oh3-chiptext::selection{background:rgba(235,130,25,.34);color:#f3efe6;}
    runs, so both say so while they are being typed. */
 .oh3-m.oh3-mbad{background:rgba(240,112,112,.16);color:#f28b8b;
   box-shadow:0 0 0 2px rgba(240,112,112,.16), inset 0 0 0 1px rgba(240,112,112,.55);}
-/* A locked line, boxed around the words that get said. Bone rather than the accent, because it is
-   speech and not a reference to a file. The breathing room inside the box is a wider outer spread
-   for the same reason a mention has no padding: room taken in the line is room the textarea did not
-   take. @speaks(" and ") stay outside it and dim, since they are how the line is written down. */
-.oh3-say{border-radius:3px;background:rgba(243,239,230,.14);color:#fbf7ee;
-  box-shadow:0 0 0 3px rgba(243,239,230,.14), inset 0 0 0 1px rgba(243,239,230,.46);
+/* A locked line, boxed whole. The breathing room inside the box is a wider outer spread for the same
+   reason a mention has no padding: room taken in the line is room the textarea did not take.
+
+   Green because this is the one span of the sentence that reaches the model letter for letter, and a
+   brief that rewords it is refused and rewritten. The bone grey it wore first was dimmer than the
+   prose around it, and dim on a canvas reads as disabled, which is the opposite of what a locked
+   line is. Green is also clear of every hue already spoken for here: orange a picture, teal a clip,
+   violet a sound, red something the graph will turn away. */
+.oh3-say{border-radius:3px;background:rgba(95,201,138,.16);color:#b9efca;
+  box-shadow:0 0 0 3px rgba(95,201,138,.16), inset 0 0 0 1px rgba(95,201,138,.62);
   -webkit-box-decoration-break:clone;box-decoration-break:clone;}
-.oh3-saymark{color:rgba(243,239,230,.34);}
+/* Opened and never closed. The same box, because it is the same object: the shape says which
+   construct this is and the colour says whether it is finished. */
+.oh3-say.oh3-saybad{background:rgba(240,112,112,.16);color:#f7bcbc;
+  box-shadow:0 0 0 3px rgba(240,112,112,.16), inset 0 0 0 1px rgba(240,112,112,.62);}
 /* The sigil carries the kind. Colour only: anything that changed its width would move every
    character after it. A name the tray cannot answer keeps the red of its own chip. */
 .oh3-sig{color:#eb8219;}
