@@ -93,6 +93,16 @@ the brief that came back and the report of what happened.
 
 ### Quick start
 
+Two ways to get it, and they hand you different halves.
+
+```bash
+pip install open-h3-ir     # the compiler: the h3ir command and the service
+```
+
+That is everything except the ComfyUI nodes. A node pack has to be a folder inside ComfyUI's
+`custom_nodes`, which is not something a wheel can put there, so the nodes come from the repo. Clone it
+if you want them, or if you are going to change anything:
+
 ```bash
 git clone https://github.com/ruashots/open-h3-ir.git
 cd open-h3-ir
