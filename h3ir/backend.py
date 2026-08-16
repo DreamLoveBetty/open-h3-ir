@@ -72,8 +72,18 @@ class Reply:
 
 
 def image_data_url(path: str | Path) -> str:
+    """One image as a data URL, declaring the type its BYTES are rather than the type its name says.
+
+    The name is checked second on purpose. An uploaded attachment is stored under its content hash
+    and carries no extension, so guessing from the name returned nothing for every one of them and
+    the fallback below announced each as `image/png` -- a JPEG mislabelled on the way to a vision
+    endpoint, which is exactly the plausible-and-wrong shape this project keeps finding. Sniffed
+    first, so a file with no extension, or the wrong one, is still described truthfully.
+    """
+    from .analyse import image_mime          # imported here: analyse.py imports this module
+
     p = Path(path)
-    mime = mimetypes.guess_type(p.name)[0] or "image/png"
+    mime = image_mime(p) or mimetypes.guess_type(p.name)[0] or "image/png"
     return f"data:{mime};base64,{base64.b64encode(p.read_bytes()).decode()}"
 
 

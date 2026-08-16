@@ -274,6 +274,34 @@ def sniff_container(path: str | Path) -> str | None:
     return None
 
 
+def image_mime(path: str | Path) -> str | None:
+    """The image type these BYTES are, or None when they are not an image this recognises.
+
+    Separate from `sniff_container`, which answers the coarser question of which analyser a file
+    belongs to. This one exists because a data URL has to declare a type and the name is not
+    evidence: an uploaded attachment is stored under its content hash and has no extension at all,
+    so `mimetypes.guess_type` on it returns nothing and the fallback declared every one of them
+    `image/png`. A JPEG announced as a PNG is the kind of thing an inference server either forgives
+    or reports in its own internal terms, and which one is not this layer's decision to bet on.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return None
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if head[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head[:2] == b"BM":
+        return "image/bmp"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def image_size(path: str | Path) -> tuple[int, int] | None:
     """Pixel dimensions from the file header. None for anything not recognised.
 

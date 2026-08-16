@@ -100,6 +100,44 @@ def test_a_wav_is_audio_and_not_confused_with_a_webp(tmp_path):
     assert sniff_container(f) == "audio"
 
 
+# ---------------------------------------------------------------- what a data URL declares
+
+def test_the_image_type_is_read_out_of_the_bytes(tmp_path):
+    """The sniffer the data URL is built on. Asserted on files whose names say nothing at all, since
+    a name that happens to match proves nothing about whether the bytes were read: a first version
+    of this used the repo's own correctly-named samples and passed with the sniffing removed.
+    """
+    from h3ir.analyse import image_mime
+
+    for source, expected in ((JPG, "image/jpeg"), (PNG, "image/png"), (WEBP, "image/webp")):
+        blind = tmp_path / f"{expected.split('/')[1]}-with-no-name"
+        blind.write_bytes(source.read_bytes())
+        assert image_mime(blind) == expected
+    (tmp_path / "clip").write_bytes(MP4.read_bytes())
+    assert image_mime(tmp_path / "clip") is None, "only an image gets an image type"
+    (tmp_path / "junk").write_bytes(b"II*\x00" + b"\x00" * 40)
+    assert image_mime(tmp_path / "junk") is None, "an unrecognised file is not guessed at"
+
+
+def test_a_stored_upload_with_no_extension_is_still_declared_correctly(tmp_path):
+    """The case this exists for: the file is named by its sha256 and nothing else."""
+    from h3ir.backend import image_data_url
+
+    f = tmp_path / ("a" * 64)
+    f.write_bytes(JPG.read_bytes())
+    assert image_data_url(f).startswith("data:image/jpeg;base64,"), \
+        "an extensionless file was announced as something it is not"
+
+
+@pytest.mark.parametrize("name", ["plate.png", "plate.txt", "plate"])
+def test_a_jpeg_is_a_jpeg_whatever_it_is_called(tmp_path, name):
+    from h3ir.backend import image_data_url
+
+    f = tmp_path / name
+    f.write_bytes(JPG.read_bytes())
+    assert "image/jpeg" in image_data_url(f)
+
+
 # ---------------------------------------------------------------- px reaches the manifest
 
 def test_measuring_fills_in_the_dimensions_the_caller_did_not_supply():
