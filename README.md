@@ -38,7 +38,7 @@ One thing worth saying plainly: this is a young project, built because I need it
 application I am making, which is why it is shaped the way it is. Expect changes as I go, and pin a
 commit if you build on it.
 
-## See the difference
+## The difference, a clip of something vs a performance
 
 ![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
 
@@ -53,10 +53,14 @@ The right side does what the sentence asked. She walks out along the gantry, and
 cuts to a low-angle close-up of her looking down at the city.
 
 The left side is a good-looking clip that never arrives. It cannot decide where she is going, walking
-toward camera for the first half and away from it in the second, and the railing and the skyline
-behind her change into a different place along the way. She never looks down, so the beat the whole
-sentence was built around is missing. Nothing on that side is badly rendered, and that is the point:
+toward camera for the first half and away from it in the second. Nothing on that side is badly rendered, and that is the point:
 the model was fine, the words were the problem.
+
+That is one pair, but it is the pattern I keep seeing. Run the same sentence again and again at flat
+defaults, dial untouched, and the character and the ambience come back the same either way, while the
+compiled side keeps arriving with more direction in it: sometimes mild, sometimes a lot, never
+overdone. The difference I care about is the one between a clip of the thing and a clip of the thing
+that actually means something.
 
 **Watch it with sound:** [off-vs-on.mp4](docs/media/off-vs-on.mp4). H3 generates the rain and the
 score in the same pass as the picture, and GitHub cannot play a repo-hosted mp4 inline, so the
@@ -323,7 +327,8 @@ a change against a stored baseline, because a prompt change can improve one and 
 ## Your first brief from the command line
 
 This is the exact command that produced the right-hand side of the comparison up in
-[See the difference](#see-the-difference), and `ref1.png` ships in the repo, so you can run it now.
+[The difference, a clip of something vs a performance](#the-difference-a-clip-of-something-vs-a-performance),
+and `ref1.png` ships in the repo, so you can run it now.
 
 ```console
 $ h3ir compile "she walks out onto the wet gantry in the rain and stops when she sees the city below" \
