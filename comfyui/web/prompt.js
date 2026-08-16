@@ -254,9 +254,62 @@ class Chips {
     // nowhere else, so the mirror stands down and the real text shows until the word is committed.
     textarea.addEventListener("compositionstart", () => this.reveal(false));
     textarea.addEventListener("compositionend", () => this.paint());
+    // The mirror cannot take a pointer, since it sits under the textarea and must not steal a
+    // click, so the marks are hit-tested through it against the pointer's own position.
+    textarea.addEventListener("mousemove", (e) => this.peek(e));
+    textarea.addEventListener("mouseleave", () => this.unpeek());
+    textarea.addEventListener("scroll", () => this.unpeek());
     // The one event that reports the box's real geometry, including the first time it has any.
     this.watch = new ResizeObserver(() => { this.metrics(); this.paint(); });
     this.watch.observe(textarea);
+  }
+
+  /** The file a mention names, shown while the pointer is on it.
+   *
+   * A thumbnail cannot go in the line itself: an image occupies room, the mirror's lines would then
+   * wrap somewhere the textarea's do not, and every character after it drifts. So the picture is
+   * shown beside the sentence instead of inside it, which is also the only version of this that
+   * works for a clip and for a sound.
+   */
+  peek(e) {
+    let on = null;
+    for (const chip of this.mirror.querySelectorAll(".oh3-m[data-slot]")) {
+      const r = chip.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right
+          && e.clientY >= r.top && e.clientY <= r.bottom) { on = chip; break; }
+    }
+    if (!on) return this.unpeek();
+    const label = on.dataset.slot;
+    if (this.peeking === label) return;
+    this.unpeek();
+    const slot = (trayOf(this.node) || []).find((s) => s.label === label);
+    if (!slot) return;
+    this.peeking = label;
+    this.card = document.createElement("div");
+    this.card.className = "oh3-peek";
+    if (slot.kind === "picture" || slot.kind === "video") {
+      const media = document.createElement(slot.kind === "picture" ? "img" : "video");
+      media.className = "oh3-peekmedia";
+      media.src = viewUrl(slot.file);
+      if (slot.kind === "video") { media.muted = true; media.preload = "metadata"; }
+      this.card.append(media);
+    }
+    // Its own note, which is the words the user wrote about this file, and the words this mention
+    // becomes in the sentence the compiler reads. Not the role: that is the tray panel's vocabulary
+    // and restating it here would be a third place to keep it right.
+    this.card.append(this.span("oh3-peekname", "@" + slot.label));
+    if (slot.note) this.card.append(this.span("oh3-peeknote", slot.note));
+    document.body.append(this.card);
+    const r = on.getBoundingClientRect();
+    this.card.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 220))}px`;
+    const above = r.top - this.card.offsetHeight - 6;
+    this.card.style.top = `${above > 4 ? above : r.bottom + 6}px`;
+  }
+
+  unpeek() {
+    this.peeking = null;
+    this.card?.remove();
+    this.card = null;
   }
 
   /** Plain readable text, sugar off. Called on composition and on the one failure this must
@@ -308,27 +361,34 @@ class Chips {
   }
 
   build(text) {
-    const known = new Set((trayOf(this.node) || []).map((s) => String(s.label).toLowerCase()));
+    const slots = new Map((trayOf(this.node) || [])
+      .map((s) => [String(s.label).toLowerCase(), s]));
     const kids = [];
     for (const p of pieces(text)) {
       if (p.kind === "text") { kids.push(document.createTextNode(p.text)); continue; }
       if (p.kind === "mention") {
         // The same case-blind lookup resolve_intent does, so a mention the tray cannot answer is
         // drawn as wrong here and refused by that name there, instead of looking fine until Run.
-        const ok = known.has(p.label.toLowerCase());
-        kids.push(this.span("oh3-m" + (ok ? "" : " oh3-mbad"), "@" + p.label));
+        const slot = slots.get(p.label.toLowerCase());
+        const chip = this.span("oh3-m" + (slot ? "" : " oh3-mbad"), "");
+        // The sigil is tinted by what the file IS, which is the one place a kind can be shown
+        // without costing room: a picture, a clip and a sound read differently in the sentence
+        // while every character still lands exactly where the textarea puts it.
+        chip.append(this.span("oh3-sig oh3-sig" + (slot ? slot.kind : "none"), "@"),
+                    document.createTextNode(p.label));
+        if (slot) chip.dataset.slot = slot.label;
+        kids.push(chip);
         continue;
       }
       if (p.kind === "unclosed") {
         kids.push(this.span("oh3-m oh3-mbad", p.text));
         continue;
       }
-      const band = document.createElement("span");
-      band.className = "oh3-say";
-      band.append(this.span("oh3-saymark", SPEAKS_OPEN),
-                  this.span("oh3-saywords", p.words),
-                  this.span("oh3-saymark", SPEAKS_CLOSE));
-      kids.push(band);
+      // The box goes around the WORDS and not the whole construct, because the box says "this is
+      // said exactly": @speaks(" and ") are how you write that down, not part of the line.
+      kids.push(this.span("oh3-saymark", SPEAKS_OPEN),
+                this.span("oh3-say", p.words),
+                this.span("oh3-saymark", SPEAKS_CLOSE));
     }
     return kids;
   }
@@ -348,6 +408,10 @@ class Chips {
     // class wraps. Both routes are kept, since either one alone would be a bet on how the host wires
     // its own widget, and a redraw of text that did not change is skipped instead.
     if (this.live && text === this.was && trayText === this.wasTray) return this.follow();
+    // Whatever was being hovered has just moved, and a card pointing at where a mention used to be
+    // is worse than no card. This also clears it when the box itself goes away, since removing the
+    // textarea resizes it to nothing and lands here.
+    this.unpeek();
     this.was = text;
     this.wasTray = trayText;
     try {
@@ -412,14 +476,32 @@ textarea.oh3-chiptext::selection{background:rgba(235,130,25,.34);color:#f3efe6;}
    runs, so both say so while they are being typed. */
 .oh3-m.oh3-mbad{background:rgba(240,112,112,.16);color:#f28b8b;
   box-shadow:0 0 0 2px rgba(240,112,112,.16), inset 0 0 0 1px rgba(240,112,112,.55);}
-/* A locked line. Bone rather than the accent, because it is speech and not a reference to a file:
-   the words come up bright and the marks around them dim, since those are punctuation the model
-   never says. */
-.oh3-say{border-radius:3px;background:rgba(243,239,230,.13);
-  box-shadow:0 0 0 2px rgba(243,239,230,.13), inset 0 0 0 1px rgba(243,239,230,.36);
+/* A locked line, boxed around the words that get said. Bone rather than the accent, because it is
+   speech and not a reference to a file. The breathing room inside the box is a wider outer spread
+   for the same reason a mention has no padding: room taken in the line is room the textarea did not
+   take. @speaks(" and ") stay outside it and dim, since they are how the line is written down. */
+.oh3-say{border-radius:3px;background:rgba(243,239,230,.14);color:#fbf7ee;
+  box-shadow:0 0 0 3px rgba(243,239,230,.14), inset 0 0 0 1px rgba(243,239,230,.46);
   -webkit-box-decoration-break:clone;box-decoration-break:clone;}
-.oh3-saymark{color:rgba(243,239,230,.38);}
-.oh3-saywords{color:#f3efe6;}
+.oh3-saymark{color:rgba(243,239,230,.34);}
+/* The sigil carries the kind. Colour only: anything that changed its width would move every
+   character after it. A name the tray cannot answer keeps the red of its own chip. */
+.oh3-sig{color:#eb8219;}
+.oh3-signone{color:#f28b8b;}
+.oh3-sigpicture{color:#eb8219;}
+.oh3-sigvideo{color:#68b6c8;}
+.oh3-sigsound{color:#b48ce8;}
+.oh3-mbad .oh3-sig{color:#f28b8b;}
+/* The file a mention names, beside the sentence rather than in it. */
+.oh3-peek{position:fixed;z-index:10002;width:212px;background:#14161c;
+  border:1px solid #2e3440;border-radius:8px;overflow:hidden;pointer-events:none;
+  box-shadow:0 14px 36px rgba(0,0,0,.55);font-family:system-ui,sans-serif;}
+.oh3-peekmedia{width:100%;max-height:142px;object-fit:contain;display:block;background:#0a0a0d;}
+.oh3-peekname{display:block;padding:5px 8px 0;font-size:10px;color:#eb8219;
+  font-family:ui-monospace,monospace;}
+/* The note wraps rather than ending in an ellipsis: it is the whole reason to look at this card. */
+.oh3-peeknote{display:block;padding:1px 8px 5px;font-size:10px;line-height:1.45;
+  color:rgba(243,239,230,.72);}
 `;
 
 app.registerExtension({

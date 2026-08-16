@@ -60,3 +60,12 @@ comfyui/web/prompt.js
     The prompt editor's state idioms are adapted from ComfyUI-MiniMaxH3-Easy
     by nkxx188 (https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy), published
     under the MIT License.
+
+    The technique for drawing the mentions -- a mirror element behind a
+    textarea whose own text is transparent, with the marks on a mention paid
+    for in outer box-shadow so they occupy no room in the line -- is adapted
+    from ComfyUI-Fantastic-MiniMaxH3-PromptBuilder by Adudeguyman
+    (https://github.com/Adudeguyman/ComfyUI-Fantastic-MiniMaxH3-PromptBuilder),
+    published under the MIT License. The same pack's hit-testing of those
+    marks through the textarea above them is what makes hovering one show the
+    file it names.

@@ -34,17 +34,20 @@ CLASS_USED = re.compile(r"(?<!-)\b(oh3-[a-z0-9-]+)")
 CLASS_STYLED = re.compile(r"\.(oh3-[a-z0-9-]+)")
 
 
+def _stylesheet_of(path: pathlib.Path) -> str | None:
+    """One file's `const CSS = ...` template literal, as the text between its backticks."""
+    src = path.read_text(encoding="utf-8")
+    start = re.search(r"^const CSS = `", src, re.MULTILINE)
+    if not start:
+        return None
+    end = src.find("`", start.end())
+    assert end > 0, f"{path.name}'s stylesheet is opened and never closed"
+    return src[start.end():end]
+
+
 def _stylesheets() -> str:
-    """Every `const CSS = ...` template literal in the pack, as the text between its backticks."""
-    out = []
-    for path in sorted(WEB.glob("*.js")):
-        src = path.read_text(encoding="utf-8")
-        start = re.search(r"^const CSS = `", src, re.MULTILINE)
-        if not start:
-            continue
-        end = src.find("`", start.end())
-        assert end > 0, f"{path.name}'s stylesheet is opened and never closed"
-        out.append(src[start.end():end])
+    """Every stylesheet in the pack, which all land in the one document together."""
+    out = [css for css in (_stylesheet_of(p) for p in sorted(WEB.glob("*.js"))) if css]
     assert out, "no stylesheet was found in the pack, so this scan is blind"
     return "\n".join(out)
 
@@ -82,6 +85,28 @@ def test_every_class_the_panels_put_on_an_element_is_one_they_style():
     assert not used - styled, (
         f"these classes are put on elements and never styled: {sorted(used - styled)}. Either the "
         "rule is missing, or a stylesheet was ended early by a backtick inside it.")
+
+
+def test_no_class_is_styled_by_two_of_the_panels():
+    """Every panel's stylesheet lands in the same document, so a class name is pack-wide.
+
+    Two files styling one name is not a clash the browser reports: the later rule simply wins on
+    whichever properties it sets. The prompt's mentions and the tray's name field both wanted to call
+    the orange @ the same thing, and the tray's version carries a font-family, which on a mention
+    would change how wide it is and slide the drawing off the sentence it is drawn over.
+    """
+    where: dict[str, set[str]] = {}
+    for path in sorted(WEB.glob("*.js")):
+        css = _stylesheet_of(path)
+        if css is None:
+            continue
+        for name in set(CLASS_STYLED.findall(css)):
+            where.setdefault(name, set()).add(path.name)
+    assert len(where) > 30, f"only {len(where)} classes were found, so a stylesheet is truncated"
+    shared = {name: sorted(files) for name, files in where.items() if len(files) > 1}
+    assert not shared, (
+        f"these class names are styled in more than one of the pack's stylesheets: {shared}. Give "
+        "one of them its own name; they are not separate namespaces.")
 
 
 # --------------------------------------------------------------- the naming rule, one rule twice
@@ -195,7 +220,7 @@ def test_the_browser_calls_a_mention_the_tray_cannot_answer_wrong():
 
     The lookup has to be case-blind on both sides, or a mention drawn as good is turned away.
     """
-    assert "known.has(p.label.toLowerCase())" in PROMPT_JS, (
+    assert "slots.get(p.label.toLowerCase())" in PROMPT_JS, (
         "the browser no longer resolves a mention case-blind, so @Car draws as wrong while the tray "
         "answers it")
     slots = T.read_tray('[{"kind": "picture", "label": "car", "file": "x.png [input]"}]')
