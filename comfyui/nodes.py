@@ -53,13 +53,12 @@ from .media import (digest, load_image, load_sound, load_video, resolve, sha256_
                     write_sound)
 from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER, DIALOGUE_LANGUAGES,
                           EFFORT, FPS, SHOTS, SIZING, WEIGHT_DTYPES,
-                          ServiceError, bindings_by_content, build_payload, check_mode,
-                          clip_loader_for, compile_brief, family_warning,
+                          ServiceError, bindings_by_content, check_mode,
+                          clip_loader_for, compile_with_media, family_warning,
                           inputs_fingerprint, is_gguf,
                           length_notes, line,
-                          merge_model_options, path_candidates, plan_assets,
-                          precision_ignored_note, render_fields, report, retranslate, setup_bundle,
-                          unet_loader_for)
+                          merge_model_options, precision_ignored_note, render_fields, report,
+                          setup_bundle, unet_loader_for)
 
 # One socket carrying eight facts about a machine, one carrying everything the piece looks at or
 # listens to. Custom io types, so a plain IMAGE cannot be dropped into a socket that needs a bundle
@@ -87,6 +86,23 @@ def _comfy_root() -> str:
         return str(folder_paths.base_path)
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _content_hashes():
+    """A sha256-of-a-file function that reads each file at most once per queue.
+
+    Not a cache across queues on purpose: a file can be replaced on disk under the same name, and a
+    remembered hash would name the picture that used to be there. Within one queue the tray has
+    already been read, so the bytes cannot change underneath it.
+    """
+    seen: dict[str, str] = {}
+
+    def sha_of(path: str) -> str:
+        if path not in seen:
+            seen[path] = sha256_file(path)
+        return seen[path]
+
+    return sha_of
 
 
 def _files(kind: str) -> list[str]:
@@ -310,15 +326,21 @@ class OpenH3IRCompile(io.ComfyNode):
         declared = T.job_for(slots)
         frames_job = declared in ("i2va", "l2va", "fl2va")
 
+        # One hash per file, taken once. Three things want it -- the transcript map, the report's
+        # slot labels, and naming a file for a service that cannot see this disk -- and a reference
+        # clip is big enough that reading it three times is a wait somebody would notice. Memoised
+        # rather than passed around as a dict, so the same file on two slots is read once too.
+        sha_of = _content_hashes()
+
         # One ordered list, read by the half that tells the service and by the half that fills H3's
         # sockets, so the two cannot disagree about which file is <Picture 1>.
         order = T.asset_order(slots)
-        written, transcripts = cls._describe_everything(loaded, order)
-        bindings = bindings_by_content(written, sha256_file)
+        written, transcripts = cls._describe_everything(loaded, order, sha_of)
+        bindings = bindings_by_content(written, sha_of)
 
-        body, used_prefix = cls._compile_where_the_service_can_read(
-            server=machine["server"], written=written, sizing=sizing,
-            transcripts=transcripts, timeout=float(machine["timeout_s"]),
+        body, handoff = compile_with_media(
+            server=machine["server"], written=written, sizing=sizing, sha_of=sha_of,
+            comfy_root=_comfy_root(), transcripts=transcripts, timeout=float(machine["timeout_s"]),
             brief=dict(intent=resolved.intent, seconds=seconds, aspect=aspect,
                        creativity=creativity, effort=effort, seed=seed, silent=silent, shots=shots,
                        megapixels=megapixels, spoken=list(resolved.spoken),
@@ -356,8 +378,8 @@ class OpenH3IRCompile(io.ComfyNode):
         text += "\n" + line("weights", f"{checkpoint}  via {unet_loader_for(checkpoint)}")
         text += "\n" + line("encoder", f"{encoder}  via {clip_loader_for(encoder)}")
         text += "\n" + line("vaes", f"{video_vae}  +  {audio_vae}")
-        if used_prefix:
-            text += "\n" + line("paths", f"the service reads ComfyUI's folder at {used_prefix}")
+        if handoff:
+            text += "\n" + handoff
         if is_gguf(checkpoint) and machine["weight_dtype"] != "default":
             text += "\n" + precision_ignored_note()
         # Both warnings go to the report and to the console. Nothing obliges anyone to wire the
@@ -393,7 +415,7 @@ class OpenH3IRCompile(io.ComfyNode):
         return out
 
     @classmethod
-    def _describe_everything(cls, loaded: list[dict[str, Any]], order):
+    def _describe_everything(cls, loaded: list[dict[str, Any]], order, sha_of):
         """Every file the tray sends, described for the service in the one order that numbers them.
 
         Nothing is converted here and almost nothing is written: the tray's files are already on
@@ -424,7 +446,7 @@ class OpenH3IRCompile(io.ComfyNode):
                 if slot.transcript:
                     # The service keys transcripts by the file's own hash, taken here from the very
                     # bytes the service will read.
-                    transcripts[sha256_file(entry["path"])] = slot.transcript
+                    transcripts[sha_of(entry["path"])] = slot.transcript
                 continue
 
             name = T.soundtrack_name(slot)
@@ -437,38 +459,10 @@ class OpenH3IRCompile(io.ComfyNode):
 
         return written, transcripts
 
-    @classmethod
-    def _compile_where_the_service_can_read(cls, *, server, written, sizing,
-                                           transcripts, timeout, brief):
-        r"""Compile, working the path mapping out by trying rather than by asking anyone to type it.
-
-        The service opens attachments from disk, and it may see the disk differently than ComfyUI
-        does: ComfyUI on Windows writes C:\ComfyUI\temp\ref.png while a service in WSL or a container
-        sees /mnt/c/ComfyUI/temp/ref.png. Neither program can work out the other's spelling, so the
-        plausible ones are offered in turn and the service itself confirms which is right by opening
-        the file. A guess that is never checked is the silent-failure trap; this one is checked on
-        every run, and running out of candidates produces an error listing what was tried.
-        """
-        root = _comfy_root()
-        candidates = path_candidates(root)
-        last: ServiceError | None = None
-        for prefix in candidates:
-            assets = plan_assets(written, sizing, root, prefix)
-            payload = build_payload(assets=assets, transcripts=transcripts, **brief)
-            try:
-                body = compile_brief(server, payload, timeout=timeout)
-                return body, (prefix if prefix and prefix != root else "")
-            except ServiceError as e:
-                if not retranslate(e):
-                    raise
-                last = e
-        raise ServiceError(
-            (str(last) if last else "the service could not read the attachments.")
-            + "\n\nTried these spellings of ComfyUI's folder: " + ", ".join(repr(c) for c in
-                                                                           candidates)
-            + ". If the service runs on a different machine it cannot open these files at all, and "
-              "only text-only prompts will work. If it runs beside ComfyUI, it needs read access to "
-              "the folder above, under a spelling it can open.")
+    # Getting the media to the service is `h3ir_client.compile_with_media`, not a method here.
+    # Nothing in that decision needs a canvas -- `_comfy_root()` below is the only fact only ComfyUI
+    # knows, and it is passed in -- and over there it can be exercised against a real service with
+    # no ComfyUI in the process, which is how the remote path was proved.
 
     @classmethod
     def _node(cls, class_name: str, missing: str):

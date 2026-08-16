@@ -309,19 +309,33 @@ def test_more_references_than_h3_has_sockets_for_names_the_ceilings(monkeypatch)
     assert "Nothing was silently dropped" in msg
 
 
-def _service_failures() -> set[tuple[int, str]]:
+def _service_failures(where: str = "briefs") -> set[tuple[int, str]]:
     """Every (status, code) pair `h3ir/service.py` can raise, read out of the service's own source.
 
     Read rather than listed, so adding a failure over there and no branch over here fails this test
     instead of shipping a caller that shrugs at something it could have explained.
+
+    Split by route, because the node now talks to two of them and their messages are not
+    interchangeable: a `POST /v1/briefs` failure is explained by `compile_brief`, and a
+    `PUT /v1/assets/{sha256}` failure by `upload_asset`. Attributed by slicing the file on its own
+    `@app.` decorators rather than by a list of codes kept over here, so a new endpoint's failures
+    land in the right half on their own. Everything above the first decorator -- `_to_brief` and the
+    helpers it calls -- belongs to the brief half, which is what reaches it.
     """
     import pathlib
     import re
 
     repo = pathlib.Path(__file__).resolve().parents[1]
     src = (repo / "h3ir" / "service.py").read_text()
-    found = set(re.findall(r'HTTPException\((\d+),\s*detail=\{\s*\n?\s*"code": "([a-z-]+)"', src))
-    found |= set(re.findall(r'HTTPException\((\d+), detail=\{"code": "([a-z-]+)"', src))
+    assets = [c for c in re.split(r"\n(?=@app\.)", src)
+              if re.match(r'@app\.\w+\("/v1/assets', c)]
+    assert assets, "no /v1/assets route found; this scan is now blind to the upload half"
+    chosen = "\n".join(assets) if where == "assets" else "\n".join(
+        c for c in re.split(r"\n(?=@app\.)", src) if c not in assets)
+    found = set(re.findall(r'HTTPException\((\d+),\s*detail=\{\s*\n?\s*"code": "([a-z-]+)"', chosen))
+    found |= set(re.findall(r'HTTPException\((\d+), detail=\{"code": "([a-z-]+)"', chosen))
+    if where == "assets":
+        return found
     # `except BriefRefused` re-raises the exception's OWN code, so the literal is in compile.py and
     # a scan of service.py alone would miss every one of them. That blind spot is the reason this
     # helper reads two files: `over-capacity` was invisible to the first version of it.
@@ -348,9 +362,36 @@ def test_every_failure_the_service_can_send_gets_a_specific_message(status, code
     msg = str(e.value)
     assert "the service rejected the request" not in msg, \
         f"{code} reaches the generic branch and the user is told nothing about it"
+    assert "unexpected reply" not in msg, \
+        f"{code} reaches the catch-all branch, which reports a status number and nothing to do"
     assert "SERVICE SAID THIS" in msg, f"{code} discards the message the service wrote"
     if code != "llm-unavailable":
         assert "H3IR_LLM_URL" not in msg, f"{code} is blamed on the language model endpoint"
+
+
+@pytest.mark.parametrize("status,code", sorted(
+    (int(s), c) for s, c in _service_failures("assets")))
+def test_every_upload_failure_the_service_can_send_names_the_slot(status, code, monkeypatch,
+                                                                  tmp_path):
+    """The same control for the other half of the conversation, held to the bar that half can meet.
+
+    Not "pass the service's words through", because here the node knows something the service does
+    not: which slot the person dropped this file on. The service can only say `a1b2c3...` -- the
+    store is content-addressed, so that IS the file's name over there -- and a message naming a hash
+    tells somebody with nine references nothing at all. So every upload failure has to name the slot,
+    and none of them may fall through to the branch that reports a status number.
+    """
+    f = tmp_path / "ref.png"
+    f.write_bytes(b"pixels")
+    monkeypatch.setattr(C, "_put_file",
+                        lambda *a, **k: (status, {"detail": {"code": code,
+                                                             "message": "SERVICE SAID THIS"}}))
+    with pytest.raises(C.ServiceError) as e:
+        C.upload_asset("http://x", str(f), "a" * 64, "picture 1")
+    msg = str(e.value)
+    assert "would not take" not in msg, \
+        f"{code} reaches the generic branch, which reports a status number and nothing to do"
+    assert "picture 1" in msg, f"{code} does not say which of the graph's files it is about"
 
 
 def test_a_dead_llm_endpoint_is_not_reported_as_the_nodes_fault(monkeypatch):

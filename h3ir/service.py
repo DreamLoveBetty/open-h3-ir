@@ -20,10 +20,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from . import uploads
 from .analyse import AssetAnalysisError, ToolMissing, sha256_file
 from .backend import Backend, BackendError, BackendUnavailable
 from .compile import BriefRefused, compile_brief, refine
@@ -45,7 +46,21 @@ _LOCK = threading.Lock()
 # --------------------------------------------------------------------------- wire models
 
 class AssetIn(BaseModel):
+    """One attachment, and exactly one statement of where its bytes are.
+
+    `path` is the fast way and needs one filesystem: nothing is copied, and the bytes H3 is
+    conditioned on are the bytes the caller already had. `sha256` is the way in for a caller on
+    another machine, naming an attachment it has already sent to `PUT /v1/assets/{sha256}`.
+
+    Both at once is refused rather than one winning. They can disagree, and a request that says two
+    things about which file it means renders something plausible about the wrong one.
+    """
+
     path: str | None = Field(None, description="Readable path on the service host")
+    sha256: str | None = Field(
+        None, description="An attachment already uploaded to this service, named by the sha256 of "
+                          "its own bytes. Use instead of `path` when the caller and the service do "
+                          "not share a filesystem. Upload with PUT /v1/assets/{sha256}.")
     url: str | None = None
     note: str | None = Field(None, description="Free text hint, e.g. 'the man'. Never required.")
     kind: Literal["image", "video", "audio"] = "image"
@@ -54,6 +69,9 @@ class AssetIn(BaseModel):
     seconds: float | None = None
     frames: int | None = None
     paired_video_path: str | None = None
+    paired_video_sha256: str | None = Field(
+        None, description="The uploaded video this soundtrack belongs to, named by its sha256. The "
+                          "upload counterpart of `paired_video_path`.")
     provenance: dict[str, Any] | None = None
 
 
@@ -129,18 +147,85 @@ def _role_fits(role: Role, kind: str) -> bool:
     return role in _ROLES_BY_KIND.get(kind, ())
 
 
+def _require_uploaded(b: BriefIn) -> None:
+    """Refuse a request naming uploads this service does not hold, listing every one of them.
+
+    In one pass over the whole request rather than per asset, and that is the point: a caller with
+    nine references needs one answer telling it which nine to send, not nine round trips each
+    naming the next file. `missing` in the detail is what a client uploads and retries.
+    """
+    wanted: list[str] = []
+    for a in b.assets:
+        for named in (a.sha256, a.paired_video_sha256):
+            if not named:
+                continue
+            if not uploads.is_digest(named):
+                raise HTTPException(422, detail={
+                    "code": "asset-name-not-a-digest",
+                    "message": f"{named[:80]!r} is not a sha256, so it cannot name an uploaded "
+                               "attachment. An upload is named by the hash of its own bytes, as 64 "
+                               "lowercase hexadecimal characters."})
+            wanted.append(named)
+    absent = uploads.missing(wanted)
+    if absent:
+        raise HTTPException(422, detail={
+            "code": "asset-not-uploaded",
+            "message": ("this service does not hold "
+                        + (f"the attachment {absent[0]}" if len(absent) == 1
+                           else f"{len(absent)} of the attachments this request names")
+                        + ". Send the bytes to PUT /v1/assets/{sha256} and ask again. An upload is "
+                          "kept for a while and then dropped, so one that worked an hour ago can "
+                          "need sending a second time."),
+            "missing": absent})
+
+
+def _source_of(a: AssetIn) -> tuple[Path, str]:
+    """Where this asset's bytes are and what they hash to, from whichever way it was attached."""
+    if a.path and a.sha256:
+        raise HTTPException(422, detail={
+            "code": "asset-two-sources",
+            "message": f"this asset gives both a path ({a.path}) and an uploaded sha256 "
+                       f"({a.sha256}). They can name different files, so pick one: a path for a "
+                       "service that can open your filesystem, an upload for one that cannot."})
+    if a.sha256:
+        p = uploads.stored(a.sha256)
+        if p is None:
+            # `_require_uploaded` already looked, so reaching here means the asset was evicted in
+            # between. Reported the same way, because the caller's move is the same: send it again.
+            raise HTTPException(422, detail={
+                "code": "asset-not-uploaded",
+                "message": f"the upload {a.sha256} was dropped from this service between one check "
+                           "and the next. Send the bytes to PUT /v1/assets/{sha256} and ask again.",
+                "missing": [a.sha256]})
+        # Not re-hashed. The store's own name IS this digest: the bytes were streamed through
+        # hashlib on the way in and the file was placed under what that produced, so re-reading a
+        # 200 MB clip on every compile would confirm something already proved once.
+        uploads.touch(p)
+        return p, a.sha256
+    if not a.path:
+        raise HTTPException(422, detail={
+            "code": "asset-no-path",
+            "message": "each asset needs either a `path` this service can open or the `sha256` of "
+                       "an attachment already uploaded to it. URL fetching is not enabled on this "
+                       "deployment."})
+    if not get_config().assets.allow_paths:
+        raise HTTPException(422, detail={
+            "code": "asset-paths-disabled",
+            "message": "this service does not open files from its own filesystem: it was started "
+                       "with H3IR_ALLOW_ASSET_PATHS off. Upload the attachment instead, with PUT "
+                       "/v1/assets/{sha256}, and name it by that sha256."})
+    p = Path(a.path)
+    if not p.exists():
+        raise HTTPException(422, detail={"code": "asset-missing",
+                                         "message": f"no such file: {a.path}"})
+    return p, sha256_file(p)
+
+
 def _to_brief(b: BriefIn) -> Brief:
+    _require_uploaded(b)
     assets: list[AssetRef] = []
     for a in b.assets:
-        if not a.path:
-            raise HTTPException(422, detail={
-                "code": "asset-no-path",
-                "message": "each asset needs a `path` readable by the service; URL fetching is "
-                           "not enabled on this deployment"})
-        p = Path(a.path)
-        if not p.exists():
-            raise HTTPException(422, detail={"code": "asset-missing",
-                                             "message": f"no such file: {a.path}"})
+        p, sha = _source_of(a)
         role = _ROLE_BY_NAME.get(a.role or "", None)
         if role is None and (a.role or "").strip():
             # A role that does not resolve used to fall through to the kind default in silence, so
@@ -158,12 +243,28 @@ def _to_brief(b: BriefIn) -> Brief:
             role = {"image": Role.SUBJECT, "video": Role.EDIT_SOURCE,
                     "audio": Role.BGM}[a.kind]
         paired = None
-        if a.paired_video_path:
+        if a.paired_video_sha256:
+            # The upload half of the pointer below, and it needs no file at all: the digest IS the
+            # identity the runtime pairs on, and `_require_uploaded` has already proved this service
+            # holds those bytes.
+            paired = a.paired_video_sha256
+        elif a.paired_video_path:
             # Refused rather than ignored. A soundtrack whose pointer cannot be resolved gets
             # numbered as a standalone <Audio j>, while the runtime that receives it as
             # ref_video_audio_k emits its label immediately before the video's: two different
             # labels for one file, and a caller who asked for the pairing would never learn it did
             # not happen. `asset-missing` is also the one code callers retry a path translation on.
+            if not get_config().assets.allow_paths:
+                # The same gate as `path`, and it was missing here first: a pointer is a path, and
+                # this one reaches `sha256_file`. A deployment that has turned filesystem reads off
+                # would still have opened and hashed any file named here, which is both a read it
+                # said it would not do and an oracle for guessed contents.
+                raise HTTPException(422, detail={
+                    "code": "asset-paths-disabled",
+                    "message": "this service does not open files from its own filesystem, and "
+                               "`paired_video_path` names one: it was started with "
+                               "H3IR_ALLOW_ASSET_PATHS off. Upload the video and pair the "
+                               "soundtrack to it with `paired_video_sha256` instead."})
             paired_path = Path(a.paired_video_path)
             if not paired_path.exists():
                 raise HTTPException(422, detail={
@@ -171,7 +272,7 @@ def _to_brief(b: BriefIn) -> Brief:
                     "message": f"no such file: {a.paired_video_path} (given as the video this "
                                "soundtrack is paired with)"})
             paired = sha256_file(paired_path)
-        assets.append(AssetRef(kind=AssetKind(a.kind), role=role, sha256=sha256_file(p),
+        assets.append(AssetRef(kind=AssetKind(a.kind), role=role, sha256=sha,
                                path=str(p), note=a.note, sizing=a.sizing, seconds=a.seconds,
                                frames=a.frames, provenance=a.provenance,
                                paired_video_sha256=paired, role_stated=stated))
@@ -282,6 +383,7 @@ def list_loras() -> dict[str, Any]:
 def capabilities() -> dict[str, Any]:
     from .grid import (MAX_REF_AUDIOS, MAX_REF_IMAGES, MAX_REF_VIDEOS,
                        MAX_REF_VIDEO_SOUNDTRACKS, legal_frames)
+    cfg = get_config()
     return {
         # Durations must be frame-ALIGNED (n % 17 == 5 at 24 fps). The band below is where the
         # model was trained; longer renders work, they just take longer, so it is reported as
@@ -304,8 +406,102 @@ def capabilities() -> dict[str, Any]:
         "dialogue_languages": ["Arabic", "Chinese", "English", "French", "German", "Italian",
                                "Japanese", "Korean", "Portuguese", "Russian", "Spanish"],
         "output": {"short_edge": 768, "fps": 24, "audio": "32 kHz stereo"},
+        # How attachments can reach this deployment, which is not the same on every one of them and
+        # is not something a caller can find out by trying: a client that can read this refuses an
+        # oversized file locally, in one sentence, instead of spending the transfer to be told.
+        # `paths` false is the answer to "why did my path stop working", so it is published rather
+        # than left to a 422.
+        "assets": {
+            "paths": cfg.assets.allow_paths,
+            "uploads": cfg.assets.upload_max_bytes > 0,
+            "upload_endpoint": "PUT /v1/assets/{sha256}",
+            "upload_max_bytes": cfg.assets.upload_max_bytes,
+            "upload_store_bytes": cfg.assets.upload_store_bytes,
+            "upload_ttl_hours": cfg.assets.upload_ttl_hours,
+        },
         "note": "2K output needs MiniMax's closed regeneration stage; local output is 768p.",
     }
+
+
+@app.put("/v1/assets/{sha256}")
+async def put_asset(sha256: str, request: Request) -> JSONResponse:
+    """Take one attachment's bytes and keep them under the name their own content gives them.
+
+    The way in for a caller that does not share a filesystem with this service. Named by the sha256
+    of the file being sent, which makes the whole thing idempotent: sending the same clip twice
+    stores it once, and a client that keeps a big reference in its graph pays the transfer on the
+    first compile and never again.
+
+    That name is a claim and it is treated as one. The bytes are hashed as they stream past and the
+    file is placed under the digest computed here, so nothing a caller writes decides a path. A
+    request whose bytes do not hash to their name is refused with the two things that cause it: a
+    file that changed while it was being read, or a transfer that was cut short.
+
+    Streamed to disk in chunks. The whole point is a video that would not be worth uploading if it
+    had to fit in memory twice on the way.
+    """
+    # Every call into the store is inside the try, including the one that only looks. MEASURED: with
+    # the lookup above it, a name that is not a digest -- `ref1.png`, 63 characters, anything with a
+    # null byte in it -- raised out of the handler as an empty HTTP 500, which is the one shape of
+    # failure a caller can do nothing with at all.
+    declared = request.headers.get("content-length")
+    try:
+        held = uploads.stored(sha256)
+        if held is not None:
+            # Already here, so these bytes are not needed -- the stored file provably hashes to this
+            # name, whatever this request is carrying. Drained rather than left unread, because a
+            # server that answers without reading the body can have the rest of it land on a closed
+            # socket, turning a success into a connection error at the other end.
+            async for _ in request.stream():
+                pass
+            uploads.touch(held)
+            return JSONResponse(status_code=200, content={
+                "sha256": sha256, "stored": True, "bytes": held.stat().st_size,
+                "note": "already held; the bytes sent were not needed"})
+        with uploads.receiver(sha256, declared=int(declared) if declared else None) as rx:
+            async for chunk in request.stream():
+                rx.write(chunk)
+            _, size = rx.finish()
+    except uploads.NotADigest as e:
+        await _drain(request)
+        raise HTTPException(422, detail={"code": "asset-name-not-a-digest",
+                                         "message": str(e)}) from e
+    except uploads.TooLarge as e:
+        await _drain(request)
+        raise HTTPException(413, detail={"code": "asset-too-large", "message": str(e)}) from e
+    except uploads.StoreFull as e:
+        await _drain(request)
+        raise HTTPException(507, detail={"code": "upload-store-full", "message": str(e)}) from e
+    except uploads.DigestMismatch as e:
+        raise HTTPException(422, detail={"code": "asset-digest-mismatch",
+                                         "message": str(e)}) from e
+    return JSONResponse(status_code=201, content={"sha256": sha256, "stored": True, "bytes": size})
+
+
+async def _drain(request: Request, budget: int = 0) -> None:
+    """Read off the rest of a body we are about to refuse, so the refusal can be read.
+
+    MEASURED, and the reason this exists: answering while the client is still sending closes the
+    connection under its own write, and the sentence naming the real problem is replaced at the far
+    end by a broken pipe. Two uploads of identical size in one run got different treatment -- one the
+    503-shaped message it deserved and one a socket error -- because whether it happens depends on
+    what fits in a buffer, which is the worst kind of difference to debug.
+
+    Bounded, because reading a body without limit is the exhaustion this endpoint's caps exist to
+    prevent: a caller told the ceiling and sending fifty gigabytes anyway gets the connection closed
+    under it, and that is the correct outcome for a caller that is not listening.
+    """
+    from starlette.requests import ClientDisconnect
+
+    budget = budget or max(8 * 1024 * 1024, get_config().assets.upload_max_bytes + (1 << 20))
+    seen = 0
+    try:
+        async for chunk in request.stream():
+            seen += len(chunk)
+            if seen > budget:
+                return
+    except ClientDisconnect:
+        return
 
 
 @app.post("/v1/briefs")

@@ -18,8 +18,11 @@ say "check your configuration".
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
+import re
 import socket
 import textwrap
 import urllib.error
@@ -73,11 +76,15 @@ class ServiceError(RuntimeError):
 
     `code` exists so callers can react to a class of failure without reading the prose. Sniffing the
     message would break the moment the wording improved, and the wording is meant to keep improving.
+
+    `missing` carries the content hashes the service says it does not hold, for the one failure that
+    has a next step rather than a reader: the files are sent and the brief asked for again.
     """
 
-    def __init__(self, message: str, code: str = ""):
+    def __init__(self, message: str, code: str = "", missing: tuple[str, ...] = ()):
         super().__init__(message)
         self.code = code
+        self.missing = tuple(missing)
 
 
 # The marker for the one failure another spelling of the path could fix: the service could not
@@ -85,6 +92,12 @@ class ServiceError(RuntimeError):
 # a file it resolved, opened and could not decode. That one is not retryable, and a name that
 # suggested otherwise would earn somebody three times the wait for the same answer.
 PATH_MAY_BE_WRONG = "path-may-be-wrong"
+
+# The marker for "no spelling of a path will do, send the bytes instead". Separate from the one
+# above because the two lead to different next moves: another spelling is worth trying when the
+# service merely could not find this file, and worth nothing when the service has said it does not
+# open paths at all.
+SEND_THE_BYTES = "send-the-bytes"
 
 
 def retranslate(error: Exception) -> bool:
@@ -98,6 +111,16 @@ def retranslate(error: Exception) -> bool:
     return getattr(error, "code", "") == PATH_MAY_BE_WRONG
 
 
+def send_the_bytes(error: Exception) -> bool:
+    """True when the fix is to upload the files rather than to spell a path differently.
+
+    Two failures say so. The service refusing paths outright is the explicit one. The service being
+    unable to find a file under every spelling ComfyUI's folder has is the implicit one, and it is
+    the one that matters: it is what a service on another machine looks like from here.
+    """
+    return getattr(error, "code", "") in (SEND_THE_BYTES, PATH_MAY_BE_WRONG)
+
+
 def path_candidates(comfy_root: str) -> list[str]:
     r"""Spellings of ComfyUI's folder to offer the service, best guess first.
 
@@ -105,12 +128,12 @@ def path_candidates(comfy_root: str) -> list[str]:
     service on another view of the same disk spells it, and the common case by far is ComfyUI on
     Windows with the service in WSL or a container, where C:\ComfyUI becomes /mnt/c/ComfyUI. So that
     form is offered and the service is asked to confirm it by actually opening the file. Nothing is
-    assumed: a candidate that does not work produces the next attempt, and running out produces an
-    error that lists what was tried.
+    assumed: a candidate that does not work produces the next attempt, and running out means the
+    service cannot see ComfyUI's disk at all, which is where uploading takes over.
 
     There is no hand-typed override, because there was nothing anyone could usefully type: every
-    spelling that can work is a spelling of a folder ComfyUI already named, and the one case a box
-    could not fix is a service on another machine, which cannot open these files under any spelling.
+    spelling that can work is a spelling of a folder ComfyUI already named, and a service on another
+    machine cannot open these files under any spelling, so it is sent the bytes instead.
     """
     if not comfy_root:
         return [""]
@@ -283,9 +306,32 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
     return payload
 
 
+def _asset_facts(name: str, kind: str, extra: dict[str, Any], sizing: str) -> dict[str, Any]:
+    """Everything about one attachment except where its bytes are.
+
+    Shared by the two ways of saying that, so a fact can never be attached to a path and forgotten
+    on an upload: `seconds` decides the soundscape the writer is given, `note` is the only channel by
+    which anything is known about a sound at all, and a role is what stops the graph and the brief
+    disagreeing. All three going missing on a remote service would be silent.
+    """
+    role = extra.get("role")
+    if not role:
+        raise ServiceError(f"internal: no role recorded for {name!r}")
+    a: dict[str, Any] = {"kind": kind, "role": role}
+    if kind == "image":
+        a["sizing"] = sizing
+    note = str(extra.get("note") or "")
+    if note.strip():
+        a["note"] = note.strip()
+    for key in ("seconds", "frames"):
+        if extra.get(key) is not None:
+            a[key] = extra[key]
+    return a
+
+
 def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]],
                 sizing: str, from_prefix: str, to_prefix: str) -> list[dict[str, Any]]:
-    """Describe every attached file for the service, in the order it should be numbered.
+    """Describe every attached file for the service as paths, in the order it should be numbered.
 
     `written` is already on disk: a list of (name, kind, path, extra), where the name is the tray
     slot's own label and is what the report puts back onto the service's labels. `extra` carries
@@ -298,19 +344,8 @@ def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]],
     """
     assets: list[dict[str, Any]] = []
     for name, kind, path, extra in written:
-        role = extra.get("role")
-        if not role:
-            raise ServiceError(f"internal: no role recorded for {name!r}")
-        a: dict[str, Any] = {"path": translate_path(path, from_prefix, to_prefix),
-                             "kind": kind, "role": role}
-        if kind == "image":
-            a["sizing"] = sizing
-        note = str(extra.get("note") or "")
-        if note.strip():
-            a["note"] = note.strip()
-        for key in ("seconds", "frames"):
-            if extra.get(key) is not None:
-                a[key] = extra[key]
+        a = _asset_facts(name, kind, extra, sizing)
+        a["path"] = translate_path(path, from_prefix, to_prefix)
         # The pointer from a soundtrack back to its own clip is a path like any other, so it needs
         # the same translation. Sent untranslated it named a file the service could not open, the
         # service quietly stopped treating the pair as a pair, and the soundtrack was numbered as a
@@ -319,6 +354,30 @@ def plan_assets(written: list[tuple[str, str, str, dict[str, Any]]],
         if extra.get("paired_video_path"):
             a["paired_video_path"] = translate_path(extra["paired_video_path"], from_prefix,
                                                     to_prefix)
+        assets.append(a)
+    return assets
+
+
+def plan_uploaded_assets(written: list[tuple[str, str, str, dict[str, Any]]],
+                         sizing: str, sha_of: Any) -> list[dict[str, Any]]:
+    """The same description, for a service that cannot see this disk: content hashes, not paths.
+
+    Every other field is identical, because nothing else about an attachment depends on how it got
+    there. What changes is the one thing that cannot survive the trip -- a path is meaningless on
+    another machine -- so the file is named by what is in it instead, which is a name both sides
+    compute from the same bytes and neither has to be told.
+
+    A soundtrack's pointer at its own clip becomes a hash for the same reason. Sent as a path it
+    would name nothing on the service's disk, the pair would quietly stop being a pair, and the
+    soundtrack would be numbered as a standalone sound while the runtime received it as that clip's
+    own audio track.
+    """
+    assets: list[dict[str, Any]] = []
+    for name, kind, path, extra in written:
+        a = _asset_facts(name, kind, extra, sizing)
+        a["sha256"] = sha_of(path)
+        if extra.get("paired_video_path"):
+            a["paired_video_sha256"] = sha_of(extra["paired_video_path"])
         assets.append(a)
     return assets
 
@@ -386,6 +445,332 @@ def translate_path(path: str, from_prefix: str, to_prefix: str) -> str:
     if not norm.lower().startswith(src.lower()):
         return path
     return to_prefix.rstrip("/") + norm[len(src):]
+
+
+# --------------------------------------------------------------------------- sending the bytes
+
+def upload_limits(server: str, *, timeout: float = 30.0) -> dict[str, Any]:
+    """What this service accepts as an upload, asked of it rather than assumed.
+
+    Read for two facts, both of which turn a long wait into an immediate sentence. Whether the
+    service takes uploads at all: one that does not, and cannot see ComfyUI's folder either, has no
+    way to receive media and the person needs telling now rather than after nine transfers. And the
+    size ceiling, so a file over it is refused here, before the bytes are spent finding out.
+    """
+    status, body = _request(server, "/v1/capabilities", timeout=timeout)
+    if status != 200 or not isinstance(body, dict):
+        raise ServiceError(
+            f"the OpenH3-IR service at {server} could not say what it accepts: HTTP {status}. It "
+            "answered, so it is running; queue again, and if it keeps happening restart it.")
+    assets = body.get("assets")
+    if not isinstance(assets, dict) or not assets.get("uploads"):
+        # One message for two causes, because they have one shape here and the reader cannot tell
+        # them apart from the outside: a service started with H3IR_UPLOAD_MAX_BYTES at 0 publishes
+        # `uploads: false`, and one older than this node pack publishes no assets block at all.
+        raise ServiceError(
+            f"the OpenH3-IR service at {server} cannot open ComfyUI's folder and will not take the "
+            "files sent to it, so there is no way to get your media to it. Either it was started "
+            "with H3IR_UPLOAD_MAX_BYTES set to 0, in which case set that to the largest attachment "
+            "it should take, or it is older than this node pack, in which case update it -- git "
+            "pull in the OpenH3-IR checkout, then restart h3ir serve. A prompt with nothing in the "
+            "tray works either way.")
+    return assets
+
+
+def _put_file(server: str, path: str, sha256: str, label: str, *,
+              timeout: float) -> tuple[int, Any]:
+    """PUT one file's bytes, streamed. Returns (status, decoded body), errors included.
+
+    Streamed rather than read into memory: the files this exists for are video, and holding one in
+    memory to send it is the difference between a clip that uploads and a ComfyUI that dies. urllib
+    reads a file object in blocks when the length is stated, so the length is stated.
+    """
+    size = os.path.getsize(path)
+    req = urllib.request.Request(
+        _url(server, f"/v1/assets/{sha256}"), method="PUT",
+        headers={"Content-Type": "application/octet-stream", "Content-Length": str(size),
+                 "Accept": "application/json"})
+    try:
+        with open(path, "rb") as fh:
+            req.data = fh
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.status, _decode(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        return e.code, _decode(e.read().decode("utf-8", "replace"))
+    except socket.timeout as e:
+        raise ServiceError(
+            f"sending {label} to the OpenH3-IR service at {server} did not finish within "
+            f"{timeout:.0f}s. A large reference takes as long as the link between the two machines "
+            "takes. Raise the timeout on an OpenH3-IR Setup node.") from e
+    except urllib.error.URLError as e:
+        # MEASURED: a connection that breaks WHILE the body is going out arrives here too, not as a
+        # bare OSError, because urllib wraps everything `send` raises into a URLError. Read as "the
+        # service is not there" that produced the confidently wrong advice to queue again, for a file
+        # the service had in fact just refused. The errno is the difference and it is worth reading.
+        broken = getattr(e.reason, "errno", None) in (errno.EPIPE, errno.ECONNRESET,
+                                                      errno.ESHUTDOWN)
+        if broken:
+            raise ServiceError(
+                f"the OpenH3-IR service at {server} closed the connection while {label} was going "
+                "out, which is what it does when it will not take a file: either the file is larger "
+                "than it accepts, or it has no room left for it. Its console output has the reason "
+                "it gave. Queueing again will do the same thing.") from e
+        raise ServiceError(
+            f"cannot reach an OpenH3-IR service at {server} to send it your media ({e.reason}). It "
+            "answered a moment ago, so it may have restarted; queue again.") from e
+
+
+def upload_asset(server: str, path: str, sha256: str, label: str, *,
+                 timeout: float = 600.0, max_bytes: int = 0) -> int:
+    """Send one attachment's bytes and return how many there were.
+
+    Named by content, so this is safe to repeat and cheap to repeat: a service that already holds
+    these bytes says so and takes nothing. `label` is the tray slot's own name, because every
+    message below is about a file the person chose and they think of it by where they dropped it.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError as e:
+        raise ServiceError(
+            f"{label} cannot be read to send it to the service ({type(e).__name__}: {e}). The file "
+            "was there when the graph was queued, so it has been moved or deleted since. Drop it on "
+            "that slot again.") from e
+    if max_bytes and size > max_bytes:
+        raise ServiceError(
+            f"{label} is {_mb(size)} and the OpenH3-IR service at {server} accepts at most "
+            f"{_mb(max_bytes)} for one file. Raise H3IR_UPLOAD_MAX_BYTES where the service runs, or "
+            "put a shorter or more compressed version of it on that slot. Nothing was sent.")
+    status, body = _put_file(server, path, sha256, label, timeout=timeout)
+    return _upload_reply(status, body, label=label, server=server, sha256=sha256, size=size)
+
+
+def _upload_reply(status: int, body: Any, *, label: str, server: str, sha256: str,
+                  size: int) -> int:
+    """What the service said about the bytes it was sent, in the words of whoever sent them."""
+    det = _detail(body)
+    code = det.get("code", "")
+    if status in (200, 201):
+        # Read back rather than assumed. The service answers with the name it filed the bytes under,
+        # and a name that is not the one asked for means the two sides disagree about which file this
+        # is -- after which the brief would be written about one file and the render conditioned on
+        # another, with nothing to say so.
+        got = body.get("sha256") if isinstance(body, dict) else None
+        if got and got != sha256:
+            raise ServiceError(
+                f"the service filed {label} under {str(got)[:12]} and this node sent it as "
+                f"{sha256[:12]}. The two disagree about which file this is, so nothing further was "
+                "asked of it. This is a defect in OpenH3-IR rather than something in your graph.")
+        return int(det.get("bytes") or (body.get("bytes") if isinstance(body, dict) else 0) or size)
+    if status == 413 or code == "asset-too-large":
+        raise ServiceError(
+            f"the OpenH3-IR service at {server} refused {label} for being too large: "
+            f"{_sentence(det.get('message', ''))} It is {_mb(size)}.")
+    if status == 507 or code == "upload-store-full":
+        raise ServiceError(
+            f"the OpenH3-IR service at {server} has no room to keep {label}: "
+            f"{_sentence(det.get('message', ''))} Nothing in your graph is wrong.")
+    if code == "asset-digest-mismatch":
+        raise ServiceError(
+            f"{label} changed while it was being sent to the service, so what arrived was not the "
+            "file this graph measured. That happens when something else is still writing it. Wait "
+            "for that to finish and queue again.")
+    if code == "asset-name-not-a-digest":
+        raise ServiceError(
+            f"the service refused the name this node gave {label}. That name is a hash of the "
+            "file's own bytes, computed here, so this is a defect in OpenH3-IR rather than "
+            "something in your graph.")
+    if status in (404, 405):
+        raise ServiceError(
+            f"the OpenH3-IR service at {server} has no way to receive files: PUT /v1/assets "
+            f"answered HTTP {status}. It is older than this node pack. Update it on the machine it "
+            "runs on -- git pull, then restart h3ir serve.")
+    raise ServiceError(
+        f"the OpenH3-IR service at {server} would not take {label}: HTTP {status}: "
+        f"{str(det.get('message') or body)[:300]}")
+
+
+def compile_with_media(*, server: str, written: list[tuple[str, str, str, dict[str, Any]]],
+                       sizing: str, transcripts: dict[str, str], timeout: float,
+                       brief: dict[str, Any], sha_of: Any,
+                       comfy_root: str) -> tuple[dict[str, Any], str]:
+    r"""Compile, getting the media to the service whichever of the two ways it can take.
+
+    Paths first, always, because where they work they are strictly better: nothing is copied, the
+    service opens the very file the user dropped, and a 200 MB clip costs nothing to hand over. The
+    catch is that a path is not a file. ComfyUI on Windows writes C:\ComfyUI\temp\ref.png while a
+    service in WSL sees /mnt/c/ComfyUI/temp/ref.png, and neither program can work out the other's
+    spelling, so the plausible ones are offered in turn and the service confirms one by actually
+    opening the file. A guess that is never checked is the silent-failure trap; this one is checked
+    on every run.
+
+    Running out of spellings is not a dead end any more. It means the service cannot see ComfyUI's
+    disk at all, which is what a service on another machine looks like from here, and the media is
+    sent to it instead. A service that refuses paths outright says so in its first reply, and then
+    not even the second spelling is tried.
+
+    This lives here rather than on the node because nothing in it needs a canvas: `comfy_root` is the
+    one fact only ComfyUI knows, and it arrives as an argument. Everything else is the service
+    protocol, which is what this module is for and what makes it testable against a real service with
+    no ComfyUI in the process.
+    """
+    candidates = path_candidates(comfy_root)
+    last: ServiceError | None = None
+    for prefix in candidates:
+        assets = plan_assets(written, sizing, comfy_root, prefix)
+        payload = build_payload(assets=assets, transcripts=transcripts, **brief)
+        try:
+            body = compile_brief(server, payload, timeout=timeout)
+            return body, handoff_note(
+                prefix=(prefix if prefix and prefix != comfy_root else ""))
+        except ServiceError as e:
+            if not send_the_bytes(e):
+                raise
+            last = e
+            if e.code == SEND_THE_BYTES:
+                break
+    # Only reachable once an attachment has failed to resolve, and an attachment is the only thing
+    # that can fail that way: with an empty tray there is nothing to resolve, and the first attempt
+    # above either worked or raised something this does not catch.
+    return _compile_from_uploads(server=server, written=written, sizing=sizing,
+                                 transcripts=transcripts, timeout=timeout, brief=brief,
+                                 sha_of=sha_of, tried=candidates, why=last)
+
+
+def _compile_from_uploads(*, server, written, sizing, transcripts, timeout, brief, sha_of,
+                          tried, why) -> tuple[dict[str, Any], str]:
+    """Compile against media the service holds itself, sending it whatever it turns out to lack.
+
+    Asked first and sent second, which is the whole reason this is affordable. A brief naming its
+    attachments by content hash comes back either as the brief or as the list of hashes the service
+    does not hold, so re-queueing a graph whose clip has not changed spends one request and no bytes
+    at all, and a file travels once rather than once per queue.
+
+    One retry and no more. A file that has to be sent twice inside one queue is a service dropping
+    uploads as fast as they arrive, and looping on that would spend somebody's evening re-sending a
+    clip into a full disk instead of telling them the disk is full.
+    """
+    assets = plan_uploaded_assets(written, sizing, sha_of)
+    payload = build_payload(assets=assets, transcripts=transcripts, **brief)
+    sent: list[tuple[str, int]] = []
+    try:
+        try:
+            body = compile_brief(server, payload, timeout=timeout)
+        except ServiceError as absent:
+            if not absent.missing:
+                # Two very different failures share this branch and used to share one message. The
+                # service having no way to take the files at all is a delivery problem and gets the
+                # whole story. Anything else means the service HAS the media and is refusing the
+                # request on its own terms -- a still attached as a clip, more references than H3 has
+                # sockets -- and burying that under a paragraph about path spellings sends the reader
+                # to fix the one thing that is not wrong.
+                if send_the_bytes(absent):
+                    raise _nowhere_to_put_it(absent, tried=tried, why=why) from absent
+                raise
+            sent = send_the_missing(server, written, sha_of, absent.missing, timeout=timeout)
+            try:
+                body = compile_brief(server, payload, timeout=timeout)
+            except ServiceError as again:
+                if not again.missing:
+                    raise
+                raise ServiceError(
+                    f"the OpenH3-IR service at {server} dropped this graph's media straight after "
+                    f"it was sent: {again} Its store of uploaded files is full, or it keeps them "
+                    "for too short a time. Raise H3IR_UPLOAD_STORE_BYTES or H3IR_UPLOAD_TTL_HOURS "
+                    "where the service runs, and queue again.") from again
+    except ServiceError as e:
+        raise in_the_users_words(e, written, sha_of) from e
+    names = {name for name, _n in sent}
+    held = tuple(dict.fromkeys(name for name, _k, _p, _x in written if name not in names))
+    return body, handoff_note(sent=tuple(sent), held=held)
+
+
+def in_the_users_words(error: ServiceError, written: list[tuple[str, str, str, dict[str, Any]]],
+                       sha_of: Any) -> ServiceError:
+    """The same failure with the tray's own labels where the service could only name a hash.
+
+    MEASURED against a live service on another machine, with the commonest remote mistake there is --
+    a still dropped on a clip slot: "0f7a5659754169c6... was attached as kind: video, and its bytes
+    are a image file", followed by this pack's own "check the file in the tray slot the message
+    names". It names no slot. It cannot: an uploaded attachment IS its content hash over there, which
+    is the right name for a store and the wrong one for a person with nine references.
+
+    Both sides hash the same bytes, so the translation is exact rather than a guess -- the same
+    property the report already relies on to put slot labels on the service's manifest. The whole
+    token is replaced, not the hash inside it, or a store path would come back as
+    `/state/uploads/0f/picture 1`.
+    """
+    text = str(error)
+    for name, _kind, path, _extra in written:
+        prefix = sha_of(path)[:12]
+        if prefix in text:
+            text = re.sub(r"\S*" + prefix + r"\S*", lambda _m, n=name: n, text)
+    if text == str(error):
+        return error
+    return ServiceError(text, error.code, error.missing)
+
+
+def _nowhere_to_put_it(absent: ServiceError, *, tried, why) -> ServiceError:
+    """The failure when the service can neither open ComfyUI's folder nor be sent the files.
+
+    In practice that is one service: one too old to know what an uploaded attachment is. It was sent
+    a request naming its media by content hash, ignored the field it does not have, and answered that
+    the asset has no path -- which is also the only way a request carrying no paths at all can
+    produce a complaint about one.
+
+    Both facts go in the message, because they are two different fixes and a reader who is told only
+    one of them goes off to fix whichever they were told about.
+    """
+    return ServiceError(
+        "the media in this graph could not reach the OpenH3-IR service. It cannot open ComfyUI's "
+        f"folder -- {why if why else 'no spelling of it worked'} -- and it would not take the files "
+        f"sent to it either: {absent}\n\nThat last reply is what a service older than this node pack "
+        "gives: it was handed an attachment by content hash and asked for a path instead, because "
+        "the version it is running has no way to be sent a file. Update it on the machine it runs on "
+        "-- git pull in the OpenH3-IR checkout, then restart h3ir serve. If instead it runs beside "
+        "ComfyUI, give it read access to ComfyUI's folder, spelled one of these ways: "
+        + ", ".join(repr(c) for c in tried)
+        + ". A prompt with nothing in the tray works either way.")
+
+
+def send_the_missing(server: str, written: list[tuple[str, str, str, dict[str, Any]]], sha_of: Any,
+                     missing: tuple[str, ...] | list[str], *,
+                     timeout: float) -> list[tuple[str, int]]:
+    """Send exactly the files the service asked for, and nothing it already has.
+
+    The service's own list in its own order, because it is the one that knows. Every hash in it
+    should be a file this graph named, and one that is not is refused rather than skipped: it would
+    mean the two sides disagree about what this request contains, and a brief written about media the
+    render never receives is the failure with no symptom.
+    """
+    limits = upload_limits(server, timeout=min(float(timeout), 60.0))
+    cap = int(limits.get("upload_max_bytes") or 0)
+    by_sha: dict[str, tuple[str, str]] = {}
+    for name, _kind, path, _extra in written:
+        by_sha.setdefault(sha_of(path), (name, path))
+
+    sent: list[tuple[str, int]] = []
+    for sha in dict.fromkeys(missing):
+        if sha not in by_sha:
+            raise ServiceError(
+                f"the service asked for a file this graph never named ({str(sha)[:12]}), so the two "
+                "disagree about what is attached. This is a defect in OpenH3-IR rather than "
+                "something in your graph.")
+        label, path = by_sha[sha]
+        # On the console because it is the only place this wait can explain itself: the first queue
+        # against a service on another machine moves every reference across the network.
+        print(f"[OpenH3-IR] sending {label} to {server}")
+        sent.append((label, upload_asset(server, path, sha, label, timeout=float(timeout),
+                                         max_bytes=cap)))
+    return sent
+
+
+def _mb(n: int) -> str:
+    """Bytes as a person would say them, because 536870912 is not a size anybody reads."""
+    if n >= 1024 * 1024 * 1024:
+        return f"{n / (1024 ** 3):.1f} GB"
+    if n >= 1024 * 1024:
+        return f"{n / (1024 ** 2):.0f} MB"
+    return f"{max(1, n // 1024)} KB"
 
 
 # --------------------------------------------------------------------------- the machine's files
@@ -518,6 +903,31 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
                 "them opened. If the service runs on another machine entirely it cannot open "
                 "ComfyUI's files at all, and only text-only prompts will work; if it runs beside "
                 "ComfyUI, give it read access to ComfyUI's folder.", PATH_MAY_BE_WRONG)
+        if code == "asset-not-uploaded":
+            # Usually not read by anyone: `missing` names the files to send, the caller sends them
+            # and asks again, and that is how a service on another machine works at all. So this
+            # states the fact and nothing about what happens next, which is the caller's business
+            # and not something this branch can know.
+            raise ServiceError(
+                "the OpenH3-IR service does not hold the media this graph named: "
+                f"{_sentence(det.get('message', code))} Nothing in your graph is wrong.",
+                "", tuple(det.get("missing") or ()))
+        if code == "asset-paths-disabled":
+            # The service saying "do not send me paths, send me bytes". Marked so the caller does
+            # exactly that instead of stopping, which is why this sentence is rarely read.
+            raise ServiceError(
+                f"the OpenH3-IR service does not open files from its own disk: "
+                f"{_sentence(det.get('message', code))} Your media is sent to it instead.",
+                SEND_THE_BYTES)
+        if code in ("asset-name-not-a-digest", "asset-two-sources"):
+            # Both describe a request this node cannot write: it names every uploaded file by a hash
+            # it computed, and it never states a path and a hash for one file. So the person reading
+            # this cannot fix it in their graph, and saying so is the whole message.
+            raise ServiceError(
+                "the service refused how this node described one of your files: "
+                f"{_sentence(det.get('message', code))} That description is written here rather than "
+                "by you, so it is a defect in OpenH3-IR rather than something in your graph. A "
+                "prompt with nothing in the tray still works.")
         if code == "asset-unreadable":
             # The file was found and opened, and could not be used. A different spelling of the path
             # cannot help, so this must NOT carry the retry marker. The analyser writes these for a
@@ -657,6 +1067,29 @@ def length_notes(asked_seconds: float, frames: int) -> list[str]:
                                 f"{TRAINED_MIN_FRAMES / FPS:.3f}s. It still renders, and it is "
                                 "untested."))
     return out
+
+
+def handoff_note(*, prefix: str = "", sent: tuple[tuple[str, int], ...] = (),
+                 held: tuple[str, ...] = ()) -> str:
+    """One report line saying how the service came by the media, or nothing when there is no story.
+
+    Worth a line because the two ways cost differently and only one of them is visible from the
+    canvas. Somebody who waited on a slow first queue and a fast second one should be able to read
+    why, and somebody whose service quietly stopped sharing a disk should not have to guess that the
+    files are now travelling over the network.
+    """
+    if sent or held:
+        parts = []
+        if sent:
+            parts.append(f"{len(sent)} sent to it, {_mb(sum(n for _, n in sent))}: "
+                         + ", ".join(name for name, _ in sent))
+        if held:
+            parts.append("already there: " + ", ".join(held))
+        return line("media", "the service cannot see ComfyUI's folder, so the files went to it. "
+                    + "; ".join(parts) + ".")
+    if prefix:
+        return line("paths", f"the service reads ComfyUI's folder at {prefix}")
+    return ""
 
 
 def precision_ignored_note() -> str:

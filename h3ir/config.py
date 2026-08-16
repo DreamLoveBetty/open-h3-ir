@@ -88,6 +88,41 @@ class ComfyConfig:
 
 
 @dataclass(frozen=True)
+class AssetConfig:
+    """Where an attachment's bytes may come from, and what an upload is allowed to cost.
+
+    The service takes attachments two ways. A `path` it opens off its own filesystem is the
+    original way and the cheap one: nothing is copied, and the bytes H3 receives are the bytes the
+    caller dropped. It only works when the caller and the service see one disk. An upload is the
+    other way, for the caller on another machine, and it is the one that spends the host's disk —
+    so both of its ceilings are settings, and both are enforced against bytes actually received
+    rather than against a header a caller can lie in.
+    """
+
+    # Per file. 512 MiB covers anything a camera or a renderer produces at the lengths H3 reads
+    # (a 15-second 4K clip at 50 Mbps is about 94 MB), and it is small enough that one request
+    # cannot take a disk. 0 turns uploads off entirely, which is the right setting for a service
+    # that is only ever meant to read its own filesystem.
+    upload_max_bytes: int = field(
+        default_factory=lambda: max(0, _env_int("H3IR_UPLOAD_MAX_BYTES", 512 * 1024 * 1024)))
+    # The whole store. Uploads accumulate across requests, so a per-file limit alone bounds nothing
+    # over a week. Reaching this evicts the least recently used assets; if that cannot free enough,
+    # the upload is refused rather than the cap being quietly exceeded.
+    upload_store_bytes: int = field(
+        default_factory=lambda: max(0, _env_int("H3IR_UPLOAD_STORE_BYTES", 8 * 1024 * 1024 * 1024)))
+    # Uploaded bytes are a cache, not a record: every one of them is reproducible by uploading
+    # again. 0 means keep them until the size cap needs the room.
+    upload_ttl_hours: int = field(
+        default_factory=lambda: max(0, _env_int("H3IR_UPLOAD_TTL_HOURS", 48)))
+    # `path` attachments, ON by default because that is the behaviour every existing caller has and
+    # the fast path on one machine. Turn it OFF on a service reachable by anyone you would not hand
+    # a shell to: a path is read with the service's own permissions, and a caller who can name a
+    # file can have its contents described back to them through the vision model. With this off the
+    # only bytes the service reads are bytes a caller sent it.
+    allow_paths: bool = field(default_factory=lambda: _env_bool("H3IR_ALLOW_ASSET_PATHS", True))
+
+
+@dataclass(frozen=True)
 class Paths:
     state_dir: Path = field(default_factory=lambda: Path(
         _env("H3IR_STATE_DIR", str(Path.home() / ".local/share/h3ir"))))
@@ -111,12 +146,18 @@ class Paths:
     def eval_dir(self) -> Path:
         return self.state_dir / "eval"
 
+    def uploads_dir(self) -> Path:
+        """Bytes callers sent. Under the state dir with the caches because it IS one: everything in
+        it is reproducible by uploading again, so it is safe to delete at any time."""
+        return self.state_dir / "uploads"
+
 
 @dataclass(frozen=True)
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     comfy: ComfyConfig = field(default_factory=ComfyConfig)
     paths: Paths = field(default_factory=Paths)
+    assets: AssetConfig = field(default_factory=AssetConfig)
     profile: str = field(default_factory=lambda: _env("H3IR_PROFILE", "h3ir/2026-08-a"))
     # If the LLM is unreachable we fail loudly rather than quietly producing a worse IR:
     # a caller cannot tell a good IR from a bad one.
