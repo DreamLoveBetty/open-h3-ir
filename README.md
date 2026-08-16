@@ -6,9 +6,11 @@ Open-source local Context-IR for MiniMax H3.
 
 **Type one sentence. Get better video out of MiniMax H3.**
 
-![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
+![A man sandboarding down a dune with a giant white dragon running alongside him, ending on the title OpenH3-IR](docs/media/openh3ir-title.webp)
 
-*Same model, same seed, same reference image. The only difference is the words.*
+*That title card was made by the workflow that ships in this repo: plain prose in, three named
+reference pictures, and H3 wrote the score in the same pass as the picture.* **Watch it with sound:**
+[openh3ir-title.mp4](docs/media/openh3ir-title.mp4).
 
 ## What this is
 
@@ -38,10 +40,14 @@ commit if you build on it.
 
 ## See the difference
 
-Both halves of that first video are the same request: *"she walks out onto the wet gantry in the rain
-and stops when she sees the city below."* On the left the sentence goes to H3 as typed. On the right it
-goes through `h3ir` first. Nothing else moved between the two runs: same reference image, same seed,
-same 10.125 seconds, same settings.
+![The same request, sent raw on the left and compiled on the right](docs/media/off-vs-on.webp)
+
+*Same model, same seed, same reference image. The only difference is the words.*
+
+Both halves are the same request: *"she walks out onto the wet gantry in the rain and stops when she
+sees the city below."* On the left the sentence goes to H3 as typed. On the right it goes through
+`h3ir` first. Nothing else moved between the two runs: same reference image, same seed, same 10.125
+seconds, same settings.
 
 The right side does what the sentence asked. She walks out along the gantry, and at five seconds it
 cuts to a low-angle close-up of her looking down at the city.
@@ -60,7 +66,7 @@ right half is committed beside it:
 
 ## In ComfyUI: three nodes
 
-![Setup, Media and Main on a ComfyUI canvas, wired to a box called Render and a save, beside the video they produced](docs/media/comfyui-base-workflow.png)
+![The three OpenH3-IR nodes on a ComfyUI canvas, tray holding three named pictures, wired to a box called Render and a save that is playing the finished title card](docs/media/comfyui-base-workflow.png)
 
 - **OpenH3-IR Main** takes the sentence and hands the render everything it needs to run.
 - **OpenH3-IR Media** is the tray: every picture, clip and sound the piece uses, on one panel.
@@ -71,8 +77,15 @@ The workflow in the picture ships with the pack:
 boxes on the canvas and that is all of it: those three, one called **Render** with the rendering
 machinery folded up inside it, one that saves the video, and two panels showing the brief that got
 written and the report of what happened. Nothing in it is set up to be fast or clever, so what comes
-out is H3 as it ships. The balloon clip in the corner is that workflow's own output, from the sentence
-you can read on the node beside it.
+out is H3 as it ships.
+
+That is the same workflow making the title card at the top of this page, caught with the finished clip
+playing in the save box. The picture is worth reading, because nearly everything the rest of this
+section explains is visible in it. The tray holds three named pictures: `@dragon` and `@man` as things
+the shot should contain, and `@desert` set to *a style to copy* with the note "a lonely anime desert"
+typed under it. The prose on Main mentions all three by name and asks for the title in words. The knobs
+are at 21:9, invention `extreme`, five shots and 1.5 megapixels. The two panels along the bottom are
+the brief that came back and the report of what happened.
 
 ### Quick start
 
@@ -309,8 +322,8 @@ a change against a stored baseline, because a prompt change can improve one and 
 
 ## Your first brief from the command line
 
-This is the exact command that produced the right-hand side of the first video, and `ref1.png` ships in
-the repo, so you can run it now.
+This is the exact command that produced the right-hand side of the comparison up in
+[See the difference](#see-the-difference), and `ref1.png` ships in the repo, so you can run it now.
 
 ```console
 $ h3ir compile "she walks out onto the wet gantry in the rain and stops when she sees the city below" \

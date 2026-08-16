@@ -307,18 +307,23 @@ Re-queue with a different `brief seed`.
 
 ## The two workflows that ship with this
 
-![Setup, Media and Main on a ComfyUI canvas, wired to a box called Render and a save, beside the video they produced](../docs/media/comfyui-base-workflow.png)
+![The three OpenH3-IR nodes on a ComfyUI canvas, tray holding three named pictures, wired to a box called Render and a save that is playing the finished title card](../docs/media/comfyui-base-workflow.png)
 
 **`example/openh3ir_base_workflow.json` is the place to start.** Open it, pick your five files on
 Setup, type a sentence, run. Seven boxes on the canvas: these three, one called **Render** with the
 rendering chain folded up inside it, one that saves the video, and two panels showing the brief that
-got written and the report of what happened. The tray starts empty, so it runs on a sentence alone.
+got written and the report of what happened. It ships with an empty tray, so it runs on a sentence
+alone until you drop something in.
+
+The picture above is that same workflow in use, making the title card at the top of the
+[main README](../README.md), which is why its tray is not empty there: `@dragon` and `@man` are things
+the shot should contain, `@desert` is set to *a style to copy*, and the report along the bottom ties
+each of those names to the picture H3 received.
 
 Nothing in it is set up to be fast. It renders H3 as it ships, at plain settings, which makes it the
 honest baseline to judge a change against and the slower of the two workflows here. Everything you
 would reach for to speed it up lives on that side of the graph, inside the Render box or just before
-it, out of the way of the part you are actually typing into. The picture above is that workflow, and
-the balloon beside it is its own output.
+it, out of the way of the part you are actually typing into.
 
 **`example/openh3ir_tray.api.json` is the tray one**, kept because it is the first graph that ever
 rendered through the tray, byte for byte as submitted: two named pictures and a sound on the tray, a
