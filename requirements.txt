@@ -1,6 +1,10 @@
 # Dependencies are declared in pyproject.toml, so there is only one list to keep true.
-# This file exists for anyone whose habit is to reach for it.
+# This file exists for anyone whose habit is to reach for it:
 #
 #   pip install -e ".[dev]"     # runtime + pytest
 #   pip install .               # runtime only
--e .[dev]
+#
+# It stays directive-free on purpose. ComfyUI Manager pip-installs a cloned pack's
+# requirements.txt automatically, and the ComfyUI nodes need nothing installed: they talk
+# to the OpenH3-IR service over HTTP, so the compiler's dependencies never have to enter
+# ComfyUI's Python.
