@@ -9,7 +9,9 @@
  *
  * Everything here is rendering. The node's one real field is the `tray` string (JSON slots) and
  * this panel is an editor for it: delete this file and the node still works, still API-drives, and
- * still restores from a saved workflow. The role words MIRROR comfyui/tray.py, the authority.
+ * still restores from a saved workflow. The role words and the naming rule MIRROR comfyui/tray.py,
+ * the authority: what it refuses at queue time, the name field here refuses as it is typed, so a
+ * tray built on this panel cannot carry a name that would be turned away later.
  *
  * Board geometry, slot styling and upload idioms follow
  * ComfyUI-Fantastic-MiniMaxH3-PromptBuilder's medialoader.js (MIT), credited in README.md.
@@ -17,7 +19,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const VERSION = "tray v14";
+const VERSION = "tray v15";
 console.log("[OpenH3-IR]", VERSION);
 const NODE = "OpenH3IRMedia";
 const NODE_W = 578;
@@ -59,6 +61,37 @@ const BADGE_BY_KIND = {
            voice_timbre: "voice" },
 };
 const DEFAULT_ROLE = { picture: "subject", video: "subject", sound: "bgm" };
+
+/* What may name a slot. comfyui/tray.py is the authority and refuses exactly this rule at queue
+ * time; these three lines restate it so the panel can make a name it would refuse impossible to
+ * type, and tests/test_panel_agrees_with_the_tray.py fails if the two ever drift apart.
+ *
+ * A name is letters, digits and dashes, it carries at least one letter or digit so that `-` is not a
+ * name, and `speaks` is taken because @speaks( is the one other thing an @ can begin. */
+const LABEL_CHAR = /[A-Za-z0-9-]/;
+const LABEL_ALNUM = /[A-Za-z0-9]/;
+const RESERVED = ["speaks"];
+// The characters people separate words with inside a name. Each becomes the dash the rule allows,
+// rather than being dropped: `the man` typed through as `theman` runs two words into one and is a
+// different name from the one that was meant.
+const SEPARATORS = " \t\n\r\f\v_./\\";
+
+/** A typed name reduced to what may name a slot, with whatever could not be translated named back.
+ *
+ * Accents are folded instead of dropped, so a name types straight through in Spanish: jose with an
+ * acute comes out jose, and pinata with a tilde comes out pinata, both of which the rule accepts.
+ */
+function cleanName(text) {
+  const flat = String(text ?? "").normalize("NFD").replace(/\p{M}/gu, "");
+  let out = "";
+  const dropped = [];
+  for (const ch of flat) {
+    if (SEPARATORS.includes(ch)) out += "-";
+    else if (LABEL_CHAR.test(ch)) out += ch;
+    else if (!dropped.includes(ch)) dropped.push(ch);
+  }
+  return { text: out, dropped };
+}
 
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -139,6 +172,9 @@ class Tray {
 
   say(text, bad = false) {
     this.msg.textContent = text || "";
+    // One line, and it ends in an ellipsis when it does not fit. A name can be long enough to push
+    // a refusal past the edge, so the whole sentence is on the line itself as well.
+    this.msg.title = text || "";
     this.msg.classList.toggle("oh3-bad", !!bad);
   }
 
@@ -190,6 +226,63 @@ class Tray {
     this.write(this.slots().filter((s) => s.label !== label));
   }
 
+  // ---------------------------------------------------------------- naming a slot
+
+  /** The name field, corrected as it is typed. A space becomes the dash the rule allows, and so does
+   *  every other character people put between words in a name; anything left that cannot be a name
+   *  does not go in, and the panel says which character it was rather than leaving a keyboard that
+   *  looks broken. */
+  fixName(input) {
+    const at = input.selectionStart;
+    const whole = cleanName(input.value);
+    if (whole.text !== input.value) {
+      const head = cleanName(input.value.slice(0, at)).text.length;
+      input.value = whole.text;
+      input.setSelectionRange(head, head);
+    }
+    input.classList.remove("oh3-wrongname");
+    // The line speaks for the keystroke that just happened and nothing earlier: a message about a
+    // character refused three keystroke ago, still sitting there while a clean name is typed, reads
+    // as a complaint about the clean name.
+    this.say(whole.dropped.length
+      ? whole.dropped.map((c) => `“${c}”`).join(" ") + " cannot go in a name: a name is letters, "
+        + "digits and dashes, and it follows an @."
+      : "", true);
+  }
+
+  /** Why this name cannot be used, in a sentence, or nothing if it can.
+   *
+   *  The three cases no correction can fix: a name has to exist, it has to carry a letter or a
+   *  digit, and it has to be free. Every one of them is legal characters and an unavailable name, so
+   *  the field cannot head them off as they are typed and refuses to take them instead. */
+  nameTrouble(name, current) {
+    if (!name)
+      return "a slot needs a name: it is what an @ in the prompt reaches this file by.";
+    if (!LABEL_ALNUM.test(name))
+      return "a name needs a letter or a digit in it, so dashes on their own cannot name a slot.";
+    if (RESERVED.includes(name.toLowerCase()))
+      return `${name} is taken, because @speaks( is how a spoken line starts in the prompt.`;
+    const taken = this.slots().find((s) => s.label !== current
+      && String(s.label).toLowerCase() === name.toLowerCase());
+    if (taken)
+      // The case note is not a footnote here: it is the whole reason SHOWROOM reads as taken when
+      // the tray plainly shows showroom, and without it the refusal looks like a mistake.
+      return `${taken.label} already names another slot, and case is ignored: @${name} is the same.`;
+    return null;
+  }
+
+  rename(current, input) {
+    const name = cleanName(input.value).text;
+    const trouble = this.nameTrouble(name, current);
+    if (trouble) {
+      input.classList.add("oh3-wrongname");
+      this.say(trouble, true);
+      return;
+    }
+    this.say("");
+    this.update(current, { label: name });
+  }
+
   // ---------------------------------------------------------------- the pinned board
 
   cell(kind, index, slot) {
@@ -200,7 +293,8 @@ class Tray {
     const cls = { picture: "pic", video: "vid", sound: "aud" }[kind];
     const cell = el("div", { class: `oh3-slot oh3-filled oh3-${cls}`
       + (this.selected === slot.label ? " oh3-sel" : "") });
-    cell.addEventListener("click", () => { this.selected = slot.label; this.render(); });
+    // Whatever the top line was saying belonged to the slot being left behind.
+    cell.addEventListener("click", () => { this.say(""); this.selected = slot.label; this.render(); });
 
     if (kind === "picture") {
       cell.append(el("img", { class: "oh3-fit", src: viewUrl(slot.file), loading: "lazy" }));
@@ -275,8 +369,10 @@ class Tray {
       return;
     }
     const label = el("input", { class: "oh3-in oh3-name", value: slot.label,
-      title: "the name @ mentions this file by: letters, digits and dashes" });
-    label.addEventListener("change", () => this.update(slot.label, { label: label.value.trim() }));
+      title: "the name @ mentions this file by: letters, digits and dashes. A space becomes a dash "
+             + "as you type it." });
+    label.addEventListener("input", () => this.fixName(label));
+    label.addEventListener("change", () => this.rename(slot.label, label));
     const role = el("select", { class: "oh3-in", title: "what this file is to the piece" });
     for (const words of ROLES[slot.kind]) role.append(el("option", {
       value: ROLE_TOKEN[words], textContent: words, selected: ROLE_TOKEN[words] === slot.role }));
@@ -410,6 +506,12 @@ const CSS = `
 .oh3-in{background:#101016;border:1px solid rgba(243,239,230,.22);color:#f3efe6;border-radius:4px;
   padding:3px 6px;font-size:11px;}
 .oh3-name{flex:0 0 110px;}
+/* A name the panel would not take. Left in the field so it can be fixed rather than reverted, and
+   red so the message in the top line has something to point at. Written against the row as well as
+   the field, because the two-class rule above sets the theme's text colour and is the more specific
+   of the two: a rule on this class alone is painted over and the field stays the colour of a name
+   that was accepted. */
+.oh3-wrow .oh3-in.oh3-wrongname,.oh3-wrongname{color:#f07070;}
 select.oh3-in{flex:1;}
 .oh3-st{flex:0 0 132px;}
 .oh3-wide{flex:1;width:100%;}
