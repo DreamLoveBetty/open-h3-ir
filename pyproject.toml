@@ -39,6 +39,14 @@ dependencies = [
 # than skipped. Nothing in `h3ir` itself imports numpy, and ComfyUI already ships it at runtime.
 dev = ["pytest", "numpy"]
 
+[project.urls]
+# The package page's sidebar is built from these, and without them the only way back to the repo is a
+# link inside the README's own text. They reach the page on the next release, not this one: a
+# version's metadata is as frozen as its description once it is uploaded.
+Homepage = "https://github.com/ruashots/open-h3-ir"
+Documentation = "https://github.com/ruashots/open-h3-ir#readme"
+Issues = "https://github.com/ruashots/open-h3-ir/issues"
+
 [project.scripts]
 h3ir = "h3ir.cli:main"
 
