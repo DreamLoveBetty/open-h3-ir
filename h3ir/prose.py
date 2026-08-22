@@ -25,6 +25,7 @@ from typing import Any
 
 from .backend import Backend, user_message
 from .config import get_config
+from . import director as _director
 from .creativity import ELEMENTS
 from .models import AMPLITUDES, AssetCard, Brief, CAMERA_TYPES, Mode, SPEEDS, ShotPlan, SubjectPlan
 from .textnorm import normalize
@@ -424,6 +425,123 @@ def structure_facts(video_roles: tuple[tuple[str, str], ...]) -> str:
     return "\n".join(lines)
 
 
+def edit_source_facts(video_worlds: tuple[tuple[str, str, str], ...],
+                      picture_roles: tuple[tuple[str, str], ...] = ()) -> str:
+    """What a video EDIT settles about the target video, stated where the document is written.
+
+    The measured defect, and it is the largest one in this file's history. Four seeds of "replace
+    the man in this clip with the elderly woman in the picture: everything else stays exactly the
+    same" put the target video in the PLATE's grey studio -- 4 of 4 -- and killed the camera move
+    in 3 of 4, against a source clip shot in a carpentry workshop with a slow push in.
+
+    Two causes, and this block answers both.
+
+    The clip's world was never a fact the writer had. `_definition_lines` walks `subjects`, and a
+    video card's subjects are its people and props: the man, the hammer, the plank. Its
+    `environment`, `framing`, `lighting` and `motion` reach nothing. So the only setting anybody
+    described to the writer was the plate's, and the plate is a studio portrait.
+
+    And nothing said that a picture's own backdrop is not the target's. ref-en.txt 2.2: "If an
+    image is used only to define a character, scene, costume, or style, do not create a standalone
+    picture entry" -- the image supplies the character, not the room it was photographed in.
+
+    Scoped to `edit_source` on purpose. A continuation's target is NOT the source video, so
+    "everything the request does not change stays as the clip has it" is false there, and no
+    measurement of that case exists yet. That is the extension point, not an oversight.
+    """
+    if not video_worlds:
+        return ""
+    lines = []
+    for label, world, camera in video_worlds:
+        lines.append(
+            f"{label} is the video being EDITED, so the target video IS {label} with the "
+            f"requested change made to it. Everything the request does not ask to change stays "
+            f"exactly as {label} has it: the setting, the framing, the camera movement, the "
+            f"lighting, the cutting and the timing of every action. Write detailed_description as "
+            f"{label} playing with that change applied, not as a new scene assembled out of its "
+            f"parts, and never relocate it.")
+        if world:
+            lines.append(f"What {label} shows, observed from its frames: {world}")
+        # The camera half is stated separately, and its ABSENCE is stated too. Silence about the
+        # camera measured as "static camera" in 3 of 4 seeds on a source that pushes in slowly:
+        # a description with nothing to say about the camera says it holds still, and that is an
+        # assertion contradicting the very clip the writer was told to preserve. So either the
+        # observation is handed over, or the instruction is to write no camera sentence at all --
+        # which the format allows: ref-en.txt 5.1 asks for movement type, amplitude and speed
+        # "when they need to be expressed", and on an unchanged camera they do not.
+        if camera:
+            lines.append(f"What the camera does in {label}, observed from its frames: {camera}. "
+                         f"The target video's camera does exactly that and nothing else.")
+        else:
+            lines.append(
+                f"The camera movement of {label} was NOT observed, so you do not know what it is. "
+                f"Write no camera sentence at all for this edit, and in particular do not write "
+                f"that the camera is static, holds, or does not move — that is a claim about "
+                f"{label} that nothing here has checked, and it contradicts the clip if it moves. "
+                f"{label} is wired into the render and carries its own camera with it, so the "
+                f"move survives whether or not the text names it.")
+    if any(lb.startswith("<Picture") for lb, _ in picture_roles):
+        lines.append(
+            "An attached picture supplies only the thing it defines — a person, an object, a "
+            "look. The backdrop, the lighting and the framing of that photograph belong to the "
+            "photograph and are not the target video's. Whatever a picture happens to have been "
+            "shot against, the target video stays in the edited clip's own setting, under its own "
+            "light, in its own framing.")
+    return "\n".join(lines)
+
+
+def swap_facts(picture_roles: tuple[tuple[str, str], ...],
+               video_roles: tuple[tuple[str, str], ...],
+               taken_over: tuple[tuple[str, str], ...] = ()) -> str:
+    """What `placed_subject` and `replacement_subject` mean, per label.
+
+    `taken_over` is ((picture_label, taken_subject_label), ...) as the planner bound it: which
+    figure in the clip each replacement picture stands in for. It is keyed on the picture because
+    that is the label carrying the role. It is handed over rather than described, because
+    choosing WHICH figure is structure and structure is not the model's to decide (rule 1); the
+    planner binds like for like and refuses at intake when that is not unique.
+    """
+    clip = next((lb for lb, role in video_roles if role == "edit_source"), "")
+    placed = [lb for lb, role in picture_roles if role == "placed_subject"]
+    replacing = [lb for lb, role in picture_roles if role == "replacement_subject"]
+    if not clip or not (placed or replacing):
+        return ""
+    taken = dict(taken_over)
+    lines = []
+    for label in placed:
+        lines.append(
+            f"{label} is attached as a PLACEMENT, declared by the caller: the person or object it "
+            f"shows is ADDED into {clip}, and nothing already in {clip} is removed or replaced. "
+            f"Define it as an ordinary <Subject N> citing {label}, say in that definition that it "
+            f"is placed into {clip}, and in detailed_description describe where in the frame it "
+            f"enters and what it does there while everything else in the clip carries on unchanged.")
+    for label in replacing:
+        # The bound label is a <Subject N> the planner created from the clip's own card, so it is
+        # already defined in the facts above; naming it here is what turns "someone is replaced"
+        # into a statement about one identifiable figure.
+        who = taken.get(label, "")
+        target = f" It takes the place of {who}" if who else ""
+        lines.append(
+            f"{label} is attached as a REPLACEMENT, declared by the caller: the person or object "
+            f"it shows takes over from a figure already in {clip}.{target}, and everything else "
+            f"about {clip} is untouched — the same camera movement, the same framing, the same "
+            f"actions at the same moments, the same words spoken at the same moments, the same "
+            f"setting and the same light."
+            + (f" What survives of {who} is its position in frame, its actions and its timing; "
+               f"its appearance does not, because {label} is now the one performing them. In "
+               f"retention_analysis give {who} the marker `attribute_transfer` — the "
+               f"specification's own word for characteristics transferred to a different "
+               f"identifiable target subject — and never `fully_preserved`, which would claim the "
+               f"figure the caller asked to swap out is still there."
+               f" Define {who} with NO appearance detail: name it only well enough to find it in "
+               f"{clip}, and say in the same line that it does not appear in the target video. "
+               f"subject_definitions is conditioning like every other section, so a list of "
+               f"{who}'s hair, build and clothing is a description of somebody to draw — measured, "
+               f"that put the figure the caller removed back on screen for the opening frames."
+               if who else ""))
+    return "\n".join(lines)
+
+
 def reference_picture_facts() -> str:
     """The one thing a full-reference brief must not say about its pictures.
 
@@ -555,17 +673,43 @@ DIALOGUE_PLACEMENT = (
     "mark that with <cutoff>.")
 
 
+# The director block, appended AFTER the creativity dial at every site that takes one. The order is
+# not cosmetic: the dial states its prohibitions absolutely ("no setting overrides that"), and the
+# profile has to read as filling what is left rather than as competing with it. Reversed, the
+# strongest sentence in the ask would be a taste and the absolute one would trail it.
+def director_block(director, *, scope=None) -> str:
+    """What the profile tells the writer, or "" when there is no profile.
+
+    `scope` is passed so the block can say out loud that a score is already ruled out. That is the
+    one place the two controls touch. A profile is the caller's own prose and is never edited, so
+    the resolution is a SENTENCE rather than a silence: the writer is told the decision is made
+    before it reads a description of music that cannot exist.
+    """
+    if director is None:
+        return ""
+    from .creativity import SCORE
+    scored = scope is None or scope.permits(SCORE)
+    return _director.brief_instruction(director, scored=scored)
+
+
 def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   cards: dict[str, AssetCard], target, labels: tuple[str, ...], *,
                   prompt_name: str = "compose.v2.txt", seed: int | None = None,
                   thinking: bool | None = None, images: list[str] | None = None,
                   style=None, licence=None, scope=None,
+                  director=None,
                   mode: Mode | None = None,
                   task_types: tuple[str, ...] = (),
                   picture_roles: tuple[tuple[str, str], ...] = (),
                   video_roles: tuple[tuple[str, str], ...] = (),
                   audio_roles: tuple[tuple[str, str], ...] = (),
                   audio_transcripts: tuple[tuple[str, str], ...] = (),
+                  # (label, what the clip shows, what its camera does) for every video attached
+                  # as `edit_source`, and (picture label, the subject it takes over from) for every
+                  # bound replacement. Pre-extracted like `audio_transcripts` and `picture_roles`,
+                  # so this module never has to join a manifest label to a card hash.
+                  video_worlds: tuple[tuple[str, str, str], ...] = (),
+                  taken_over: tuple[tuple[str, str], ...] = (),
                   generation_task: bool = True,
                   omit: tuple[str, ...] = ()) -> str:
     """One call. The model writes all six sections and decides everything creative in them.
@@ -651,6 +795,10 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         + (f"\n{audio_task_facts(labels, task_types, audio_roles)}\n" if is_ref else "")
         + (f"\n{video_task_facts(video_roles, task_types)}\n"
            if is_ref and video_task_facts(video_roles, task_types) else "")
+        + (f"\n{edit_source_facts(video_worlds, picture_roles)}\n"
+           if is_ref and video_worlds else "")
+        + (f"\n{swap_facts(picture_roles, video_roles, taken_over)}\n"
+           if is_ref and swap_facts(picture_roles, video_roles, taken_over) else "")
     )
     # Ablation lever. Each name drops one block from the ask, so the question "does this block earn
     # its place" is a measurement instead of a belief. Production passes nothing.
@@ -658,6 +806,7 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
     #   style    what the references look like, or the look the request asked for
     #   licence  which attributes the references govern where the request does not specify them
     #   scope    the creativity setting and its prohibitions
+    #   director the profile, as the prose the caller wrote, under a head that says it yields
     def kept(block: str) -> bool:
         return block not in omit
 
@@ -682,6 +831,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # The dial, stated in the ask rather than baked into the system prompt. The same request at
         # two settings must be able to produce two different answers, so this cannot live in a file.
         ask += "\n" + scope.brief_instruction() + "\n"
+    if kept("director") and director is not None:
+        ask += "\n" + director_block(director, scope=scope) + "\n"
     # Scoped exactly as P2-too-short is scoped, and off the same two sentences of ref-en.txt 5.2:
     # the range is stated for a full-reference generation task, and editing descriptions are exempt
     # because they "scale with the complexity of the source video".
@@ -718,8 +869,15 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
 def _definition_lines(subjects: list[SubjectPlan], cards: dict[str, AssetCard],
                       labels: tuple[str, ...]) -> list[str]:
     """The subject_definitions lines themselves, ready to use or reword."""
+    from .plan import taken_definition
     out = []
     for s in subjects:
+        # A figure being replaced is handed over with no attribute list at all: this block is what
+        # the writer copies into subject_definitions, and an identity list there is conditioning
+        # for someone the caller asked to remove.
+        if s.taken_over_by:
+            out.append(taken_definition(s))
+            continue
         attrs = ", ".join(s.attributes) or "as shown in the reference"
         src = ", ".join(s.sources)
         out.append(f"{s.label} is {s.descriptor} in {src}, with {attrs}.")
@@ -733,7 +891,7 @@ def plan_shots(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                cards: dict[str, AssetCard], target, *,
                prompt_name: str = "shotplan.v1.txt", seed: int | None = None,
                thinking: bool | None = None, max_shots: int = 4, licence=None,
-               scope=None):
+               scope=None, director=None):
     """The model decides the edit; shots.validate_proposal proves it legal.
 
     Thinking defaults ON here and nowhere else. The earlier measurement found reasoning worthless
@@ -773,6 +931,11 @@ def plan_shots(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
             ask += ("If you think the clip would be better with something this setting does not "
                     "license, say so in `suggestions` — it will be reported, not added.\n")
 
+    if director is not None:
+        # The planner picks the edit; the profile does not touch that. It is here because the
+        # planner also writes a `beat` per shot, and a beat is prose about what the shot is FOR.
+        ask += "\n" + director_block(director, scope=scope) + "\n"
+
     raw = backend.json_call(
         [{"role": "system", "content": load_prompt(prompt_name)},
          {"role": "user", "content": ask}],
@@ -784,7 +947,8 @@ def plan_shots(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
 def beat_sheet(backend: Backend, brief: Brief, mode: Mode, subjects: list[SubjectPlan],
                cards: dict[str, AssetCard], shots: list[ShotPlan], *,
                prompt_name: str = "beatsheet.v1.txt", seed: int | None = None,
-               thinking: bool | None = None, style=None) -> dict[str, Any]:
+               thinking: bool | None = None, style=None,
+               director=None) -> dict[str, Any]:
     spans = "\n".join(
         f"Shot {s.n}: {s.start_ms / 1000:.2f}s to {s.end_ms / 1000:.2f}s "
         f"({s.duration_ms / 1000:.2f}s long)" for s in shots)
@@ -798,6 +962,11 @@ def beat_sheet(backend: Backend, brief: Brief, mode: Mode, subjects: list[Subjec
     )
     if brief.constraints:
         ask += "\nHard constraints from the caller:\n" + "\n".join(f"- {c}" for c in brief.constraints)
+    if director is not None:
+        # This call chooses the camera from the closed enum, which is the profile's
+        # strongest lever, so a beat sheet written without it is the one that most
+        # visibly ignores the setting.
+        ask += "\n" + director_block(director) + "\n"
     if style is not None and style.source == "request":
         ask += (f"\nThe caller stated the style: \"{style.phrase}\". Use it verbatim as "
                 "style_phrase, optionally adding lighting or colour detail after it. Do not "
@@ -892,7 +1061,8 @@ def shot_body(backend: Backend, brief: Brief, plan_mode: Mode, shot: ShotPlan,
               subjects: list[SubjectPlan], style_opening: str, *,
               prompt_name: str = "prose_shot.v2.txt", thinking: bool = False,
               seed: int | None = None, images: list[str] | None = None,
-              anchor_label: str | None = None, expand_from: str | None = None) -> str:
+              anchor_label: str | None = None, expand_from: str | None = None,
+              director=None) -> str:
     """`label_policy` is mode-derived, not a preference.
 
     `<Subject N>` is a Ref2VA construct: it only means anything because subject_definitions
@@ -963,6 +1133,9 @@ def shot_body(backend: Backend, brief: Brief, plan_mode: Mode, shot: ShotPlan,
                 + "\n\nRewrite it at the target length by describing MORE OF WHAT IS IN THE "
                   "FRAME — surfaces, materials, the ground, the background, the light, the "
                   "direction of each movement. Keep every placeholder. Add no new events.\n")
+
+    if director is not None:
+        ask += "\n" + director_block(director) + "\n"
 
     reply = backend.chat(
         [{"role": "system", "content": load_prompt(prompt_name)},

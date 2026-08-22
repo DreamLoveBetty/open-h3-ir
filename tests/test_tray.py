@@ -227,3 +227,92 @@ def test_the_note_sent_to_the_service_carries_the_label_for_the_binding():
     slots = _tray(_slot(label="carguy", note="the man in the leather jacket"))
     assert T.note_for(slots[0]) == "carguy: the man in the leather jacket"
     assert T.note_for(_tray(_slot(label="plain"))[0]) == "plain"
+
+
+# ---------------------------------------------------------- the table, restated in the front doors
+
+def test_both_readmes_list_exactly_the_roles_the_tray_takes():
+    """`ROLES` is the answer to the question both front pages promise to answer, so a stale table
+    there is a reader wiring up a role that does not exist, or never learning one that does.
+
+    Written after the two swap roles reached the compiler, the service and the tray while both
+    README tables still listed six picture roles. The panel had the same gap and nothing failed,
+    which is what a restatement with no test always looks like.
+    """
+    import pathlib as _p
+
+    root = _p.Path(__file__).resolve().parents[1]
+    for doc in ("README.md", "comfyui/README.md"):
+        body = (root / doc).read_text(encoding="utf-8")
+        for kind, word in (("picture", "picture"), ("video", "clip"), ("sound", "sound")):
+            rows = [l for l in body.splitlines() if l.startswith(f"| {word} | ")]
+            assert len(rows) == 1, f"{doc} has {len(rows)} rows for a {word}, so this scan is blind"
+            listed = [w.strip() for w in rows[0].split("|")[2].split("·")]
+            assert listed == list(T.ROLES[kind]), (
+                f"{doc} says a {word} can be {listed} and comfyui/tray.py takes "
+                f"{list(T.ROLES[kind])}.")
+
+
+# ------------------------------------------------------------ who a replacement takes over from
+
+def _swap(label, replaces="", role="replacement_subject"):
+    entry = {"kind": "picture", "label": label, "role": role, "file": "openh3ir/x.png [input]"}
+    if replaces:
+        entry["replaces"] = replaces
+    return entry
+
+
+def test_who_a_picture_replaces_survives_the_tray():
+    slots = _tray(_swap("carguy", "the man in the plaid shirt"))
+    assert slots[0].replaces == "the man in the plaid shirt"
+
+
+def test_a_slot_that_replaces_nobody_carries_no_words():
+    assert _tray(_slot())[0].replaces == ""
+
+
+def test_saying_who_on_a_role_that_takes_nobodys_place_is_refused():
+    """The same judgement the transcript field gets: a statement this chain would drop is an error
+    rather than a no-op, because nothing downstream would ever mention it again."""
+    with pytest.raises(ServiceError) as e:
+        _tray(_swap("carguy", "the man in the plaid shirt", role="subject"))
+    assert "replace the one in the clip" in str(e.value)
+    assert "something in the shot" in str(e.value)
+
+
+def test_one_picture_replacing_somebody_is_never_asked_who():
+    """Nothing is ambiguous with one: whatever it stands in for, only one picture is asking."""
+    assert T.check_swaps(_tray(_swap("carguy"))) is None
+    assert T.check_swaps(_tray(_swap("carguy", "the man in the plaid shirt"))) is None
+
+
+def test_two_pictures_replacing_and_one_silent_stops_the_job():
+    with pytest.raises(ServiceError) as e:
+        T.check_swaps(_tray(_swap("carguy", "the man in the plaid shirt"), _swap("picture2")))
+    said = str(e.value)
+    assert said.startswith("@picture2 does not say who it replaces."), (
+        "what is missing comes first: the panel's line is one slot wide and cuts the tail")
+    assert "@carguy and @picture2 both" in said
+    assert T.SAY_WHO in said
+
+
+def test_two_pictures_that_both_say_who_are_left_alone():
+    assert T.check_swaps(_tray(_swap("carguy", "the man in the plaid shirt"),
+                               _swap("picture2", "the woman at the lathe"))) is None
+
+
+def test_three_replacements_read_as_a_sentence_and_name_every_silent_one():
+    with pytest.raises(ServiceError) as e:
+        T.check_swaps(_tray(_swap("a", "the man in the plaid shirt"), _swap("b"), _swap("c")))
+    said = str(e.value)
+    assert said.startswith("@b and @c do not say who they replace.")
+    assert "@a, @b and @c all" in said
+
+
+def test_the_refusal_says_where_to_fix_it_and_shows_the_shape_of_an_answer():
+    """On a canvas the message IS the interface: a refusal that does not say what to type leaves
+    the user guessing at a field they have never used."""
+    with pytest.raises(ServiceError) as e:
+        T.check_swaps(_tray(_swap("a"), _swap("b")))
+    assert "OpenH3-IR Media node" in str(e.value)
+    assert "the man in the plaid shirt" in str(e.value)

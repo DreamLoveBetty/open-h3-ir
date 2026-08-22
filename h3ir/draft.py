@@ -66,9 +66,18 @@ _ASSERTIVE_CAMERA = [
 
 
 def draft_camera(magnitude: str) -> list[dict]:
-    """The rotation for a magnitude. `plain` and `measured` share one, because the request carries no
-    instruction to lean on there and inventing a difference would make the floor lie about which
-    setting produced it."""
+    """The rotation for a magnitude.
+
+    `plain` and `measured` share one rotation, because the request carries no instruction to lean on
+    there and inventing a difference would make the floor lie about which setting produced it.
+
+    **A director does not reach this, and that is deliberate.** An earlier version narrowed the
+    rotation to a profile's own camera vocabulary, which meant a profile mechanically decided a
+    structural field in the deterministic floor. The owner settled the shape of a profile the other
+    way: "not mechanically enforced, just steered". A profile is prose in the ask, so it steers the
+    WRITTEN brief and leaves the floor alone. The dial still reaches here, because the dial is a
+    setting with an enforced meaning at both ends and a fallback that ignored it would be the silent
+    degradation this service refuses everywhere else."""
     return {"maximal": _MAXIMAL_CAMERA, "assertive": _ASSERTIVE_CAMERA}.get(magnitude, DRAFT_CAMERA)
 
 DRAFT_BEATS = ["the scene is established",

@@ -34,7 +34,7 @@ log = logging.getLogger("h3ir.analyse")
 # 4: `characterisation` split out of an audio card's `summary`. Version 3 audio cards fold the role
 # prefix and the duration into the summary, and the draft appended that whole string to the
 # soundscape -- so reusing one puts asset provenance back into a content section.
-ANALYZER_VERSION = "4"
+ANALYZER_VERSION = "5"
 
 # Enough to see a change without paying for a filmstrip. Sampled at 10/50/90% rather than at the ends
 # because the first and last frames of a real clip are routinely black or mid-fade.
@@ -73,6 +73,38 @@ IMAGE_SCHEMA = {
         "is_reference_sheet": {"type": "boolean"},
     },
 }
+
+VIDEO_SCHEMA = {
+    **IMAGE_SCHEMA,
+    "title": "VideoCard",
+    "required": IMAGE_SCHEMA["required"] + ["camera"],
+    "properties": {**IMAGE_SCHEMA["properties"], "camera": {"type": "string"}},
+}
+
+# The one question only a video can be asked, and the reason it is asked in plain words rather
+# than against `models.CAMERA_TYPES`. Three frames at 10/50/90% can show that the framing tightens;
+# they cannot separate a Push In from a Zoom In, or a Pan Left from a Truck Left, because the cue
+# that separates each pair is parallax across the frames in between. Offering the closed enum here
+# would get a confident member of it every time, and a wrong camera type asserted about a clip the
+# writer is told to preserve is worse than no camera type at all.
+#
+# The measured cost of having neither: on an edit whose source pushes in slowly, the writer wrote
+# "static camera" in 3 of 4 seeds. It had been told to keep the clip's camera and had never been
+# told what the clip's camera does, and `static` is what a description defaults to.
+CAMERA_QUESTION = """
+
+`camera` — what the CAMERA does across these frames, in one short phrase, or exactly "unknown".
+
+Read it from how the framing changes between the frames, not from what the subject does. If the
+subject fills more of the frame and less of the room is visible, the camera moved closer; if the
+whole scene slides sideways or up, the camera panned or tilted; if the framing is identical in
+every frame, it is holding still.
+
+Write what you can see and no more: "the framing tightens on the subject", "the frame slides to
+the right", "the framing is unchanged across all three frames". Do NOT name a technique you cannot
+tell apart from three stills — closer is closer, whether it was a dolly or a zoom. If the frames
+do not settle it, write exactly "unknown". That is a useful answer here and a guess is not.
+"""
 
 IMAGE_INSTRUCTIONS = """You catalogue a reference image for a video-generation pipeline.
 
@@ -496,10 +528,11 @@ def analyse_video(backend: Backend, ref: AssetRef, frames: list[str] | None = No
           f"\n\nThese {len(frames)} frames are sampled in order from across one video clip: the "
           "first is near the start, the last near the end. They are the SAME clip, not separate "
           "references. Record what changes between them -- movement, position, light -- in the "
-          "`summary` sentence, and describe the subject once rather than once per frame."},
+          "`summary` sentence, and describe the subject once rather than once per frame."
+          + CAMERA_QUESTION},
          user_message("Catalogue this clip." + (f"\n\nCaller's note: {ref.note}" if ref.note else ""),
                       frames)],
-        IMAGE_SCHEMA, required=("summary", "subjects"), seed=seed, max_tokens=6000,
+        VIDEO_SCHEMA, required=("summary", "subjects"), seed=seed, max_tokens=6000,
         # Multi-frame vision is this endpoint's flakiest structured call: measured 2026-08-15, the
         # same clip failed the schema-echo check twice and passed on the third attempt, and one
         # brief burned all three attempts three requests running. Six attempts, because a video
@@ -511,9 +544,20 @@ def analyse_video(backend: Backend, ref: AssetRef, frames: list[str] | None = No
                      palette=obj.get("palette") or [], framing=obj.get("framing", ""),
                      style=obj.get("style", ""), visible_text=obj.get("visible_text") or [],
                      motion=obj.get("summary", ""),
+                     camera=_camera_or_blank(obj.get("camera", "")),
                      composition=obj.get("composition", "composed_scene"),
                      frames_seen=len(frames),
                      analyzer_version=ANALYZER_VERSION, model_id=backend.cfg.model)
+
+
+def _camera_or_blank(said: str) -> str:
+    """An unobservable camera is stored as nothing at all, not as the word "unknown".
+
+    A card field that is empty means "not observed" everywhere else in this module, and one that
+    carries the literal string "unknown" would be spliced into an ask as a fact about the clip.
+    """
+    said = (said or "").strip().rstrip(". ")
+    return "" if said.lower() in ("", "unknown", "n/a", "none") else said
 
 
 def _name_the_asset(e: AssetAnalysisError, ref: AssetRef) -> AssetAnalysisError:

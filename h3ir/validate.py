@@ -40,6 +40,8 @@ ROLE_IN_WORDS = {
     "voice_timbre": "the voice-timbre reference",
     "music_style": "a music-style reference",
     "beat_reference": "a beat reference",
+    "placed_subject": "a subject placed into the source video",
+    "replacement_subject": "the subject that takes the place of one in the source video",
 }
 
 # The mechanical constraint is frame ALIGNMENT (n % 17 == 5), not membership in the node's stated
@@ -256,6 +258,10 @@ class Context:
     # The caller pinned an exact shot count (1..PINNED_SHOTS_MAX). None means `auto`: the writer's
     # designed freedom over the edit, under which no count is a defect.
     pinned_shots: int | None = None
+    # What the WIRING derives, from `plan.derive_task_types`. Empty means "not stated", which is
+    # what every caller that predates M16 gets, the golden controls and the independent validator
+    # included: the rule abstains rather than guessing at the answer it is supposed to check.
+    task_types: tuple[str, ...] = ()
     # (label, role, marker) triples from the wiring, for marker-legality checks
     declared_roles: tuple[tuple[str, str, str], ...] = ()
     # (audio_label, video_label, audio_seconds, video_seconds)
@@ -505,6 +511,29 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
             f"<{m.group(1)}> is cited only as a source and has no retention_analysis entry, so "
             f"it gets no line of its own: {line.strip()[:80]!r}")
 
+    # A label opened and never closed. Found shipped, with zero findings, in a live compile of the
+    # first replacement brief anybody ran: "<Subject 4> is the piece of wood in <Video 1," -- the
+    # '>' dropped and a comma in its place. Every label rule above walks `<(Kind) (\d+)>` and this
+    # matches none of them, so the reference simply vanished: L4 did not see the video as unused
+    # because other lines cite it correctly, and nothing else looks at the text as text.
+    #
+    # It is worth an ERROR rather than a WARN because of what the label IS. H3's tokenizer emits
+    # "<Video 1>: " as a special marker before the asset's own tokens; a run of ordinary
+    # characters spelling "<Video 1," is not that marker, so the sentence built around it points
+    # at nothing the encoder can bind. The repair is unambiguous and the fix loop can make it.
+    # `(?!\d)` is load-bearing and it is not defensive: without it the greedy `\d+` BACKTRACKS.
+    # On a legal `<Picture 12>` the engine matches "12", the closing lookahead fails, it retries
+    # with "1", and "2" is not a ">" -- so the rule fires on a perfectly formed two-digit label.
+    # The golden controls could never have caught it: MiniMax's published example numbers nothing
+    # past 4. Caught by the input written to prove the rule does NOT fire, which is the half of a
+    # rule that a control cannot supply.
+    for m in re.finditer(r"<(Subject|Picture|Video|Audio)\s+(\d+)(?!\d)(?!\s*>)", text):
+        add("L6-label-not-closed", "ERROR",
+            f"<{m.group(1)} {m.group(2)} is opened and never closed with '>': "
+            f"{text[m.start():m.start() + 60].splitlines()[0]!r}. A reference label is a single "
+            "token the encoder binds to the attached asset, so the '>' is not punctuation -- "
+            f"without it this names nothing. Write <{m.group(1)} {m.group(2)}>.")
+
     if summ:
         new_in_summary = {f"<{k} {n}>" for k in ("Subject",) for n in labels(summ, k)} - {
             f"<Subject {n}>" for n in defined_subj}
@@ -526,6 +555,22 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                     add("M2-task-type", "ERROR", f"'{p}' is not a legal task type")
             if len(parts) != len(set(parts)):
                 add("M3-task-dupe", "ERROR", "task type repeated in the prefix")
+            # The prefix against what the ATTACHMENTS derive. `repair._fix_task_prefix` writes the
+            # derived value onto every candidate, so this fires only when that could not find a
+            # prefix to replace -- and it is the rule that would have caught the write-first path
+            # shipping the model's own version, which came out different across two runs on the
+            # same wiring shape.
+            #
+            # Compared as a SET. Which types apply is decidable from the roles; the ORDER they are
+            # printed in is this pack's convention and not something ref-en.txt 3 constrains, so a
+            # reordering is not a defect and `_fix_task_prefix` owns the order anyway.
+            if ctx.task_types and set(parts) != set(ctx.task_types):
+                want = " + ".join(ctx.task_types)
+                add("M16-task-prefix-not-derived", "ERROR",
+                    f"the summary claims [{' + '.join(parts)}] and what is attached derives "
+                    f"[{want}]. The task types are read off the roles of the attachments, never "
+                    "from how the request reads, so this is not a judgement the writing gets to "
+                    f"make: write the prefix as [{want}]")
             if "video editing" in parts:
                 # The mandated sentence, allowed to CONTINUE. A full stop is what ref-en.txt 3
                 # prints, and demanding it byte-exact rejected "The target video is an edited
@@ -857,6 +902,58 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                     f"give it its own standalone line instead: '{label} is the style and "
                     "composition reference for the target video, defining ...'.")
                 break
+
+    # A declared REPLACEMENT that the document never records. The mirror of M13 one section over:
+    # M13 stops a declared `edit_source` from going unclaimed in the task-type prefix, and nothing
+    # stopped a declared `replacement_subject` from going unrecorded in the section the format
+    # reserves for exactly this relationship. Measured on the path that predates the role: four
+    # seeds of "replace the man in this clip with the elderly woman in the picture" wrote the swap
+    # into prose and gave the figure being swapped out `partially_preserved` in 3 of 4 and no line
+    # at all in the fourth -- and `partially_preserved` reads "the referenced content is still
+    # used", which is the one thing that is no longer true of him.
+    #
+    # ref-en.txt 4.1 has one marker for this and only one: `attribute_transfer`, "Referenced
+    # characteristics are transferred to a different identifiable target subject". The caller
+    # declaring the role is the statement that a different target subject exists.
+    #
+    # Label-free on purpose. Which <Subject N> the figure ends up as is the writer's numbering and
+    # a rule naming one would fire on a renumbering rather than on a defect; that the relationship
+    # is recorded SOMEWHERE in retention_analysis is decidable without knowing where.
+    #
+    # ERROR is what the fix loop sends back to the model, so it has to converge, and it was checked
+    # rather than assumed: a live document with the marker replaced by `partially_preserved` came
+    # back from one `fix_with_findings` round carrying the mandated line verbatim and validating
+    # clean.
+    swapped_in = [lb for lb, role, _m in ctx.declared_roles
+                  if role == "replacement_subject" and lb.startswith("<Picture")]
+    if swapped_in and ret and "attribute_transfer" not in ret:
+        add("R31-replacement-not-recorded", "ERROR",
+            f"{', '.join(swapped_in)} is attached with the declared role 'replacement_subject', so "
+            "a figure in the source video is being taken over and retention_analysis has to say "
+            "so, and no line carries `attribute_transfer`. Give the figure being replaced that "
+            "marker and name what takes its place: '<Subject N> (appears in [Shot ...]): "
+            "attribute_transfer - <Subject M> takes over the position in frame, the actions and "
+            "the timing of ..., whose own appearance is not retained.' `fully_preserved` and "
+            "`partially_preserved` both claim that figure is still in the video, which is what "
+            "the caller wired this picture to change")
+
+    # And the transfer with one end missing. `attribute_transfer` is defined by where the
+    # characteristics LAND -- "a different identifiable target subject" -- so a line carrying the
+    # marker and naming no other label asserts half a relationship. This is the shape the marker
+    # was misused in before it was removed from the compiler (build-log 43): it was written for a
+    # restyle, where there is no different target subject at all, and it validated cleanly because
+    # every rule of the day checked only that the value was in the enum.
+    for line_ in ret.splitlines():
+        m_ = re.match(r"\s*(<[^>]+>)[^:]*:\s*attribute_transfer\b(.*)$", line_)
+        if not m_:
+            continue
+        if not re.search(r"<(?:Subject|Picture|Video|Audio)\s+\d+>", m_.group(2)):
+            add("R32-transfer-target-unnamed", "ERROR",
+                f"{m_.group(1)} is marked `attribute_transfer` and its note names no other "
+                f"reference label: {line_.strip()[:120]!r}. ref-en.txt 4.1 defines that marker as "
+                "characteristics transferred to a DIFFERENT identifiable target subject, so the "
+                "line has to say which subject receives them. If nothing receives them, the "
+                "relationship is not a transfer and the marker is wrong")
 
     # And the same defect for videos: a structure clip lends how it is shot and cut; what is IN it
     # stays out (measured, matrix row 26: the clip's man, crowd and sphere all walked into the new

@@ -23,14 +23,14 @@ MiniMax open-sourced the model but not the stage that writes that document, sayi
 and that you should call their hosted service for it. This is an independent open implementation of
 that missing layer, running on your own machine, with a dial on top of it.
 
-It talks to any OpenAI-compatible endpoint you already have up. Ollama, llama.cpp's server, LM Studio
-and vLLM all speak that API, so if you already run local models there is nothing new to stand up. The
+It talks to any OpenAI-compatible endpoint you already have running: Ollama, llama.cpp's server, LM
+Studio, vLLM, or a hosted API. If you already run local models, there is nothing new to install. The
 compiler needs no GPU of its own, because the weights live at the endpoint, and nothing here ever
 calls MiniMax.
 
 Three ways to reach it, and none of them is the poor relation:
 
-- **In ComfyUI**, three nodes and a workflow that ships ready to run.
+- **In ComfyUI**, four nodes and a workflow that ships ready to run.
 - **Over HTTP**, one API for an application to call.
 - **From the command line**, for trying things out and for scripting.
 
@@ -68,20 +68,23 @@ animation above is the silent version and the file is the one with audio. The br
 right half is committed beside it:
 [`off-vs-on.compiled-brief.txt`](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/off-vs-on.compiled-brief.txt).
 
-## In ComfyUI: three nodes
+## In ComfyUI: four nodes
 
 ![The three OpenH3-IR nodes on a ComfyUI canvas, tray holding three named pictures, wired to a box called Render and a save that is playing the finished title card](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/comfyui-base-workflow.png)
 
-- **OpenH3-IR Main** takes the sentence and hands the render everything it needs to run.
+- **OpenH3-IR Main** takes the prompt and hands the render everything it needs to run.
 - **OpenH3-IR Media** is the tray: every picture, clip and sound the piece uses, on one panel.
 - **OpenH3-IR Setup** holds the service address and the five H3 files to load.
+- **OpenH3-IR Director** is optional, and it is not in the picture. A director decides whatever your
+  prompt leaves open: how it is shot, how it is lit, how it is scored. Leave the node out and
+  nothing steers.
 
 The workflow in the picture ships with the pack:
 [`comfyui/example/openh3ir_base_workflow.json`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/example/openh3ir_base_workflow.json). Seven
-boxes on the canvas and that is all of it: those three, one called **Render** with the rendering
-machinery folded up inside it, one that saves the video, and two panels showing the brief that got
-written and the report of what happened. Nothing in it is set up to be fast or clever, so what comes
-out is H3 as it ships.
+boxes on the canvas and that is all of it: the first three nodes, one called **Render** with the
+rendering machinery folded up inside it, one that saves the video, and two panels showing the brief
+that got written and the report of what happened. Nothing in it is set up to be fast or clever, so
+what comes out is H3 as it ships.
 
 That is the same workflow making the title card at the top of this page, caught with the finished clip
 playing in the save box. The picture is worth reading, because nearly everything the rest of this
@@ -110,10 +113,19 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
 
 export H3IR_LLM_URL=http://your-endpoint:8000/v1   # your own OpenAI-compatible endpoint
+export H3IR_LLM_MODEL=qwen3.8                     # which model on it, if it serves more than one
 h3ir doctor                                        # says what is actually answering
 cp -r comfyui /path/to/ComfyUI/custom_nodes/openh3ir
 h3ir serve --port 8420                             # keeps running while you work
 ```
+
+**When your endpoint serves more than one model, set `H3IR_LLM_MODEL`.** Ollama usually serves
+several. The compiler reads your reference pictures through the model, so it needs a model that can
+look at images. The list of models an endpoint serves never says which of them can.
+
+So the compiler does not take the first id on that list. It stops, prints the ids it found, and you
+pick one. `h3ir doctor` then sends a test picture to the model you picked and says whether it saw
+it. An endpoint that serves one model gives you nothing to pick, so leave the variable unset.
 
 Restart ComfyUI and open the workflow. On Windows a junction means a `git pull` updates the pack too:
 
@@ -137,7 +149,7 @@ is no switch for it: the graph is the same either way, and a file already sent i
 Besides that service, the pack needs what any H3 render needs: a ComfyUI with the MiniMax H3 nodes,
 which ship with ComfyUI itself, and H3's model files on disk.
 
-### The sentence points at the tray
+### The prompt points at the tray
 
 The prompt on Main is ordinary prose, and `@` is how it points at a file:
 
@@ -157,14 +169,36 @@ express: what the file *is* to the piece.
 
 | kind | what it can be |
 | --- | --- |
-| picture | something in the shot · the setting · a style to copy · first frame · last frame · storyboard |
+| picture | something in the shot · the setting · a style to copy · add it to the clip · replace the one in the clip · first frame · last frame · storyboard |
 | clip | copy what is in it · copy how it is shot · edit it · carry on from it |
 | sound | play it · match its style · cut to its beat · sound effect · voice to match |
 
 Those choices decide the document mechanically rather than by persuasion. A clip set to *edit it*
-produces an editing brief whatever the sentence says, and a track set to *match its style* can never
-be claimed as copied. The line you type matters most for sound: nothing in this chain can hear, so it
-is the only thing that will ever know what a track sounds like.
+produces an editing brief, whatever the prompt says. A track set to *match its style* can never be
+claimed as copied.
+
+Two of a picture's choices are about a clip in the same tray. Both need a clip set to *edit it*.
+*Add it to the clip* puts what the picture shows into that footage. It takes nothing out.
+
+*Replace the one in the clip* is a swap. Whatever the picture shows takes over from whatever is
+there now: the same place in the frame, the same movement, the same timing. The brief also says the
+old one is gone. A person, a car, a dog or a coffee cup all work the same way.
+
+If you choose either one without a clip to edit, the request is refused. The refusal names what to
+attach. Neither choice ever becomes an ordinary reference instead. An ordinary reference renders
+something plausible and wrong.
+
+A picture that replaces something gets one more field beside its role. In it you name what that
+picture stands in for, in your own words: "the man in the plaid shirt", or "the red car on the
+left".
+
+The field is free text, because nothing here can list what is in a clip. The service reads three
+frames sampled from the clip. Something can be absent from all three and still turn up later. You
+are the one watching the clip, so you are the one who knows. This field is also how two pictures can
+each replace a different thing in one edit.
+
+The line you type matters most for sound: nothing in this chain can hear, so it is the only thing
+that will ever know what a track sounds like.
 
 Some combinations stay impossible, and the nodes say so instead of rendering something wrong. A
 picture that *is* the first frame of the video and a picture that is merely something the shot should
@@ -184,7 +218,7 @@ Every node, every widget, every failure message and the wiring for building your
 
 `restrained` stays on the car and keeps its hands still: one slow low-angle track, one cut at six
 seconds to a held medium shot, no music, and the room never really revealed. `extreme` turns the same
-sentence into a car commercial. It opens wide on the empty showroom, cuts at three and a half seconds
+prompt into a car commercial. It opens wide on the empty showroom, cuts at three and a half seconds
 to a close-up panning along the front wheel, finishes on a low-angle push-in, and puts a score under
 all of it. Two shots became three, and the camera stopped being polite.
 
@@ -206,7 +240,65 @@ Both briefs are committed too, so you can read exactly what the flag did:
 [restrained](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/dial-restrained.brief.txt) and
 [extreme](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/dial-extreme.brief.txt).
 
-## Or call it from anything
+## Who is directing
+
+The dial sets how far the writing can go. A director sets whose taste it goes with. Both are off
+until you turn them on.
+
+A director is a name and a paragraph of plain prose. There is no form to fill in and no order to
+follow. You are describing taste, in your own words, at whatever length you want. Camera, framing,
+light, colour, performance, pace, sound: write about the ones you care about and skip the rest.
+
+Seven come with the project as examples of the shape. Read all seven before you write your own.
+This command needs no model and nothing running:
+
+```console
+$ h3ir directors
+whose taste fills what your prompt and your references leave open
+
+  cameron      James Cameron        The camera is mounted and travelling — it ri...
+  tarantino    Quentin Tarantino    The camera sits still and keeps holding afte...
+  anderson     Wes Anderson         The camera sits dead centre and moves only a...
+  villeneuve   Denis Villeneuve     The camera stays still for a long time, and ...
+  bigelow      Kathryn Bigelow      The camera is carried and reacting rather th...
+  wong         Wong Kar-wai         The camera watches from just outside the mom...
+  spielberg    Steven Spielberg     The camera advances steadily onto whoever is...
+
+`h3ir directors <id>` prints the whole thing, which is what a profile is: prose.
+shot count and cut times are never a director's; anything your prompt states explicitly outranks one.
+```
+
+```bash
+h3ir compile "she steps off the train and looks for a face in the crowd" \
+  --seconds 10 --director wong
+```
+
+**Two things a director never does.** You can build on both.
+
+A director never sets how many shots there are or where they cut. Pin `shots` and the count is
+yours. Leave `shots` on `auto` and the writer decides the edit. That is what it does with no
+director at all.
+
+A director never beats your own prompt. Anything you state outright wins, one thing at a time.
+Write "a locked-off wide" and you get a locked-off wide, whoever is directing. The light and the
+sound are still theirs.
+
+**The name never reaches the writing model. Only the paragraph does.** Type "Wes Anderson" at a
+model and it copies famous scenes back at you. That is imitation. The paragraph describes how he
+works instead, and that is the part that can steer a scene he never shot. So the name stays here, on
+the report and in your saved workflow, and travels no further.
+
+For the same reason, none of the seven names a film, quotes a line or lays out a shot. They describe
+habits instead. That is what makes them worth editing rather than copying. All seven are yours to rename, rewrite or
+delete.
+
+All three doors send the same paragraph. In ComfyUI it is the fourth node, **OpenH3-IR Director**.
+That node is also where you write and keep your own. Leave it out of the graph and nothing steers.
+
+Over HTTP, `director` names one of the seven by id, and `director_profile` carries a paragraph of
+your own. From the command line, `--director` takes one of the seven ids.
+
+## Call the service from your own code
 
 The API is the product and the other two doors are its clients. No field that affects the output is
 reachable from only one of them, and no path skips the validator. The install is the one in the
@@ -301,7 +393,7 @@ tonight.</d> The red alarm continues to flash in the background […]
 
 Your lines never pass through the writing model. It decides who speaks, casts a voice for each of
 them, places the lines in the scene, and the renderer substitutes your words back byte for byte. In
-ComfyUI the same guarantee is `@speaks("...")` inside the sentence.
+ComfyUI the same guarantee is `@speaks("...")` inside the prompt.
 
 ## It validates what it writes
 
@@ -391,14 +483,21 @@ between cuts. No legality check can see that, so it is a named rule with a reaso
 | --- | --- | --- |
 | Python 3.10, 3.11 or 3.12 | all three are covered by CI, on main and on every pull request | 3.13 is untested rather than known bad |
 | An OpenAI-compatible endpoint | this is where the writing happens | nothing compiles, and `h3ir doctor` says so |
-| A model that can also look at images | that is how reference pictures get read | text-only prompts still work, references do not |
+| A model that can also look at images | that is how reference pictures get read | text-only prompts still work, references do not. `h3ir doctor` reports `vision_ok`, so you do not have to guess |
 | `ffmpeg` | reading reference clips, nothing else | only needed if you attach video |
 
 No GPU for the compiler itself: the weights live behind the endpoint. Run `h3ir doctor` before you
-debug anything else, because it says what is actually answering: the endpoint, the model it serves, its
-context length, whether ComfyUI is reachable and which H3 nodes it has, and a tokenizer self-test. Two
-commands need nothing running at all, if you want to poke at it before configuring anything:
-`h3ir controls` and `h3ir budget --seconds 10`.
+debug anything else, because it says what is actually answering. It reports:
+
+- Which address replied when it checked the endpoint was alive
+- Every model id the endpoint serves, which one will be used, and why
+- The context length of that model
+- Whether that model can read a picture
+- Whether ComfyUI is reachable, and which H3 nodes it has
+- A tokenizer self-test.
+
+Three commands need nothing running at all, so you can poke at it before you configure anything:
+`h3ir controls`, `h3ir budget --seconds 10` and `h3ir directors`.
 
 Every brief on this page was written by Qwen3.6 27B, 4-bit, served by vLLM at 262K context on two RTX
 3090s, and H3 rendered the videos from those briefs. That is what the project is proven against and the
@@ -421,6 +520,12 @@ Every setting, with the reason for each default, is in [`.env.example`](https://
 - **It cannot guarantee H3 obeys every reference.** The brief binds the reference and states what must
   be preserved. Whether the model delivers is a render outcome, and the hardest case is `extreme`,
   which reaches for extreme close-ups.
+- **It cannot hand back your own footage, and neither can H3.** Add something to a clip, or swap
+  what is there, and your file is never touched. H3 watches it and makes a new video that follows it
+  closely: the same scene, doing the same thing, at the same moments, with your change in place. So
+  an edit here is a very close remake, not a repaint of your frames. That is H3's design, not this
+  compiler's choice. The brief asks in plain words for everything else to hold, and how close it
+  lands is a render outcome like any other.
 - **It is deliberately H3-specific.** The rules, the frame grid and the section names are H3's.
   Pointing it at another video model would be a new compiler target, not a config change.
 

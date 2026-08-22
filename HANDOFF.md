@@ -18,11 +18,13 @@ Two neighbours, so you are in the right place:
 |---|---|---|
 | Python 3.10, 3.11 or 3.12 | tested on all three in CI | install one; 3.13 is untested |
 | An OpenAI-compatible LLM endpoint **with vision** | writes the prose and reads reference images | steps 1 and 2 still pass without it |
+| The id of the model on it, in `H3IR_LLM_MODEL` | only when the endpoint serves more than one, and then it is required | the compiler refuses to guess and names the ids it found |
 | `ffmpeg` | video references only, nothing else | install only if you attach video |
 
 Proven against **Qwen3.6 27B**, 4-bit, served by vLLM at 262K context on two RTX 3090s. A 27B-class
-local model with a vision tower is the bar. The compiler itself needs no GPU: the weights live behind
-the endpoint.
+local model with a vision tower is the bar. Everything that is not the writing itself, meaning the
+liveness check, the model list, the credential and the vision self-test, is also exercised against
+Ollama. The compiler itself needs no GPU: the weights live behind the endpoint.
 
 Nothing here calls MiniMax, downloads a checkpoint, or renders video.
 
@@ -49,7 +51,7 @@ These three need no model, no GPU and no network. Run all three. They are the ho
 the install is sound, because nothing in them can be broken by a misconfigured endpoint.
 
 ```bash
-.venv/bin/h3ir controls        # -> "22 controls, 0 failing", exit 0
+.venv/bin/h3ir controls        # -> "23 controls, 0 failing", exit 0
 .venv/bin/python -m pytest -q  # -> all tests passing, exit 0
 .venv/bin/h3ir budget --seconds 10   # -> "243 frames = 10.125s", exit 0
 ```
@@ -63,6 +65,7 @@ At this point the project is installed and correct. Everything after this is abo
 
 ```bash
 export H3IR_LLM_URL=http://your-endpoint:8000/v1
+export H3IR_LLM_MODEL=the-id-your-endpoint-serves     # see below
 .venv/bin/h3ir doctor
 ```
 
@@ -71,13 +74,21 @@ fields:
 
 | field | wanted | what a bad value means |
 |---|---|---|
-| `health` | `True` | `False`: nothing is answering at that URL. Wrong host, wrong port, or the server is down. |
+| `health` | `True` | `False`: nothing answered. `health_tried` lists every URL that was asked and what each one said, so you can paste them into curl. |
+| `health_via` | the path that replied | informational. `/v1/models` on most servers, `/health` on one that publishes no model list. Servers disagree about where liveness lives, so both are tried. |
+| `model_ids` | your model in the list | empty: the endpoint serves nothing yet. On Ollama, pull a model. |
+| `model` | the id you meant | `model_from` beside it says where it came from, or, when nothing was chosen, why not. |
 | `chat_ok` | `True` | `False`: it answers but cannot complete. Usually no model loaded, or the wrong path (the URL must end in `/v1`). |
-| `model_ids` | your model listed | empty: the endpoint serves nothing. |
-| `max_model_len` | 32000 or more | much smaller and reference-heavy briefs will not fit. |
+| `vision_ok` | `True` | `False`: this model cannot read pictures, and `vision_reply` is what it said when asked to. Text-only briefs still work; any brief with a reference attached needs a model that can see. |
+| `max_model_len` | 32000 or more | much smaller and reference-heavy briefs will not fit. Not every server publishes it, and doctor says so rather than printing a number it does not have. |
 
-`H3IR_LLM_MODEL` can stay unset: the endpoint's first model is used, which is what you want for a
-local server. Set it only if the endpoint serves several.
+**Set `H3IR_LLM_MODEL` if your endpoint holds more than one model.** On a server with a single model
+on it the variable can stay unset and that model is used, because there is nothing to choose. On one
+that routes several, which on Ollama is the usual case, the compiler stops and prints the ids it
+found instead of taking the first: the model it needs is the one with a vision tower, no model list
+on any server reports vision, and a wrong pick reads no reference picture and says nothing about it.
+Pick an id from `model_ids`, set it, and run `h3ir doctor` again. `vision_ok` is the answer to
+whether you picked the right one.
 
 The `comfyui` block is optional and reported for information. Every command works with ComfyUI off,
 and nothing here submits a render.
@@ -119,7 +130,9 @@ curl -s localhost:8420/v1/briefs -H 'content-type: application/json' \
 | what you see | what it is | what to do |
 |---|---|---|
 | `h3ir: command not found` | the venv is not on PATH | call `.venv/bin/h3ir`, or activate the venv first |
-| `the reasoning model at ... is not reachable. Start it, or set H3IR_LLM_URL` (exit 1) | the endpoint is down or the URL is wrong | fix the URL or start the server. This is the correct behaviour: it refuses to produce a worse brief silently |
+| `the reasoning model at ... is not reachable. Start it, or set H3IR_LLM_URL` (exit 1) | the endpoint is down or the URL is wrong | fix the URL or start the server. This is the correct behaviour: it refuses to produce a worse brief silently. `Tried:` at the end of the message lists the URLs it asked and what each answered |
+| `H3IR_LLM_MODEL is not set and ... names N model ids, so which one to use is a real choice and this will not guess it` (exit 1) | the endpoint routes several models and none was named | set `H3IR_LLM_MODEL` to one of the ids in the message, then check `vision_ok` in `h3ir doctor` |
+| `vision_ok: False` in `h3ir doctor` | the model you chose has no vision tower | pick one that has. Reference pictures are read through this model, so briefs with an image attached cannot work without it |
 | `the model returned the schema document instead of an instance of it (...); retrying at a higher temperature` | **expected and self-healing.** A known endpoint quirk on the analysis call, measured and documented in `backend.py`. It retries at a higher temperature and recovers | nothing. Only treat it as a failure if the command itself exits non-zero |
 | `structured output requires thinking=False on this endpoint` | a structured call was made with reasoning on, which this endpoint silently ignores | a bug in calling code, not a configuration problem. See [AGENTS.md](AGENTS.md) |
 | `ffmpeg is not installed, and video references need it` | exactly that, and only for video references | install ffmpeg, which provides both `ffmpeg` and `ffprobe` |

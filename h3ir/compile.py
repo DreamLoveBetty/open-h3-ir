@@ -28,8 +28,9 @@ from .draft import deterministic_draft
 from .grid import canvas_for_aspect
 from .lora import resolve_loras
 from .mode import infer_mode, needs_clarification
-from .models import AssetCard, AssetKind, Brief, Finding, IRDocument, Mode, Role
-from .plan import ProfileOptions, allocate_from_proposal, build_plan
+from .models import AssetCard, AssetKind, Brief, Finding, IRDocument, Mode, Role, SWAP_ROLES
+from .plan import ProfileOptions, allocate_from_proposal, build_plan, swap_decisions
+from . import director as director_mod
 from .licence import resolve_licence
 from .style import resolve_style
 from .prose import beat_sheet, compose_brief, plan_shots, shot_body
@@ -119,6 +120,84 @@ def check_request(brief: Brief) -> None:
                 f"{brief.shots} shots need at least {floor_s:.1f}s at {MIN_SHOT_MS / 1000:.1f}s a "
                 f"shot -- below that a cut reads as a glitch -- and this render is "
                 f"{brief.seconds:g}s. Ask for fewer shots or a longer video.")
+
+
+def check_swap(brief: Brief, plan) -> None:
+    """Refuse a swap the wiring cannot make unambiguous, instead of guessing which figure.
+
+    Two ways a `placed_subject` / `replacement_subject` picture can be meaningless, and both are
+    the caller's to fix, so both get a sentence rather than an invariant crash -- the handling
+    AGENTS.md asks for and the LoRA variant mismatch still does not have.
+
+      no edit source   both roles are statements about a clip being edited. Without one there is
+                       nothing to place into or replace inside, and silently demoting the picture
+                       to `subject` would produce a valid-looking brief that does not do what the
+                       caller wired.
+      nothing said     `plan.swap_decisions` binds like for like, and a clip routinely yields
+                       several subjects of different kinds. One candidate is a fact. Zero or two,
+                       with nothing said about which, is a blank: answering it by picking the
+                       first would put the wrong figure's name into a shipped document, which
+                       validates perfectly. So it asks for the caller's words, which are never
+                       wrong to give.
+
+                       It does NOT go the other way. Words that do not fit the analyser's reading
+                       of the clip are not refused, because that reading comes off three sampled
+                       frames and is wrong routinely; the words become the figure instead. Two
+                       refusals that judged the caller against it were removed on the owner's
+                       ruling. `plan.swap_decisions` carries the argument.
+      the wrong field  `replaces` on anything but a `replacement_subject` is a statement this
+                       layer would drop on the floor, so it is refused rather than ignored.
+
+    Runs on the DRAFT plan, so it reads the same binding the shipped document will carry rather
+    than a second implementation of the same rule that can drift from it.
+    """
+    wanted = [a for a in brief.assets if a.role in SWAP_ROLES]
+    said = [a for a in brief.assets if (a.replaces or "").strip()]
+    for a in said:
+        if a.role is not Role.REPLACEMENT_SUBJECT:
+            raise BriefRefused(
+                "replaces-without-the-role",
+                f"an asset attached as {a.role.value!r} says it replaces "
+                f"{(a.replaces or '').strip()!r}. Only a picture attached as "
+                "`replacement_subject` takes somebody's place, so this statement would be "
+                "silently dropped. Change the role, or remove the statement.")
+    if not wanted:
+        return
+    if not any(a.role is Role.EDIT_SOURCE and a.kind is AssetKind.VIDEO for a in brief.assets):
+        roles = ", ".join(sorted({a.role.value for a in wanted}))
+        raise BriefRefused(
+            "swap-without-edit-source",
+            f"a picture is attached as {roles}, which says what happens to a clip being edited, "
+            "and no video is attached as `edit_source`. Attach the clip to edit, or attach the "
+            "picture as `subject` if you want what it shows to appear in a new scene instead.")
+    if not any(a.role is Role.REPLACEMENT_SUBJECT for a in wanted):
+        return
+    clip = next((m.label for m in plan.manifest if m.role is Role.EDIT_SOURCE), "<Video 1>")
+    for d in swap_decisions(plan.subjects, plan.manifest):
+        if not d.problem:
+            continue
+        found = ", ".join(f"{c.label} ({c.descriptor})" for c in d.candidates) or "none"
+        if d.problem == "undefined":
+            raise BriefRefused(
+                "replacement-subject-undefined",
+                f"{d.picture} is attached as `replacement_subject` and produced no subject to put "
+                f"into {clip}. Attach a picture of the person or object that should take over.")
+        kind = d.incoming.kind
+        if d.problem == "unnamed":
+            raise BriefRefused(
+                "replacement-target-unnamed",
+                f"{d.picture} shows {d.incoming.descriptor}, a {kind}, and there is no other "
+                f"{kind} left in {clip} for it to take over from. Say who it replaces in your own "
+                "words, on the picture itself: a figure can be absent from the frames this layer "
+                "sampled and still be in the clip, and only you can see that.")
+        if d.problem == "crowded":
+            raise BriefRefused(
+                "replacement-target-ambiguous",
+                f"{d.picture} shows {d.incoming.descriptor}, a {kind}, and {clip} contains "
+                f"{len(d.candidates)} {kind}(s) it could take over from: {found}. This layer will "
+                "not pick one, because naming the wrong figure produces a brief that reads "
+                "perfectly and swaps the wrong thing. Say who it replaces in your own words, on "
+                "the picture itself.")
 
 
 def check_capacity(brief: Brief) -> None:
@@ -233,6 +312,11 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         # turned into a question. See style.py for why that asymmetry is the right one.
         licence = resolve_licence(brief, cards)
         style = resolve_style(brief, cards, licence)
+        # After the licence, and it is placed after it in the ask too: the licence block states in
+        # computed terms which attributes the request took and which the references keep, and the
+        # profile reads underneath it as filling what is left.
+        director, director_findings = _director(brief)
+        lora_findings.extend(director_findings)
         if style.note():
             lora_findings.append(Finding("S6-style-discrepancy", "WARN", style.note()))
         if licence.note():
@@ -266,6 +350,9 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
         t = time.time()
         draft_plan = deterministic_draft(brief, mode, cards, opts=opts, loras=loras,
                                          mode_decision=decision)
+        # Before anything is written or scored: a swap the wiring cannot make unambiguous is a
+        # caller error, and the draft plan is the first object that holds the binding to check.
+        check_swap(brief, draft_plan)
         _inject_lora_triggers(draft_plan, opts)
         sheet_flags = tuple(c.is_reference_sheet for c in cards.values())
         draft_result, draft_findings, draft_tokens = _assess(
@@ -299,6 +386,9 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                     # the output is judged against, so the setting and its consequences have to be
                     # auditable next to the artifact rather than inferred from it.
                     "creativity": _scope(brief, draft_plan).note(),
+                    # Beside the dial, and for the same reason: the setting and what it was allowed
+                    # to reach have to be auditable next to the artifact rather than inferred from it.
+                    "director": director_mod.note(director),
                     "omit": list(omit) or None,
                     "request": brief.intent,
                     "beatsheet_prompt": beatsheet_prompt,
@@ -343,15 +433,19 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                                   if m.kind is AssetKind.VIDEO)
                 aud_roles = tuple((m.label, m.role.value) for m in draft_plan.manifest
                                   if m.kind is AssetKind.AUDIO)
+                worlds = _edit_source_worlds(draft_plan, cards)
+                taken = _taken_over(draft_plan)
                 written = compose_brief(backend, brief, draft_plan.subjects, cards,
                                        draft_plan.target, labels,
                                        prompt_name=chosen_compose, seed=seed,
                                        thinking=thinking_planning, images=imgs,
                                        style=style, licence=licence, scope=scope,
+                                       director=director,
                                        mode=mode, task_types=tuple(draft_plan.task_types),
                                        picture_roles=pic_roles, video_roles=vid_roles,
                                        audio_roles=aud_roles,
                                        audio_transcripts=transcribed,
+                                       video_worlds=worlds, taken_over=taken,
                                        generation_task=("video editing"
                                                         not in draft_plan.task_types),
                                        omit=omit)
@@ -366,7 +460,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                                       dialogue=tuple(d.text for d in brief.dialogue),
                                       style_phrase=style.phrase,
                                       definitions=tuple(_definition_lines(
-                                          draft_plan.subjects, cards, labels)))
+                                          draft_plan.subjects, cards, labels)),
+                                      task_types=tuple(draft_plan.task_types))
                     n = token_count(fx.text)
                     found = validate(fx.text, _written_context(
                         brief, mode, draft_plan, cards, n, style, licence))
@@ -477,7 +572,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
             proposal = plan_shots(backend, brief, skeleton.subjects, cards, skeleton.target,
                                   prompt_name=shotplan_prompt, seed=seed,
                                   thinking=thinking_planning, max_shots=opts.max_shots,
-                                  licence=licence, scope=scope)
+                                  licence=licence, scope=scope,
+                                  director=director)
             for sug in proposal.suggestions:
                 lora_findings.append(Finding("S8-planner-suggestion", "INFO", sug))
             timings["shotplan_s"] = round(time.time() - t, 2)
@@ -500,7 +596,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
             sheet = beat_sheet(backend, brief, mode, skeleton.subjects, cards,
                                allocate_from_proposal(skeleton.target, proposal.shots, mode, opts),
                                prompt_name=beatsheet_prompt, seed=seed,
-                               thinking=False, style=style)
+                               thinking=False, style=style,
+                               director=director)
             timings["beats_s"] = round(time.time() - t, 2)
 
             sound_events: list[dict[str, Any]] = []
@@ -530,7 +627,8 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                 shot.body = shot_body(backend, brief, mode, shot, plan.subjects,
                                       plan.style_phrase, prompt_name=prose_prompt,
                                       thinking=thinking_prose, seed=seed, images=imgs,
-                                      anchor_label=anchor_label if shot.n == 1 else None)
+                                      anchor_label=anchor_label if shot.n == 1 else None,
+                                      director=director)
                 # Under-writing is the documented failure mode of a prose model on this task,
                 # so the floor is enforced with one retry rather than asked for again.
                 floor = int(shot.word_target * 0.75)
@@ -542,6 +640,7 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                                           thinking=thinking_prose, seed=(seed or 0) + 101,
                                           images=imgs,
                                           anchor_label=anchor_label if shot.n == 1 else None,
+                                          director=director,
                                           expand_from=shot.body)
             timings["prose_s"] = round(time.time() - t, 2)
 
@@ -662,6 +761,7 @@ def _written_context(brief: Brief, mode, plan, cards, n_tokens: int, style, lice
         prompt_tokens=n_tokens,
         require_music_na=True if brief.silent else None,
         generation_task="video editing" not in plan.task_types,
+        task_types=tuple(plan.task_types),
         pinned_shots=brief.shots,
         declared_roles=declared, paired_audio=paired,
         standalone_audio=_standalone_audio(plan),
@@ -673,6 +773,50 @@ def _written_context(brief: Brief, mode, plan, cards, n_tokens: int, style, lice
         transformed_from=_transformed_from(style, licence),
         scope=_scope(brief, plan),
     )
+
+
+def _edit_source_worlds(plan, cards: dict[str, AssetCard]) -> tuple[tuple[str, str, str], ...]:
+    """(label, what the clip shows, what its camera does) for every video attached as `edit_source`.
+
+    The card fields a video reference produces that reach NOTHING else: `build_subjects` turns a
+    card's `subjects` into <Subject N> lines and drops `environment`, `framing`, `lighting` and
+    `motion` on the floor. On an edit those four ARE the target video, because the target IS the
+    clip with a change made to it -- and their absence is what let a plate's grey studio become
+    the setting of a brief about a carpentry workshop, in 4 of 4 seeds.
+
+    Capped per field rather than in total, so a long environment cannot crowd out the framing.
+    """
+    out = []
+    for m in plan.manifest:
+        if m.kind is not AssetKind.VIDEO or m.role is not Role.EDIT_SOURCE:
+            continue
+        c = cards.get(m.sha256)
+        if c is None:
+            continue
+        bits = [b.strip().rstrip(". ") for b in (c.summary, c.environment, c.framing, c.lighting)
+                if (b or "").strip()]
+        world = ". ".join(b[:400] for b in bits) + "." if bits else ""
+        out.append((m.label, world, (c.camera or "").strip().rstrip(". ")))
+    return tuple(out)
+
+
+def _taken_over(plan) -> tuple[tuple[str, str], ...]:
+    """(<Picture N>, <Subject k>) for every bound replacement: which picture takes over from whom.
+
+    Keyed on the PICTURE because that is the label carrying the role, and `prose.swap_facts` walks
+    the picture roles. The planner records the binding the other way round, on the subject being
+    taken over, because that is the line whose retention marker depends on it.
+    """
+    by_label = {s.label: s for s in plan.subjects}
+    out = []
+    for s in plan.subjects:
+        incoming = by_label.get(s.taken_over_by) if s.taken_over_by else None
+        if incoming is None:
+            continue
+        for src in incoming.sources:
+            if src.startswith("<Picture"):
+                out.append((src, s.label))
+    return tuple(out)
 
 
 def _audio_transcripts(plan, cards: dict[str, AssetCard]) -> tuple[tuple[str, str], ...]:
@@ -702,6 +846,55 @@ def _standalone_audio(plan) -> tuple[str, ...]:
 def _sections_for(mode) -> tuple[str, ...]:
     from .validate import BASE_SECTIONS, REF_SECTIONS
     return tuple(REF_SECTIONS if mode is Mode.REF2VA else BASE_SECTIONS)
+
+
+def _director(brief: Brief) -> tuple[object | None, list[Finding]]:
+    """Whose taste is in force, and everything worth telling the caller about it.
+
+    Three things can go wrong here and none of them may be silent, which is why this returns
+    findings rather than just a profile:
+
+      * the caller named a shipped profile this build does not have. `parse` falls back, exactly as
+        `creativity.parse` does -- and `creativity.parse`'s docstring ends "the compiler records what
+        it used", which is the half that makes a fallback honest. A director has the sharper version
+        of the problem: a dial position is a word somebody might mistype, but a shipped id can stop
+        existing between two versions of this package, and a saved script naming it must not quietly
+        compile with no direction at all. WARN, not ERROR -- the request is still perfectly
+        renderable and refusing a whole compile over a menu entry that moved would be worse.
+      * a profile arrived with nothing written into it. Nothing to apply, said out loud.
+      * a profile longer than the ask can carry. That one is a hard refusal at intake, because
+        truncating somebody's direction and compiling anyway is the silent degradation this service
+        refuses everywhere else.
+    """
+    from . import director as D
+    findings: list[Finding] = []
+    named = (brief.director or "").strip().lower()
+
+    custom = None
+    if brief.director_profile:
+        custom = D.from_mapping(brief.director_profile)
+        problems = D.check(custom)
+        if problems:
+            raise BriefRefused("director-profile-invalid",
+                               "this direction cannot be used: " + "; ".join(problems))
+        if D.is_empty(custom):
+            findings.append(Finding(
+                "N1-director-empty", "WARN",
+                "direction was supplied with nothing written into it, so it steers nothing. Write "
+                "how the piece should be shot: the camera, the framing, the light, what the frame "
+                "looks at, the performance, the room."))
+            custom = None
+
+    unknown = D.unknown(named)
+    if unknown:
+        findings.append(Finding(
+            "N2-director-unknown", "WARN",
+            f"{unknown!r} is not a director this version knows, so the brief was written with "
+            + ("the direction that came with the request instead." if custom is not None else
+               "no direction at all.")
+            + f" Available: {', '.join(d.id for d in D.DIRECTORS)}. If this came from a saved "
+              "script, the profile it names has been removed."))
+    return D.parse(named, custom), findings
 
 
 def _scope(brief: Brief, plan) -> Scope:
@@ -870,6 +1063,7 @@ def _assess(plan, brief: Brief, mode, opts: ProfileOptions,
         prompt_tokens=n_tokens,
         require_music_na=True if brief.silent else None,
         generation_task="video editing" not in plan.task_types,
+        task_types=tuple(plan.task_types),
         pinned_shots=brief.shots,
         declared_roles=declared,
         paired_audio=paired,

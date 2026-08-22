@@ -53,6 +53,27 @@ class Role(str, Enum):
     STRUCTURE = "structure"
     EDIT_SOURCE = "edit_source"
     CONTINUATION_SOURCE = "continuation_source"
+    # The two halves of "put this into the clip". Both ride a PICTURE and both require an
+    # `edit_source` video in the same brief, because both are statements about what happens to
+    # that clip; `check_request` refuses them without one rather than degrading to `subject`.
+    #
+    # The clip keeps `edit_source`. It already derives `video editing`, the mandated summary
+    # opening and the mandated definition line, all of them correct; what was missing was the
+    # other half of the sentence -- what the attached picture is FOR. Putting the job on the
+    # picture also composes, because two pictures can be placed into one clip and a role on the
+    # video could only name one relationship for the whole edit.
+    #
+    # TWO roles rather than one, by the same test the music pair below was settled on: the
+    # retention note and the definition line are derived from the role, and these two cases need
+    # different true sentences. A placement ADDS and takes nothing away, so nothing in the clip
+    # is transferred anywhere. A replacement REMOVES a figure and hands that figure's position in
+    # frame, actions and timing to the new subject -- which is ref-en.txt 4.1's `attribute_transfer`
+    # word for word, "referenced characteristics are transferred to a different identifiable
+    # target subject", and the only place in this compiler where that marker applies. One role
+    # covering both could only write a sentence vague enough to be true of either, and that
+    # sentence is what the deterministic draft ships when the writer fails.
+    PLACED_SUBJECT = "placed_subject"
+    REPLACEMENT_SUBJECT = "replacement_subject"
     VOICE_TIMBRE = "voice_timbre"
     BGM = "bgm"
     # ref-en.txt 2.4 lists five uses for an <Audio N> and three of them had a role: copying the
@@ -89,6 +110,18 @@ AUDIO_MARKERS = ("fully_copy", "partially_copy", "reference", "weak_reference")
 # a document ends up claiming a copy the wiring does not perform.
 AUDIO_REFERENCE_ROLES = (Role.VOICE_TIMBRE, Role.SFX, Role.MUSIC_STYLE, Role.BEAT_REFERENCE)
 AUDIO_REFERENCE_ROLE_VALUES = tuple(r.value for r in AUDIO_REFERENCE_ROLES)
+
+# The picture roles whose meaning is a statement about an attached `edit_source` clip. A contract
+# rather than a local list for the same reason as the line above: four stages have to agree on it
+# -- the intake refusal in compile.py, the marker table and task-type derivation in plan.py, the
+# draft's definition and retention lines in render.py, and the every-role guard in the suite. A
+# role added to one and forgotten in another is how a document ends up claiming a swap the wiring
+# does not perform.
+#
+# There is no `_VALUES` twin here, unlike the audio pair above. That one exists because a rule
+# asks whether EVERY attached audio is reference-only; the swap rules each name one role, and
+# `validate.py` compares those the way R28-R30 already do, against the role's own string.
+SWAP_ROLES = (Role.PLACED_SUBJECT, Role.REPLACEMENT_SUBJECT)
 
 TASK_TYPES = ("keyframe completion", "reference generation", "video editing",
               "video continuation", "audio reuse", "audio reference")
@@ -131,6 +164,11 @@ class AssetRef:
     composition: str = "unknown"     # bare_plate | composed_scene | unknown
     provenance: dict[str, Any] | None = None
     paired_video_sha256: str | None = None   # a soundtrack points at its video
+    # Who this picture takes over from, in the caller's own words, and only on a
+    # `replacement_subject`. Free text because nothing here can enumerate the people in a clip: the
+    # analyser sees three sampled frames of it, so a figure can be absent from all three and walk in
+    # later, and any rule resting on a head count would be guessing. The caller is the one who knows.
+    replaces: str = ""
     # Did the CALLER name the role, or is it the kind's default? `role` cannot answer that: the
     # service fills an omitted role with `subject` for an image, so an explicit `role: "subject"`
     # and an omitted one arrive identical. Mode inference needs the difference -- a stated
@@ -172,6 +210,15 @@ class Brief:
     # restrained | balanced | bold -- how much the writer may add beyond what was asked. An explicit
     # input, never inferred from the request; see creativity.py for why inference was rejected.
     creativity: str = "balanced"
+    # Whose taste fills what the request and the references leave open. Both empty is the default
+    # and is what every brief written before this existed compiles at. TWO fields rather than a
+    # union, because this crosses an HTTP boundary: `director` names one of the profiles that ship
+    # and `director_profile` carries a caller's own, which is a name and a paragraph. A field that
+    # is sometimes a string and sometimes an object is a schema two callers will disagree about.
+    # The ComfyUI node only ever fills the second: a shipped profile is loaded into the box on the
+    # canvas and is the user's to edit from that moment. See director.py.
+    director: str = ""
+    director_profile: dict[str, Any] | None = None
 
     def hash(self) -> str:
         return _sha(asdict(self))
@@ -194,6 +241,12 @@ class AssetCard:
     style: str = ""
     visible_text: list[str] = field(default_factory=list)
     motion: str = ""
+    # What the CAMERA does across a video card's sampled frames, in plain words, or empty when the
+    # frames do not settle it. Video only, and deliberately not a member of `CAMERA_TYPES`: three
+    # frames cannot separate a push from a zoom, and the closed vocabulary is the planner's to
+    # choose for a GENERATION. On an edit nobody chooses it -- the clip already has one -- so what
+    # is wanted here is an observation, and an unobservable one stays empty.
+    camera: str = ""
     # How many frames a video card was built from. 0 on an image or audio card. Recorded because a
     # card built from three frames must not read as one built from the whole clip.
     frames_seen: int = 0
@@ -242,6 +295,10 @@ class ManifestEntry:
     # that can describe the sound -- nothing in this system can hear.
     characterisation: str = ""
     composition: str = "unknown"
+    # A `replacement_subject` picture's statement of who it takes over from, in the caller's words.
+    # Carried on the manifest because the binding runs off the manifest and the subject list and
+    # never sees the brief.
+    replaces: str = ""
 
 
 @dataclass
@@ -259,6 +316,12 @@ class SubjectPlan:
     retention: str = "fully_preserved"
     retention_note: str = ""
     appears_in: list[int] = field(default_factory=list)
+    # Set only on the figure a `replacement_subject` picture takes over from: the label of the
+    # subject that inherits its position in frame, actions and timing. It is what makes
+    # `attribute_transfer` a legal claim on this line -- ref-en.txt 4.1 requires the transfer to
+    # land on "a different identifiable target subject", and this names which one. Empty
+    # everywhere else, which is every brief that predates the swap roles.
+    taken_over_by: str = ""
 
 
 @dataclass

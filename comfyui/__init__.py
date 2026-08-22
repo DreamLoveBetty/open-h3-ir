@@ -15,11 +15,11 @@ that this package stays importable outside ComfyUI: the parts worth testing do n
 `h3ir_client` and `tray` have no ComfyUI imports at all.
 
 `WEB_DIRECTORY` is how a pack ships frontend code: ComfyUI reads this name off this module and serves
-that folder, and the browser loads every `.js` in it. What is in there is the media tray's panel and
-the prompt's @ picker, and both are decoration in the strict sense. The tray is JSON in an ordinary
-widget and the prompt is plain text in an ordinary widget; delete this folder and both nodes still
-work, still API-drive, and still restore from a saved workflow, with the two strings visible as
-themselves.
+that folder, and the browser loads every `.js` in it. What is in there is the media tray's panel, the
+prompt's @ picker and the director's panel, and all three are decoration in the strict sense. The
+tray and the direction are JSON in ordinary widgets and the prompt is plain text in one; delete this
+folder and all three nodes still work, still API-drive, and still restore from a saved workflow, with
+the strings visible as themselves.
 
 `web_api` is imported at module scope because its two HTTP routes have to be registered while ComfyUI
 is starting, and it is written to import cleanly with no ComfyUI present: an exception here would take

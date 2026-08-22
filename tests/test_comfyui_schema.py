@@ -108,6 +108,7 @@ TEMPLATE_IDS = _template_input_ids()
 COMPILE = _inputs_in(SCHEMAS["OpenH3IRCompile"])
 SETUP = _inputs_in(SCHEMAS["OpenH3IRSetup"])
 MEDIA = _inputs_in(SCHEMAS["OpenH3IRMedia"])
+DIRECTOR = _inputs_in(SCHEMAS["OpenH3IRDirector"])
 ALL = [(node_id, *rest) for node_id, call in SCHEMAS.items() for rest in _inputs_in(call)]
 
 
@@ -405,16 +406,61 @@ def test_the_graph_needs_no_loader_boxes():
 
 # --------------------------------------------------------------------------- the tray-era surface
 
-def test_the_node_set_is_three_and_the_ids_are_frozen():
+def test_the_node_set_is_four_and_the_ids_are_frozen():
     """A rename silently breaks every workflow anyone saved and every video anyone rendered, which
-    the owner hit in person. Pinned."""
-    assert sorted(SCHEMAS) == ["OpenH3IRCompile", "OpenH3IRMedia", "OpenH3IRSetup"]
+    the owner hit in person. Pinned.
+
+    Four since the Director node. This pin exists to catch a RENAME, not to forbid a fourth node --
+    so adding one is a deliberate edit here, and removing or renaming one still has to be."""
+    assert sorted(SCHEMAS) == ["OpenH3IRCompile", "OpenH3IRDirector", "OpenH3IRMedia",
+                               "OpenH3IRSetup"]
 
 
 def test_main_is_one_sentence_a_tray_a_setup_and_the_knobs():
+    """`director` is an optional SOCKET, not a widget, and it sits with the other two bundles.
+
+    Optional is mechanical rather than stylistic, for the reason `megapixels` records: ComfyUI
+    publishes every required input ahead of every optional one, so a required input is missing from
+    every API-format graph written before it existed and that is a hard refusal at /prompt.
+    """
     ids = [i for _k, i, _kw in COMPILE]
     assert ids == ["intent", "seconds", "aspect", "creativity", "silent", "shots", "setup",
-                   "megapixels", "spoken_language", "media", "sizing", "seed", "effort"], ids
+                   "megapixels", "spoken_language", "director", "media", "sizing", "seed",
+                   "effort"], ids
+
+
+def test_the_director_is_optional_so_older_graphs_still_submit():
+    """The whole point of the fourth node: a graph without one behaves exactly as it always did."""
+    node = next(kw for _k, i, kw in COMPILE if i == "director").get("optional")
+    assert isinstance(node, ast.Constant) and node.value is True
+
+
+def test_the_director_is_one_field_the_panel_writes():
+    """The same shape as the tray, and for the same reason: one widget holding one string, so a
+    saved workflow and a rendered video carry the direction with them and the panel can be deleted
+    without changing what any graph does.
+
+    It is also the whole answer to "'none' should not exist, because the node optional". There is no
+    combo on this node, so there is no position on it that means "no director" -- the node's absence
+    is that, and its presence with nothing written in it is the same request."""
+    ids = [i for _k, i, _kw in DIRECTOR]
+    assert ids == ["profile"], ids
+    kw = DIRECTOR[0][2]
+    assert not _multiline(kw), "the panel is the editor; the field itself is one line of JSON"
+    assert _str(kw.get("default")) == "{}"
+
+
+def test_no_node_offers_a_none_that_means_the_absence_of_itself():
+    """A combo position meaning "do nothing" is a second way to say what unplugging already says,
+    and the two can disagree. The owner named it on the Director node and it holds pack-wide."""
+    for name, inputs in (("OpenH3IRCompile", COMPILE), ("OpenH3IRSetup", SETUP),
+                         ("OpenH3IRMedia", MEDIA), ("OpenH3IRDirector", DIRECTOR)):
+        for _k, i, kw in inputs:
+            opts = kw.get("options")
+            if opts is None:
+                continue
+            words = [e.value for e in getattr(opts, "elts", []) if isinstance(e, ast.Constant)]
+            assert "none" not in words, f"{name}.{i} offers a 'none' position: {words}"
 
 
 def test_the_only_text_box_left_is_the_sentence():
@@ -471,3 +517,22 @@ def test_the_pack_ships_its_frontend_and_names_the_folder():
     assert web.is_dir(), "WEB_DIRECTORY points at a folder that must exist"
     names = {p.name for p in web.glob("*.js")}
     assert names, "an empty web folder ships a pack with no panel and no picker"
+
+
+def test_every_node_the_pack_declares_is_painted_in_the_family_colors():
+    """`web/style.js` holds the one list of node ids the pack paints, and it is written by hand
+    beside a list of schemas that is written somewhere else.
+
+    The Director shipped missing from it, which is the worst shape this fault has: the node worked
+    perfectly and was simply drawn in ComfyUI's default grey, so it read as a node from somebody
+    else's pack rather than as a bug, and nothing anywhere complained. Two hand-kept lists that must
+    agree is the pair this project has found silent faults with, and checking it costs one read."""
+    import re
+    style = (SRC.parent / "web" / "style.js").read_text(encoding="utf-8")
+    m = re.search(r"const OURS = \[(.*?)\];", style, re.S)
+    assert m, "the pack's color list was not found, so this test is blind"
+    ours = re.findall(r'"([^"]+)"', m.group(1))
+    assert ours, "the color list parsed as empty, which is also this test going blind"
+    assert sorted(ours) == sorted(SCHEMAS), (
+        f"style.js paints {sorted(ours)} and nodes.py declares {sorted(SCHEMAS)}. A node in one and "
+        "not the other is a node drawn in the wrong colors, or a color rule aimed at nothing.")

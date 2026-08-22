@@ -51,8 +51,10 @@ from comfy_api.latest import ComfyExtension, io
 from . import tray as T
 from .media import (digest, load_image, load_sound, load_video, resolve, sha256_file, stamp,
                     write_sound)
-from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER, DIALOGUE_LANGUAGES,
+from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER,
+                          DIALOGUE_LANGUAGES,
                           EFFORT, FPS, SHOTS, SIZING, WEIGHT_DTYPES,
+                          director_bundle, director_note,
                           ServiceError, bindings_by_content, check_mode,
                           clip_loader_for, compile_with_media, family_warning,
                           inputs_fingerprint, is_gguf,
@@ -65,6 +67,7 @@ from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER, DIALOGUE_LANGUAGE
 # and the refusal happens on the canvas rather than after a queue.
 Setup = io.Custom("H3IR_SETUP")
 Media = io.Custom("H3IR_MEDIA")
+Director = io.Custom("H3IR_DIRECTOR")
 
 
 def _temp_dir() -> str:
@@ -232,6 +235,17 @@ class OpenH3IRCompile(io.ComfyNode):
                             "the sentence instead and name the language there."),
 
                 # --------------------------------------------------------- this is what it looks at
+                Director.Input(
+                    "director", display_name="director", optional=True,
+                    tooltip="Optional. Whose taste fills what your sentence and your references do "
+                            "not say: the camera, the framing, the light and colour, what the frame "
+                            "looks at, how bodies and delivery are written, and what the room and "
+                            "any score are made of. From an OpenH3-IR Director node, where it is "
+                            "written as plain prose. Leave it unconnected and nothing steers the "
+                            "writing, which is how every graph without one behaves.\n\nIt never "
+                            "decides how many shots there are or where they cut, and anything you "
+                            "state yourself wins over it: say 'a locked-off wide' and you get one "
+                            "whoever is directing."),
                 Media.Input(
                     "media", display_name="media", optional=True,
                     tooltip="Everything the piece looks at or listens to, from an OpenH3-IR Media "
@@ -288,7 +302,11 @@ class OpenH3IRCompile(io.ComfyNode):
         like no change at all. The Media bundle carries the tray's own text and the decoded tensors,
         so a file replaced on disk under the same name changes this hash too.
         """
-        bundles = [digest(kwargs.pop("media", None)), digest(kwargs.pop("setup", None))]
+        bundles = [digest(kwargs.pop("media", None)), digest(kwargs.pop("setup", None)),
+                   # Hashed by content like the other two: a Director bundle's `repr` is a memory
+                   # address, so hashing that would make a swapped profile look like no change and
+                   # the cache would serve the brief the previous director wrote.
+                   digest(kwargs.pop("director", None))]
         return inputs_fingerprint(sorted((k, repr(v)) for k, v in kwargs.items()), bundles)
 
     # ------------------------------------------------------------------ the work
@@ -297,7 +315,7 @@ class OpenH3IRCompile(io.ComfyNode):
     def execute(cls, intent: str, seconds: float, aspect: str, creativity: str, silent: bool,
                 shots: str, megapixels: float = 0.0,
                 spoken_language: str = DIALOGUE_LANGUAGES[0], media=None,
-                setup=None, sizing: str = "match", seed: int = 7,
+                setup=None, director=None, sizing: str = "match", seed: int = 7,
                 effort: str = "standard") -> io.NodeOutput:
         # The socket is required, so ComfyUI refuses an unconnected graph before this runs. This is
         # the same refusal in this pack's own words, for the graph that arrives over /prompt with the
@@ -321,6 +339,10 @@ class OpenH3IRCompile(io.ComfyNode):
         # the two frames and nothing else, so anything else in the tray would be described in the
         # brief, numbered in the report, and never handed to H3 at all.
         T.exclusivity(slots)
+        # And the one about the swap roles: two pictures taking somebody's place and one of them
+        # not saying whose is a question the render cannot answer. The panel says so the moment it
+        # becomes true; this is the same sentence for a tray the panel never drew.
+        T.check_swaps(slots)
         resolved = T.resolve_intent(intent, slots)
 
         declared = T.job_for(slots)
@@ -344,7 +366,8 @@ class OpenH3IRCompile(io.ComfyNode):
             brief=dict(intent=resolved.intent, seconds=seconds, aspect=aspect,
                        creativity=creativity, effort=effort, seed=seed, silent=silent, shots=shots,
                        megapixels=megapixels, spoken=list(resolved.spoken),
-                       spoken_language=spoken_language))
+                       spoken_language=spoken_language,
+                       director_profile=director))
 
         prompt, width, height, length, ref_sizing = render_fields(body)
         warning = check_mode(declared, str(body.get("mode", "")))
@@ -370,6 +393,12 @@ class OpenH3IRCompile(io.ComfyNode):
         conflict = len({w.get("sizing") for w in wiring if w.get("sizing")}) > 1
         text = report(body, server=machine["server"], sizing_conflict=conflict,
                       asked_seconds=seconds, bindings=bindings)
+        # Never silent: something was sent, against what the record says was used.
+        mismatch = director_note(bool(director), str(body.get("director_used", "")))
+        if mismatch:
+            text += "\n" + line("note", mismatch)
+        elif director:
+            text += "\n" + line("director", str(body.get("director_used", director["name"])))
         for said in T.mention_notes(resolved, slots):
             text += "\n" + said
         for said in cls._resample_notes(loaded):
@@ -438,6 +467,10 @@ class OpenH3IRCompile(io.ComfyNode):
             if part == "file":
                 kind = {"picture": "image", "video": "video", "sound": "audio"}[slot.kind]
                 extra: dict[str, Any] = {"role": slot.role, "note": T.note_for(slot)}
+                # Only ever set on a picture that replaces somebody: the service refuses it on any
+                # other role rather than dropping it, which is the same answer the tray gives.
+                if slot.replaces:
+                    extra["replaces"] = slot.replaces
                 if entry.get("seconds") is not None:
                     extra["seconds"] = round(float(entry["seconds"]), 3)
                 if slot.kind == "video":
@@ -647,6 +680,88 @@ class OpenH3IRSetup(io.ComfyNode):
             weight_dtype=weight_dtype, timeout_s=timeout_s))
 
 
+class OpenH3IRDirector(io.ComfyNode):
+    """Whose taste steers the writing, written as prose. Optional: a graph without one writes the
+    way it always has.
+
+    **A fourth node rather than a control on Main, and that is the owner's shape:** "should only be
+    there if the user wants to steer, makes room for the other controls like saving the profiles and
+    such." Most graphs never want direction, and a permanent row on the busiest node in the pack is
+    a row everybody reads and almost nobody uses. Absent, it costs nothing; present, it has room for
+    a paragraph.
+
+    It also settles a question a combo on Main could not. There is exactly ONE place direction is
+    written -- this node -- so there is no second dial to disagree with, which is the same fault as
+    two widgets both claiming to set the duration. Unplug it and nothing steers; that is not a third
+    state, it is the absence of the only one. There is no `none` on it for the same reason: the node
+    IS the choice.
+
+    **Two fields, and both of them are yours.** What to call this direction, and the direction
+    itself. The seven directors the panel offers are not a menu that selects something invisible --
+    each one writes its whole text into the box, where you can read it, change a line, or throw half
+    of it away. A preset that shows you nothing is a preset you cannot learn from.
+
+    **What direction reaches, and what it never does.** It fills what your sentence and your
+    references leave open, and the compiler places it under a licence block that has already said in
+    computed terms which attributes your own words took. It never sets how many shots there are or
+    where they cut: pin `shots` on Main and the count is your contract, enforced; leave it on `auto`
+    and the writer decides the edit, the way `auto` has always meant.
+
+    **Everything typed here is a widget value**, so it is already kept in a saved workflow and in a
+    rendered video's embedded graph, exactly as the media tray is: drag that mp4 back in and the
+    direction comes with it. The panel's **save** and **forget** keep a copy in ComfyUI's own user
+    folder, `user/default/openh3ir/directors/`, so a direction written here can be picked again in
+    another graph. That store is a convenience and never a dependency: a graph carries the words it
+    was written with rather than a pointer to a name, so this node compiles the same thing on a
+    machine whose store is empty.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="OpenH3IRDirector",
+            display_name="OpenH3-IR Director",
+            category="OpenH3-IR",
+            search_aliases=["openh3", "h3", "ir", "director", "style", "look", "voice", "camera",
+                            "cinematography", "steer", "custom", "profile", "taste"],
+            # The node introduces itself here, in the node-library sidebar and in search, before
+            # anybody opens it. It said the same thing the panel's lead used to say and the owner
+            # rejected that sentence, so leaving it would have meant the node still speaking in the
+            # voice he turned down, one step earlier than the panel.
+            description=("Give a video a director. Whatever your own sentence leaves open gets "
+                         "shot, lit and scored the way they would. Seven to pick from, all of them "
+                         "editable, or write your own."),
+            inputs=[
+                io.String.Input(
+                    "profile", display_name="direction", default="{}",
+                    tooltip="The direction's own state, as text. The panel on this node writes it, "
+                            "and it is a field rather than hidden state so that a saved workflow "
+                            "and a rendered video carry the direction with them: drag that video "
+                            "back in and it comes back. Two keys: what you call it, and the notes "
+                            "themselves. Editing it by hand works."),
+            ],
+            outputs=[Director.Output(
+                display_name="director",
+                tooltip="Wire into the director socket on OpenH3-IR Main.")],
+        )
+
+    @classmethod
+    def execute(cls, profile: str = "{}") -> io.NodeOutput:
+        """Read the one field and hand it down the socket.
+
+        Nothing about the writing is judged here. A cap on how long a direction may be belongs to
+        the compiler, which is where the ask is assembled and where the sentence about it is
+        written, and the panel says the same number while there is still something to do about it.
+        An unwritten node is not an error: it hands over nothing, and Main compiles exactly as a
+        graph with no Director node in it.
+        """
+        bundle = director_bundle(profile=profile)
+        print("[OpenH3-IR] director  "
+              + (f"{bundle['name']}, {len(bundle['notes'])} characters" if bundle
+                 else "nothing written, so nothing steers"))
+        return io.NodeOutput(bundle)
+
+
 class OpenH3IRMedia(io.ComfyNode):
     """One tray for everything the piece looks at or listens to, and one name per file.
 
@@ -765,12 +880,13 @@ class OpenH3IRMedia(io.ComfyNode):
 
 class OpenH3IRExtension(ComfyExtension):
     async def get_node_list(self):
-        return [OpenH3IRCompile, OpenH3IRMedia, OpenH3IRSetup]
+        return [OpenH3IRCompile, OpenH3IRDirector, OpenH3IRMedia, OpenH3IRSetup]
 
 
 async def comfy_entrypoint() -> OpenH3IRExtension:
     return OpenH3IRExtension()
 
 
-__all__ = ["OpenH3IRCompile", "OpenH3IRMedia", "OpenH3IRSetup", "OpenH3IRExtension",
+__all__ = ["OpenH3IRCompile", "OpenH3IRDirector", "OpenH3IRMedia", "OpenH3IRSetup",
+           "OpenH3IRExtension",
            "comfy_entrypoint", "ServiceError"]

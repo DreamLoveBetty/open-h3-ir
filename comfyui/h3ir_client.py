@@ -144,7 +144,7 @@ def _url(server: str, path: str) -> str:
 
 
 def _request(server: str, path: str, *, payload: dict[str, Any] | None = None,
-             timeout: float = 600.0) -> tuple[int, Any]:
+             timeout: float = 600.0, method: str = "") -> tuple[int, Any]:
     """One HTTP call. Returns (status, decoded body) and lets 4xx and 5xx come back as values.
 
     An error status is data here rather than an exception, because the caller needs the body to say
@@ -158,7 +158,7 @@ def _request(server: str, path: str, *, payload: dict[str, Any] | None = None,
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers,
-                                 method="POST" if payload is not None else "GET")
+                                 method=method or ("POST" if payload is not None else "GET"))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", "replace")
@@ -245,7 +245,8 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
                   megapixels: float = 0.0,
                   seed: int, silent: bool, shots: Any, assets: list[dict[str, Any]],
                   transcripts: dict[str, str], spoken: list[str] | tuple[str, ...] = (),
-                  spoken_language: str = DIALOGUE_LANGUAGES[0]) -> dict[str, Any]:
+                  spoken_language: str = DIALOGUE_LANGUAGES[0],
+                  director_profile: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn the node's state into the service's BriefIn.
 
     Assets arrive already shaped, with their role named, because the node knows the role from the
@@ -273,6 +274,16 @@ def build_payload(intent: str, *, seconds: float, aspect: str, creativity: str, 
         "seed": int(seed),
         "silent": bool(silent),
     }
+    # The node sends the PROSE, never an id: a shipped director is loaded into the box on the canvas
+    # and is the user's to edit from that moment, so what is on the node is the only honest thing to
+    # send. `director` (an id) stays in the service's schema for the CLI and for an agent calling the
+    # API, and nothing in this pack fills it.
+    #
+    # Omitted entirely when nothing is written, so a graph with no Director node sends
+    # byte-identically to one written before the node existed. A default that travels is a default
+    # that shows up in a diff of two payloads and makes somebody wonder what changed.
+    if director_profile and (director_profile.get("notes") or "").strip():
+        payload["director_profile"] = dict(director_profile)
     n = shot_count(shots)
     if n > 0:
         payload["shots"] = n
@@ -999,7 +1010,30 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
     out["brief_id"] = brief_id
     out["degraded"] = body.get("status") == "degraded"
     out["fallback_reason"] = body.get("fallback_reason") or ""
+    # What the compiler says it actually directed with. Carried over so the node can check it
+    # against what it SENT -- see `director_note`. Two fields that must agree is the check this
+    # project has found four silent faults with, and it costs one string.
+    out["director_used"] = ((body.get("plan") or {}).get("director") or "")
     return out
+
+
+def director_note(sent: bool, used: str) -> str:
+    """A sentence when direction was sent and the compiler says none was applied, or "".
+
+    The one thing a director can do silently: a profile travels, something upstream drops it, and
+    the brief compiles perfectly with no direction at all. The service says so in its diagnostics
+    and the node cannot see those -- but it does not need to. It knows it sent something, the record
+    says what was used, and disagreement between the two is the whole failure. Two fields that must
+    agree is the check this project has found four silent faults with, and it costs one string.
+    """
+    if not sent:
+        return ""
+    # The record's own shape: "director: <name>", and "director: none" when there was none.
+    got = (used or "").split(";")[0].replace("director:", "").strip()
+    if got and got.lower() != "none":
+        return ""
+    return ("the direction on the Director node was not applied and the brief was written with no "
+            "direction at all. The service may be an older version that does not read it.")
 
 
 def render_fields(prompt_body: dict[str, Any]) -> tuple[str, int, int, int, str]:
@@ -1182,3 +1216,40 @@ def inputs_fingerprint(*parts: Any) -> str:
         h.update(repr(p).encode("utf-8", "replace"))
         h.update(b"\x1f")
     return h.hexdigest()
+
+
+# --------------------------------------------------------------------------- the director bundle
+
+
+def director_bundle(*, profile: str) -> dict[str, Any] | None:
+    """What the Director node hands down its socket: a name and a paragraph, or nothing.
+
+    The panel writes one JSON string into one widget, exactly as the media tray does, so a saved
+    workflow and a rendered video carry the direction with them and the panel can be deleted without
+    changing what any graph does. This is the only thing that reads that string.
+
+    **Nothing about the writing is refused here.** The cap on how long a direction may be belongs to
+    the compiler, which is where the ask is assembled and where the sentence about it is written; a
+    second copy of that number in this file would be a second opinion about somebody's paragraph.
+    What IS refused is text that is not the shape the panel writes, because that is a fact about the
+    widget rather than a judgement about the writing.
+    """
+    text = (profile or "").strip()
+    if not text or text == "{}":
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ServiceError(
+            "the Director node's field is not readable. The panel keeps it as JSON with two keys, "
+            'for example {"name": "My noir", "notes": "The camera stays still ..."}. If you edited '
+            "it by hand, fix the quoting; if you did not, delete the node and add it "
+            "again.") from None
+    if not isinstance(data, dict):
+        raise ServiceError(
+            f"the Director node's field holds a {type(data).__name__}, and it has to be an object "
+            "with a name and notes in it.")
+    notes = str(data.get("notes") or "").strip()
+    if not notes:
+        return None
+    return {"name": str(data.get("name") or "").strip() or "Custom", "notes": notes}

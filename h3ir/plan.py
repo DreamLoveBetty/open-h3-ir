@@ -24,7 +24,8 @@ from typing import Any
 
 from .grid import Target, rows_per_latent_frame, video_latent_t
 from .models import (AUDIO_REFERENCE_ROLES, AssetCard, AssetKind, Brief, CameraMove, DialogueLine,
-                     ManifestEntry, Mode, Plan, Role, ShotPlan, SpeakerPlan, SubjectPlan)
+                     ManifestEntry, Mode, Plan, Role, SWAP_ROLES, ShotPlan, SpeakerPlan,
+                     SubjectPlan)
 
 # Words of speech per second at a natural delivery (~155 wpm). Used to stop the planner
 # putting more dialogue into a shot than can physically be spoken inside it.
@@ -119,7 +120,8 @@ def build_manifest(brief: Brief, target: Target) -> list[ManifestEntry]:
         out.append(ManifestEntry(slot=slot, label=f"<Picture {n_pic}>", kind=a.kind,
                                  sha256=a.sha256, wiring=f"ref_image_{n_pic}", role=a.role,
                                  px=a.px, sizing=a.sizing, rows=rows_for_image(a),
-                                 composition=a.composition))
+                                 composition=a.composition,
+                                 replaces=(a.replaces or "").strip()))
         slot += 1
 
     for v in videos:
@@ -173,6 +175,11 @@ _ROLE_MARKER = {
     Role.STYLE: "weak_reference",
     Role.STORYBOARD: "weak_reference",
     Role.STRUCTURE: "weak_reference",
+    # Both swap roles carry the plate's subject into the clip whole, so the plate's own defined
+    # role -- supply this identity -- is fully preserved. What changes is the CLIP, and that is
+    # said on the clip's line and on the line of the figure being taken over, not here.
+    Role.PLACED_SUBJECT: "fully_preserved",
+    Role.REPLACEMENT_SUBJECT: "fully_preserved",
 }
 # `sfx` is `reference`, not a copy, and that was a real 500 rather than a nicety. R22
 # (validate.py) forbids a copy marker for the two roles whose definition IS "a property is
@@ -298,6 +305,175 @@ def _collapse_environment(label: str, entry: ManifestEntry, card: AssetCard,
     base = _ROLE_MARKER.get(entry.role, "fully_preserved")
     return SubjectPlan(label=label, kind="environment", sources=[entry.label],
                        descriptor=descriptor, attributes=attrs[:8], retention=base)
+
+
+# Words that identify nobody, so two descriptions sharing only these share nothing. Short and
+# closed on purpose: this list IS the whole judgement the matching rule makes, and every word added
+# to it is a word a caller can no longer be identified by.
+_EMPTY_WORDS = frozenset(
+    "a an the this that these those his her its their of in on at to with and or is was are "
+    "who whom wearing side".split())
+
+
+def identifying_words(text: str) -> set[str]:
+    """The words in a description that could name somebody, lowercased."""
+    return {w for w in re.split(r"[^A-Za-z0-9]+", text.lower()) if w and w not in _EMPTY_WORDS}
+
+
+@dataclass(frozen=True)
+class SwapDecision:
+    """What one `replacement_subject` picture does, worked out but not yet applied.
+
+    Separated from applying it because two callers need the same answer for different reasons:
+    `bind_replacement` marks the subjects, and `compile.check_swap` turns the unresolvable ones
+    into a sentence. Deriving it twice is how the refusal and the binding come to disagree.
+    """
+
+    picture: str                          # "<Picture 1>"
+    incoming: SubjectPlan | None          # the subject the picture defines
+    named: str                            # who the caller said it replaces, "" if they did not
+    candidates: list[SubjectPlan]         # figures in the clip it could take over from
+    target: SubjectPlan | None = None     # the one it does take over from
+    synthesise: bool = False              # nobody analysed matches: the named figure is its own
+    problem: str = ""                     # none | undefined | unnamed | crowded
+
+
+def swap_decisions(subjects: list[SubjectPlan],
+                   manifest: list[ManifestEntry]) -> list[SwapDecision]:
+    """One decision per `replacement_subject` picture, in the order they are labelled.
+
+    The rule for "which figure" is LIKE FOR LIKE first: a replacement picture defines a subject of
+    some kind (`person`, `object`, ...), the clip's card yields its own subjects with their kinds,
+    and the only reading under which the wiring means anything is that the new subject stands in
+    for one of the same kind. The measurement clip yields three subjects -- a man, a hammer, a
+    plank -- so binding to "the subjects from the clip" without the kind would be ambiguous on the
+    very first brief.
+
+    What the CALLER wrote decides the rest, and it is read in exactly one place: choosing among
+    several candidates of the right kind. Everywhere else their words are a description, never a
+    query, because the alternative is a query that can silently pick the wrong person:
+
+      one candidate      it binds, named or not. The clip's own reading found exactly one figure
+                         of that kind and there is nothing to choose between. When the caller
+                         named it, their words become its description, because they are the words
+                         the caller can recognise and the analyser only saw three frames.
+      several candidates the name picks one, by sharing an identifying word with its description.
+                         A unique winner binds, and its description becomes the caller's words.
+      not resolvable     a name that fits none of them, or fits several, or has no candidate to
+                         fit at all: the caller's words ARE the figure, and a subject is made out
+                         of them. Never a refusal, and never the leftover candidate.
+
+    That last row is the owner's ruling and it overturns two refusals this function used to
+    produce. The candidate list is the analyser's reading of three sampled frames, and that
+    reading is wrong routinely: somebody walks in at second four and is in none of them, two
+    people overlap and are written down as one, a figure turned away is described in words nobody
+    would use for them. So a refusal keyed on it fires when nothing is ambiguous, against
+    descriptions the caller was never shown and cannot argue with. In his words: "I think it's
+    wrong enforcing mechanically something derived from looking at 3 frames, there would be a lot
+    of misfires ... You looked at the clip, it looked at three frames, and you win."
+
+    What survives is the case where nothing was said at all, which is a blank rather than a
+    judgement about somebody's eyes: `unnamed` when no figure of that kind was read and no words
+    were given, and `crowded` when several were read and no words were given. Both ask for
+    something that is never wrong to give, and the panel asks for it before anything is queued.
+
+    Two rules the ruling did NOT touch, and which the fall-through must not quietly undo: like
+    for like by kind, and a figure already taken by an earlier picture is not "the only one". An
+    unresolvable name makes its own subject; it never falls through to whoever was left over,
+    which would be the pick-what-is-left binding this layer exists to refuse.
+
+    Nothing here mutates, and nothing here raises.
+    """
+    clip = next((m.label for m in manifest if m.role is Role.EDIT_SOURCE), None)
+    pictures = [m for m in manifest if m.role is Role.REPLACEMENT_SUBJECT]
+    if clip is None or not pictures:
+        return []
+
+    spoken_for: set[str] = set()
+    out: list[SwapDecision] = []
+    for m in pictures:
+        named = (m.replaces or "").strip()
+        incoming = next((s for s in subjects if m.label in s.sources), None)
+        if incoming is None:
+            out.append(SwapDecision(m.label, None, named, [], problem="undefined"))
+            continue
+        # How crowded the CLIP is, and what is still free, are two different questions and both
+        # get asked. A figure left over after an earlier picture took the one it named is not "the
+        # only figure of its kind"; binding a description that fits neither of them to whichever
+        # one remained is the pick-what-is-left guess this layer exists to refuse.
+        of_kind = [s for s in subjects
+                   if clip in s.sources and s.kind == incoming.kind and s is not incoming]
+        free = [s for s in of_kind if s.label not in spoken_for]
+        alone = len(of_kind) == 1 and bool(free)
+
+        def bind(target: SubjectPlan) -> None:
+            spoken_for.add(target.label)
+            out.append(SwapDecision(m.label, incoming, named, free, target=target))
+
+        if alone:
+            # One figure of that kind in the whole clip: there is nothing to choose between, so
+            # words that read nothing like the analyser's reading are a description of that figure
+            # and never a failed query.
+            bind(free[0])
+        elif not named:
+            out.append(SwapDecision(m.label, incoming, named, free,
+                                    problem="unnamed" if not of_kind else "crowded"))
+        elif not free:
+            out.append(SwapDecision(m.label, incoming, named, free, synthesise=True))
+        else:
+            wanted = identifying_words(named)
+            matches = [c for c in free if wanted & identifying_words(c.descriptor)]
+            if len(matches) == 1:
+                bind(matches[0])
+            else:
+                # Nothing matched, or several did. The words stand on their own rather than being
+                # sent back as a question, and deliberately NOT bound to whichever candidate is
+                # left: the reading they failed against saw three frames, and the caller saw the
+                # clip.
+                out.append(SwapDecision(m.label, incoming, named, free, synthesise=True))
+    return out
+
+
+def bind_replacement(subjects: list[SubjectPlan],
+                     manifest: list[ManifestEntry]) -> list[str]:
+    """Mark every figure a `replacement_subject` takes over from. Returns their labels.
+
+    Empty when there is nothing to bind or the decision is a question. Those are refused at intake
+    (`compile.check_swap`) precisely so they cannot reach a shipped document: what must never
+    happen is a brief that claims a swap and names the wrong figure, and leaving the subjects
+    untouched here is the only outcome that asserts nothing.
+
+    Appends to `subjects` for a named figure the analyser never saw, which is the one case where
+    this list grows after `build_subjects` has numbered it. The new label continues the numbering,
+    and it is added before `build_plan` assigns shots so it is scoped like every other subject.
+    """
+    bound: list[str] = []
+    for d in swap_decisions(subjects, manifest):
+        if d.incoming is None or d.problem:
+            continue
+        target = d.target
+        if target is None:
+            if not d.synthesise:
+                continue
+            clip = next((m.label for m in manifest if m.role is Role.EDIT_SOURCE), "")
+            target = SubjectPlan(label=f"<Subject {len(subjects) + 1}>", kind=d.incoming.kind,
+                                 sources=[clip], descriptor=d.named)
+            subjects.append(target)
+        elif d.named:
+            # The caller's words win over the analyser's for the figure being removed. Both name
+            # the same person, one of them from three sampled frames and the other from whoever
+            # is looking at the clip, and the caller's is the one they will recognise in the brief.
+            target.descriptor = d.named
+        # ref-en.txt 4.1: "`attribute_transfer` | Referenced characteristics are transferred to a
+        # different identifiable target subject". The characteristics are this figure's position in
+        # frame, actions and timing; the different identifiable target subject is the one the caller
+        # attached the picture for. Build-log 43 deleted the compiler's previous use of this marker
+        # because restyling one man keeps the same identifiable subject and the marker never applied.
+        # A replacement is the case it was written for, and the only one in this compiler.
+        target.retention = "attribute_transfer"
+        target.taken_over_by = d.incoming.label
+        bound.append(target.label)
+    return bound
 
 
 def build_speakers(brief: Brief, subjects: list[SubjectPlan],
@@ -452,8 +628,12 @@ def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
 
     if roles & {Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST}:
         types.append("keyframe completion")
+    # The two swap roles are in here for the reason ref-en.txt 3 gives `reference generation`:
+    # the picture "provides generation guidance for a character ... without serving as a concrete
+    # frame or as the source video being edited or continued". The clip is what is edited; the
+    # picture is guidance, and both types are true at once, which is what ` + ` is for.
     if roles & {Role.SUBJECT, Role.ENVIRONMENT, Role.STYLE, Role.STORYBOARD, Role.STRUCTURE,
-                Role.VOICE_TIMBRE}:
+                Role.VOICE_TIMBRE, *SWAP_ROLES}:
         types.append("reference generation")
     if Role.EDIT_SOURCE in roles:
         types.append("video editing")
@@ -479,8 +659,41 @@ def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
     return out or ["reference generation"]
 
 
+def taken_definition(s: SubjectPlan) -> str:
+    """The definition line for the figure a replacement takes over from.
+
+    Its ATTRIBUTES are deliberately dropped, and that is the whole point of this function rather
+    than a flag. Measured on the first render of the role: the ordinary form spelled out "a thick
+    full dark brown beard, short dark brown hair, a red and black plaid flannel shirt worn open,
+    a grey crew-neck t-shirt underneath" for a man the caller had asked to remove -- and H3 drew
+    him, holding the frame for the opening moments before the replacement took over. Nothing cited
+    him in detailed_description in any of four seeds; the identity list in subject_definitions was
+    enough on its own, because that section is conditioning like every other.
+
+    So this line carries only what identifies him IN THE SOURCE -- the descriptor, and the label he
+    came from -- plus the one sentence that says he is not in the target video. It is the style
+    plate's lesson and the structure clip's, for a subject: a label whose contents must stay out of
+    the render must not be described as something to draw.
+
+    Shared with `prose._definition_lines` rather than written twice, because the writer is handed
+    these lines to use or reword and a second copy would drift from the draft's.
+    """
+    src = ", ".join(s.sources)
+    return (f"{s.label} is {s.descriptor} in {src}, the figure {s.taken_over_by} replaces. "
+            f"{s.label} does NOT appear in the target video: only its position in frame, its "
+            f"actions and its timing carry over to {s.taken_over_by}.")
+
+
 def retention_note(s: SubjectPlan) -> str:
     """What must survive is the identity, never the plate's pose."""
+    # The one subject whose note is not about survival. `attribute_transfer` is ref-en.txt 4.1's
+    # "referenced characteristics are transferred to a different identifiable target subject", so
+    # the note has to name the characteristics that move, name where they land, and say that this
+    # figure's own appearance does not survive -- otherwise the marker and the sentence under it
+    # describe two different relationships, which is the failure mode that validates cleanly.
+    if s.retention == "attribute_transfer" and s.taken_over_by:
+        return (f"{s.taken_over_by} takes over the position in frame, the actions and the timing "
+                f"of {s.descriptor}, whose own appearance is not retained")
     if not s.attributes:
         return f"{s.descriptor} is retained"
     attrs = ", ".join(s.attributes[:5])
@@ -503,6 +716,8 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
     target = Target.build(brief.seconds, brief.aspect, brief.canvas, brief.megapixels)
     manifest = build_manifest(brief, target)
     subjects = build_subjects(manifest, cards)
+    # Before the notes are written, because `retention_note` reads the marker this sets.
+    bind_replacement(subjects, manifest)
     speakers = build_speakers(brief, subjects, manifest)
 
     if proposal is not None:

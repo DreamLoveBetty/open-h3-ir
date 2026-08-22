@@ -17,7 +17,9 @@ import pytest
 
 from h3ir.compile import _assess
 from h3ir.draft import deterministic_draft
-from h3ir.models import AssetCard, AssetKind, AssetRef, Brief, Mode, Role
+from dataclasses import replace
+
+from h3ir.models import AssetCard, AssetKind, AssetRef, Brief, Mode, Role, SWAP_ROLES
 from h3ir.plan import ProfileOptions, audio_relations, derive_task_types
 from h3ir.render import render_ir
 
@@ -39,7 +41,25 @@ ROLE_CASES = [
     (Role.MUSIC_STYLE, AssetKind.AUDIO, Mode.REF2VA),
     (Role.BEAT_REFERENCE, AssetKind.AUDIO, Mode.REF2VA),
     (Role.SFX, AssetKind.AUDIO, Mode.REF2VA),
+    # Both swap roles ride a picture and are meaningless without a clip to act on, so `_brief_for`
+    # attaches the edit source alongside. That is the wiring `check_swap` refuses them without.
+    (Role.PLACED_SUBJECT, AssetKind.IMAGE, Mode.REF2VA),
+    (Role.REPLACEMENT_SUBJECT, AssetKind.IMAGE, Mode.REF2VA),
 ]
+
+# The clip a swap role needs beside it. Its card yields exactly one `person` subject, which is what
+# makes `plan.bind_replacement` bind: like for like, and unique.
+SWAP_CLIP_SHA = "asset-swap-edit-source"
+SWAP_CLIP = AssetCard(
+    sha256=SWAP_CLIP_SHA, kind=AssetKind.VIDEO, frames_seen=3,
+    summary="a driver walks around a car in a tunnel",
+    environment="a concrete road tunnel", framing="a medium-wide shot",
+    lighting="overhead sodium strip lights", style="Live-action, cinematic",
+    motion="the driver crosses frame left to right",
+    subjects=[{"kind": "person", "descriptor": "the driver",
+               "attributes": ["a grey overall"]},
+              {"kind": "object", "descriptor": "the black sports car",
+               "attributes": ["carbon fibre body"]}])
 
 
 def test_every_role_in_the_enum_has_a_case_here():
@@ -69,7 +89,17 @@ def _brief_for(role: Role, kind: AssetKind) -> tuple[Brief, dict[str, AssetCard]
                        note="a low engine rumble")
         cards = {sha: AssetCard(sha256=sha, kind=kind, summary="an audio reference.",
                                 characterisation="a low engine rumble")}
-    brief = Brief(intent="the car pulls forward out of the dark", seconds=5.0, assets=[ref])
+    refs = [ref]
+    if role in SWAP_ROLES:
+        refs.append(AssetRef(kind=AssetKind.VIDEO, role=Role.EDIT_SOURCE, sha256=SWAP_CLIP_SHA,
+                             seconds=5.0, frames=120, note="the clip to edit"))
+        cards[SWAP_CLIP_SHA] = SWAP_CLIP
+        # The picture has to define a PERSON for the like-for-like binding to have anything to
+        # bind to; the default card above is a car.
+        cards[sha] = replace(cards[sha], summary="a driver in a red jacket",
+                             subjects=[{"kind": "person", "descriptor": "the driver in red",
+                                        "attributes": ["a red jacket"]}])
+    brief = Brief(intent="the car pulls forward out of the dark", seconds=5.0, assets=refs)
     return brief, cards
 
 

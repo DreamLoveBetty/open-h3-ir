@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .models import AssetCard, AssetKind, Brief
+from .models import AssetCard, AssetKind, Brief, Role
 
 # A coarse medium taxonomy. Coarse on purpose: this runs in the draft path, where there is no
 # model, and its only job is to notice that two descriptions point at different media.
@@ -111,13 +111,26 @@ def _tidy(s: str) -> str:
     return t
 
 
-def observed_style(cards: dict[str, AssetCard]) -> str:
-    """The plate's rendering MEDIUM, and its lighting only when the lighting belongs to a scene.
+def observed_style(cards: dict[str, AssetCard], prefer: str = "") -> str:
+    """The reference's rendering MEDIUM, and its lighting only when the lighting belongs to a scene.
 
     A character sheet is lit for legibility -- even, diffuse, studio -- and that lighting is a
     property of the sheet, not of the video. Carrying it over put "even, diffuse studio lighting
     with soft shadows cast on the floor" into a torchlit corridor.
+
+    `prefer` is the sha256 of a clip attached as `edit_source`, and it wins over every plate. On an
+    edit the target video IS that clip with a change made to it (ref-en.txt 3 mandates the sentence
+    saying so), so the clip owns the look by definition -- and the loop below walks a dict and takes
+    the first IMAGE it finds, which on a four-seed measurement was a studio portrait of the person
+    being swapped IN. Its style phrase, "clean, high-resolution studio photography with a neutral
+    documentary aesthetic", became the target video's style opening every single time, and the
+    workshop the clip was shot in appeared in none of them.
     """
+    preferred = cards.get(prefer) if prefer else None
+    if preferred is not None and preferred.style:
+        style = _tidy(preferred.style)
+        light = _tidy(preferred.lighting or "")
+        return f"{style}, {_lower_first(light)}" if light else style
     for c in cards.values():
         if c.kind is AssetKind.IMAGE and c.style:
             style = _tidy(c.style)
@@ -145,7 +158,9 @@ def resolve_style(brief: Brief, cards: dict[str, AssetCard],
     asked_terms = style_terms_in(brief.intent)
     asked_medium = [t for t in asked_terms if t not in TREATMENT_TERMS]
     asked_treatment = [t for t in asked_terms if t in TREATMENT_TERMS]
-    observed = observed_style(cards)
+    edit_source = next((a.sha256 for a in brief.assets
+                        if a.kind is AssetKind.VIDEO and a.role is Role.EDIT_SOURCE), "")
+    observed = observed_style(cards, prefer=edit_source)
     req_medium = classify_medium(brief.intent)
     obs_medium = classify_medium(observed)
 

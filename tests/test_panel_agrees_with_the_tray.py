@@ -30,8 +30,11 @@ PROMPT_JS = (WEB / "prompt.js").read_text(encoding="utf-8")
 # point stops being CSS. ComfyUI says nothing when that happens: the extension throws on import and
 # the whole panel is simply absent, with the node still there and every widget still working. The
 # names below are how that is caught from Python, which is the only place this suite runs.
-CLASS_USED = re.compile(r"(?<!-)\b(oh3-[a-z0-9-]+)")
-CLASS_STYLED = re.compile(r"\.(oh3-[a-z0-9-]+)")
+# `oh3d?-` covers both prefixes the pack uses: the tray and the prompt write `oh3-`, the director's
+# panel writes `oh3d-`. One expression rather than two, because the failure it catches is pack-wide
+# and a new panel with a new prefix that this scan cannot see is a panel with no cover at all.
+CLASS_USED = re.compile(r"(?<!-)\b(oh3d?-[a-z0-9-]+)")
+CLASS_STYLED = re.compile(r"\.(oh3d?-[a-z0-9-]+)")
 
 
 def _stylesheet_of(path: pathlib.Path) -> str | None:
@@ -65,6 +68,42 @@ def _js_string(source: str, name: str) -> str:
     raw = _js(source, name)
     assert raw[0] == raw[-1] and raw[0] in "'\"", f"{name} is not a plain string literal: {raw}"
     return raw[1:-1]
+
+
+def _js_object(source: str, name: str) -> str:
+    """One `const NAME = { ... };` spanning several lines, as the literal's own text.
+
+    `_js` above stops at the first line end, which every declaration in the panel respects except
+    the three role tables. Those are the ones this file has to read, so the block runs from the
+    opening bracket to the `};` or `];` that closes it in the first column, which is the shape all
+    three are written in and is asserted here rather than assumed.
+    """
+    opened = re.search(rf"^const {name} = (\{{|\[)", source, re.MULTILINE)
+    assert opened, f"{name} is no longer declared in the panel, so this comparison is blind"
+    closed = re.search(r"^[}\]];$", source[opened.start():], re.MULTILINE)
+    assert closed, f"{name} is opened and never closed on a line of its own"
+    return source[opened.end() - 1:opened.start() + closed.end()]
+
+
+def _js_strings(literal: str) -> list[str]:
+    """Every double-quoted string in a JS literal, in the order it writes them."""
+    out = re.findall(r'"([^"]*)"', literal)
+    assert out, "no strings were read out of this literal, so the comparison below is blind"
+    return out
+
+
+def _js_by_kind(literal: str) -> dict[str, str]:
+    """A `{ picture: ..., video: ..., sound: ... }` literal split into its three blocks.
+
+    Split rather than parsed, because the two per-kind tables hold different shapes -- a list of
+    words in one, token-to-badge pairs in the other -- and each test reads its own.
+    """
+    out = {}
+    for kind in T.KINDS:
+        m = re.search(rf"\b{kind}: *([\[{{].*?[\]}}]),?\n", literal, re.DOTALL)
+        assert m, f"the panel's table has no {kind} block, so this comparison is blind"
+        out[kind] = m.group(1)
+    return out
 
 
 # ------------------------------------------------------------- the panel is there at all to judge
@@ -107,6 +146,129 @@ def test_no_class_is_styled_by_two_of_the_panels():
     assert not shared, (
         f"these class names are styled in more than one of the pack's stylesheets: {shared}. Give "
         "one of them its own name; they are not separate namespaces.")
+
+
+# ----------------------------------------------------------------- the roles, one table twice
+
+"""What a file IS is written down twice: `ROLES` in comfyui/tray.py, which refuses anything else at
+queue time, and `ROLES` / `ROLE_TOKEN` / `BADGE_BY_KIND` in the panel, which is where a user picks
+one. The four tests below are what makes that two statements of one table rather than two tables.
+
+They exist because the drift already happened and shipped: `placed_subject` and
+`replacement_subject` were added to the compiler, the service and the tray's Python, and the panel
+kept offering six picture roles, so the feature could be reached over HTTP and not from the node it
+was built for. Nothing failed -- there was nothing here to fail."""
+
+
+def test_the_panel_offers_exactly_the_roles_the_tray_takes():
+    """In the same order, because the first entry is the role a dropped file lands on."""
+    shown = {kind: _js_strings(block) for kind, block
+             in _js_by_kind(_js_object(TRAY_JS, "ROLES")).items()}
+    for kind in T.KINDS:
+        assert shown[kind] == list(T.ROLES[kind]), (
+            f"the panel offers {shown[kind]} for a {kind} and comfyui/tray.py takes "
+            f"{list(T.ROLES[kind])}. A role in the panel and not in the tray is refused at queue "
+            "time; a role in the tray and not in the panel cannot be picked at all.")
+
+
+def test_each_word_the_panel_shows_becomes_the_token_the_tray_stores():
+    """The words are user interface and the tokens are the wire format, so this is the join.
+
+    One flat table in the panel against three in the tray, which is safe only while no two kinds
+    share a word: `<select>` writes `ROLE_TOKEN[words]` with no idea which kind it is on, so a word
+    meaning one thing on a picture and another on a sound would store the wrong one. That is
+    asserted here rather than trusted.
+    """
+    pairs = re.findall(r'"([^"]+)": "([^"]+)"', _js_object(TRAY_JS, "ROLE_TOKEN"))
+    assert pairs, "ROLE_TOKEN no longer reads as pairs, so this comparison is blind"
+    every = [(words, role) for kind in T.KINDS for words, role in T.ROLES[kind].items()]
+    assert len(dict(every)) == len(every), (
+        "two kinds now share a word for a role, and the panel's one flat table cannot tell them "
+        "apart. Give one of them different words, or make ROLE_TOKEN per kind.")
+    assert dict(pairs) == dict(every), (
+        f"the panel translates {sorted(set(pairs) - set(every))} and the tray reads "
+        f"{sorted(set(every) - set(pairs))}.")
+
+
+def test_the_role_a_dropped_file_lands_on_is_the_one_the_tray_defaults_to():
+    """Two statements of the default in the panel -- `DEFAULT_ROLE`, and the first entry of `ROLES`
+    that `place` actually writes -- and the tray's own, which is what an empty role field means."""
+    declared = dict(re.findall(r"(\w+): \"([^\"]+)\"", _js(TRAY_JS, "DEFAULT_ROLE")))
+    shown = {kind: _js_strings(block) for kind, block
+             in _js_by_kind(_js_object(TRAY_JS, "ROLES")).items()}
+    token = dict(re.findall(r'"([^"]+)": "([^"]+)"', _js_object(TRAY_JS, "ROLE_TOKEN")))
+    assert "role: ROLE_TOKEN[ROLES[move.kind][0]]" in TRAY_JS, (
+        "a dropped file no longer takes the first role in the list, so the check below is blind")
+    for kind in T.KINDS:
+        assert declared[kind] == T.DEFAULT_ROLE[kind], (
+            f"the panel calls a new {kind} {declared[kind]!r} and the tray reads an unset role as "
+            f"{T.DEFAULT_ROLE[kind]!r}.")
+        assert token[shown[kind][0]] == T.DEFAULT_ROLE[kind], (
+            f"a dropped {kind} lands on {token[shown[kind][0]]!r} and an unset one is read as "
+            f"{T.DEFAULT_ROLE[kind]!r}.")
+
+
+def test_every_role_wears_a_badge_on_a_filled_cell():
+    """A cell shows its role as a chip; a role with no chip is a setting nothing on the board shows.
+
+    Compared both ways: a missing badge hides a role the user set, and a badge for a role that no
+    longer exists is a line nothing can reach.
+    """
+    badges = {kind: dict(re.findall(r'(\w+): "([^"]+)"', block)) for kind, block
+              in _js_by_kind(_js_object(TRAY_JS, "BADGE_BY_KIND")).items()}
+    for kind in T.KINDS:
+        assert set(badges[kind]) == set(T.ROLES[kind].values()), (
+            f"these {kind} roles wear no badge: {sorted(set(T.ROLES[kind].values()) - set(badges[kind]))}; "
+            f"these badges name no role: {sorted(set(badges[kind]) - set(T.ROLES[kind].values()))}.")
+
+
+def test_a_picture_badge_holds_one_line():
+    """A picture's badge is drawn over its thumbnail, and a wrapped one takes a fifth of the image.
+
+    Measured in a browser on the board at rest, at the size the panel pins itself to: a picture
+    cell is 64px wide, the note chip that sits beside the role badge takes 12 of them, and 11
+    characters of this font measure 47px. "replace in clip", the first badge written for the
+    replacement role, measured 60px and wrapped onto a second line, pushing the plate down inside
+    its own cell. The clips and sounds columns are wide rows rather than squares, so this ceiling
+    is the picture column's alone -- "how it's shot" is 13 characters and sits on one line there.
+    """
+    badges = dict(re.findall(r'(\w+): "([^"]+)"',
+                             _js_by_kind(_js_object(TRAY_JS, "BADGE_BY_KIND"))["picture"]))
+    too_long = {role: text for role, text in badges.items() if len(text) > 11}
+    assert not too_long, (
+        f"these picture badges are longer than the 11 characters a cell holds: {too_long}. They "
+        "wrap onto a second line and cover the picture they are drawn over.")
+
+
+# ------------------------------------------------- who a replacement replaces, one rule twice
+
+def test_the_panel_asks_for_who_on_the_role_the_tray_refuses_it_on():
+    """One role token, two files. The panel draws the field only for it and clears the words when
+    the role moves away; comfyui/tray.py refuses a slot that carries them under any other role. If
+    those two ever named different roles, the panel would collect words the queue turns away."""
+    assert _js_string(TRAY_JS, "REPLACEMENT") == T.REPLACEMENT
+    assert 'slot.kind === "picture" && slot.role === REPLACEMENT' in TRAY_JS, (
+        "the panel no longer gates the field on that role, so this comparison is blind")
+
+
+def test_both_halves_say_the_same_thing_about_a_replacement_that_names_nobody():
+    """The panel says it the moment it becomes true and the tray says it again when the job runs.
+    Two statements of one sentence, so the sentence itself is what gets compared."""
+    assert _js_string(TRAY_JS, "SAY_WHO") == T.SAY_WHO
+    with pytest.raises(Exception) as refused:
+        T.check_swaps([T.Slot(kind="picture", label=who, role=T.REPLACEMENT, file="x.png [input]")
+                       for who in ("carguy", "picture2")])
+    assert T.SAY_WHO in str(refused.value)
+
+
+def test_the_example_answer_is_the_same_on_both_sides():
+    """The field's placeholder and the refusal both show the shape of an answer, and a user who
+    reads one and then the other is reading about the same thing."""
+    assert "the man in the plaid shirt" in TRAY_JS
+    with pytest.raises(Exception) as refused:
+        T.check_swaps([T.Slot(kind="picture", label=who, role=T.REPLACEMENT, file="x.png [input]")
+                       for who in ("a", "b")])
+    assert "the man in the plaid shirt" in str(refused.value)
 
 
 # --------------------------------------------------------------- the naming rule, one rule twice

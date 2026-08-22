@@ -26,6 +26,8 @@ wiring that brief is true for**. Nothing else in your system has to understand H
 | `PATCH` | `/v1/briefs/{id}` | refine in plain language: `{"change":"make it darker"}` → `200`, new version |
 | `GET` | `/v1/briefs/{id}/prompt` | the prompt text alone |
 | `GET` | `/v1/loras` | available styles, by id and prose |
+| `GET` | `/v1/directors` | the seven shipped profiles in full, the twenty camera moves, and what a profile governs |
+| `GET` | `/v1/directors/{id}` | one profile. `404` names the listing route |
 | `PUT` | `/v1/assets/{sha256}` | send one attachment's bytes. `201` when stored, `422` when the bytes do not hash to the name |
 
 The only required field is `intent`. Everything else has a defensible default.
@@ -92,6 +94,49 @@ Three things a surface must not get wrong about it:
 - **The middle two positions are deliberately soft.** `bold` is a nudge. If it does not visibly
   change an output, that is the design. Do not build a UI that promises a visible difference at
   every step.
+
+## Who is directing
+
+Optional, and off unless you send it. Two fields on `POST /v1/briefs`: `director` names one of the
+seven this build ships, by id, and `director_profile` is `{"name": ..., "notes": ...}` carrying one
+your user wrote. Send neither and the writing behaves exactly as it always has, which is the default
+every existing caller already gets. Send both and a recognised `director` id wins; the profile you
+sent is used only when the id names nothing this build has.
+
+**A profile is prose, not a schema.** `notes` is a paragraph in ordinary language: what the camera
+does, how tight the framing is and from what height, what the light and the colour are like, what the
+frame spends its attention on, how bodies move and how lines are delivered, what the room sounds like
+and what a score would be made of. There are no axes to fill in and no vocabulary to conform to. It is
+steered, not enforced: nothing narrows a rotation, suppresses a sentence or refuses a word.
+
+`name` is what the report and the record call it, and it is **never sent to the writer**. Naming a
+director to a model is the shortest path to getting that director's famous shots back instead of a way
+of working, so the habits do the work and the name stays on your side of the wire.
+
+Four things a surface must not get wrong about it:
+
+- **It fills the residual, and only the residual.** The compiler resolves every attribute to your
+  request or to a reference first, states that resolution in the ask, and places the profile
+  underneath it. Write "a locked-off wide" and you get a locked-off wide whoever is directing, while
+  the light and the sound are still theirs.
+- **It never sets how many shots there are or where they cut.** Pin `shots` and the count is your
+  contract, enforced. Leave it unset and the writer decides the edit, exactly as it does with no
+  profile at all. A UI that presents direction as an editing control is promising something this
+  layer deliberately cannot do.
+- **An unknown `director` id does not fail the render.** It falls back to no direction and says so as
+  a `WARN` finding, `N2-director-unknown`, naming the word that missed. A saved script pinned to an
+  id that has since been removed is told rather than quietly compiled with no direction at all. A
+  profile with a name and an empty `notes` is inert rather than invalid, and says so as
+  `N1-director-empty`.
+- **The one refusal is length.** A `notes` over 5,000 characters is a `422` with
+  `code: director-profile-invalid`, because all of it rides in the ask on every call and a pasted
+  document crowds out the request itself. That number is not in `GET /v1/capabilities` today, so a
+  client that wants to say it before the round trip has to copy it. It is the one ceiling in this API
+  you cannot read back, and the ComfyUI panel copies it for exactly that reason.
+
+`GET /v1/directors` returns the seven in full, the twenty camera-move names H3 recognises, and one
+sentence saying what a profile governs, so a surface can show somebody a real paragraph to start from
+and edit rather than a menu of names that select something invisible.
 
 ## What it guarantees, and is safe to build on
 

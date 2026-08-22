@@ -63,6 +63,12 @@ class AssetIn(BaseModel):
                           "not share a filesystem. Upload with PUT /v1/assets/{sha256}.")
     url: str | None = None
     note: str | None = Field(None, description="Free text hint, e.g. 'the man'. Never required.")
+    replaces: str | None = Field(
+        None, description="On a `replacement_subject` picture only: who in the edited clip this "
+                          "one takes over from, in your own words, e.g. 'the man in the plaid "
+                          "shirt'. Needed when the clip holds more than one figure of the same "
+                          "kind, and when the figure is not visible in the frames this service "
+                          "samples. Refused on any other role rather than dropped.")
     kind: Literal["image", "video", "audio"] = "image"
     role: str | None = Field(None, description="Optional. Inferred when omitted.")
     sizing: Literal["match", "max"] = "match"
@@ -108,6 +114,26 @@ class BriefIn(BaseModel):
                     "plus a score if the piece wants one; bold = may introduce a spoken line, a "
                     "score, on-screen text or a beat the request never mentioned. An explicit "
                     "prohibition in the request (\"no dialogue\") overrides every setting.")
+    director: str = Field(
+        "",
+        description="One of the profiles that ship with this service, by id: whose taste fills what "
+                    "the request and the references leave open — the camera, the framing, the light "
+                    "and colour, what the frame attends to, how bodies and delivery are written, "
+                    "and what the room and any score are made of. It never decides how many shots "
+                    "there are or where they cut, and anything the request states explicitly "
+                    "outranks it. GET /v1/directors for the list and the prose of each. Empty means "
+                    "no direction, which is what every brief written before this existed compiles "
+                    "at.")
+    director_profile: dict[str, Any] | None = Field(
+        None,
+        description="Direction in your own words, instead of a shipped id: {\"name\": ..., "
+                    "\"notes\": ...}. `notes` is prose — how the piece should be shot — and it is "
+                    "handed to the writer as taste, not as rules: it is placed under the statement "
+                    "of which attributes the request and the references already govern, and under "
+                    "the creativity setting's prohibitions. `name` reaches the report and never the "
+                    "writer, because naming a director invites imitation of particular films "
+                    "instead of a way of working. Fetch a shipped profile and edit it to start from "
+                    "one. Say habits, not shots.")
     effort: Literal["fast", "standard", "max"] = "standard"
     seed: int | None = 7
     transcripts: dict[str, str] = Field(
@@ -136,9 +162,12 @@ _ROLE_BY_NAME = {r.value: r for r in Role}
 # would be a worse message than naming the ones that apply.
 _ROLES_BY_KIND = {
     "image": (Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST, Role.SUBJECT, Role.ENVIRONMENT,
-              Role.STYLE, Role.STORYBOARD),
+              Role.STYLE, Role.STORYBOARD, Role.PLACED_SUBJECT, Role.REPLACEMENT_SUBJECT),
+    # `structure` was added to the enum and not to this line, so the message that lists a video's
+    # roles has been omitting one ever since. The list is only ever read to build that message, so
+    # the effect was a caller told a legal role does not exist.
     "video": (Role.EDIT_SOURCE, Role.CONTINUATION_SOURCE, Role.SUBJECT, Role.ENVIRONMENT,
-              Role.STYLE, Role.STORYBOARD),
+              Role.STYLE, Role.STORYBOARD, Role.STRUCTURE),
     "audio": (Role.VOICE_TIMBRE, Role.BGM, Role.MUSIC_STYLE, Role.BEAT_REFERENCE, Role.SFX),
 }
 
@@ -275,7 +304,8 @@ def _to_brief(b: BriefIn) -> Brief:
         assets.append(AssetRef(kind=AssetKind(a.kind), role=role, sha256=sha,
                                path=str(p), note=a.note, sizing=a.sizing, seconds=a.seconds,
                                frames=a.frames, provenance=a.provenance,
-                               paired_video_sha256=paired, role_stated=stated))
+                               paired_video_sha256=paired, role_stated=stated,
+                               replaces=(a.replaces or "").strip()))
 
     # An answered clarification becomes an explicit role, which is exactly how it would have
     # arrived had the caller known: the answer is data, not a special code path.
@@ -289,7 +319,8 @@ def _to_brief(b: BriefIn) -> Brief:
                            for d in b.dialogue],
                  onscreen_text=list(b.onscreen_text), shots=b.shots, loras=list(b.loras),
                  silent=b.silent, constraints=list(b.constraints), effort=b.effort,
-                 creativity=b.creativity)
+                 creativity=b.creativity, director=b.director,
+                 director_profile=b.director_profile)
 
 
 def _plan_layer(doc: IRDocument) -> dict[str, Any]:
@@ -300,6 +331,7 @@ def _plan_layer(doc: IRDocument) -> dict[str, Any]:
         # while looking only at the brief.
         "asked_for": doc.provenance.get("request"),
         "creativity": doc.provenance.get("creativity"),
+        "director": doc.provenance.get("director"),
         "style": doc.plan.style_phrase,
         "shots": [{"n": s.n,
                    "from": round(s.start_ms / 1000, 2), "to": round(s.end_ms / 1000, 2),
@@ -365,6 +397,37 @@ def _remember(brief_id: str, brief: Brief, doc: IRDocument) -> None:
 def health() -> dict[str, Any]:
     with Backend(get_config()) as b:
         return {"ok": True, "llm": b.health(), "profile": get_config().profile}
+
+
+@app.get("/v1/directors")
+def list_directors() -> dict[str, Any]:
+    """Every profile a caller can name, with the prose of each.
+
+    **The prose IS published, unlike `/v1/loras`' trigger strings.** A profile is not a secret and
+    not a key: it is a paragraph an agent should be able to read, borrow a line from, and edit into
+    its own. Withholding it would leave a caller choosing between seven names with nothing to tell
+    them apart, which is the same thing the canvas panel refuses to do.
+    """
+    from . import director as D
+    return {
+        "governs": "whatever the request and the references leave open. An explicit instruction in "
+                   "the request outranks a profile. Shot count and cut times are never a "
+                   "profile's: pin `shots` and the count is yours, leave it unset and the writer "
+                   "decides the edit.",
+        "camera_moves": list(D.CAMERA_MOVES),
+        "directors": [D.to_mapping(d) for d in D.DIRECTORS],
+    }
+
+
+@app.get("/v1/directors/{name}")
+def get_director(name: str) -> dict[str, Any]:
+    """One shipped profile, to read or to use as the starting point for your own."""
+    from . import director as D
+    d = D.BY_ID.get(str(name).strip().lower())
+    if d is None:
+        raise HTTPException(404, f"no director called {name!r}. The list is at GET /v1/directors.")
+    return D.to_mapping(d)
+
 
 
 @app.get("/v1/loras")

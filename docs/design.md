@@ -689,8 +689,7 @@ pointer that names nothing, at full compute cost.
 **Profiles.** Every genuinely-unknown behaviour is a field in a versioned `profile` object, never a
 branch in code: `sections_included`, `verbosity_band`, `s_ss_policy` (`snapped` | `nominal`),
 `fl2va_bracket_style`, `field_separator`, `style_opening_placement`, `camera_prose_style`,
-`analysis_depth`, `trigger_repeat_default`, `unknown_turbo_stacking` (`allow_flag` | `block`),
-`composed_retention_style`. Changing a belief = publishing `h3ir/2026-09-b`, not editing the compiler.
+`analysis_depth`, `trigger_repeat_default`, `composed_retention_style`. Changing a belief = publishing `h3ir/2026-09-b`, not editing the compiler.
 Every IRDocument records the profile that produced it, so a regression is attributable.
 
 **Cache keys** (content-addressed, so a change re-does exactly one stage):
@@ -777,9 +776,6 @@ never sole input, and the fact that nothing truncates the prompt.
   unreliable motion). Not designed for; the seam is `AssetCard.composition`, already populated. My
   mechanistic hypothesis and the third test arm that distinguishes the two possible causes are in
   §14.8 — **[MINE, falsifiable]**.
-- **U12** Whether style LoRAs compose safely over the Turbo distillation LoRA, the safe strength band,
-  and whether stacking disturbs the step band. Being measured by the pipeline engineer; lands in
-  `stacks_with_turbo` and `constrains.steps` per LoRA (§14.3), no redesign either way.
 - **U10** Whether abliteration has cost this model any format-following precision. The IR is a strict
   format and abliterated checkpoints are tuned for compliance in a different direction. Cheap probe:
   score N renders against the validator and track the ERROR rate before repair — a high pre-repair
@@ -1177,7 +1173,6 @@ constrains:                      # null = no constraint
   steps: null
   canvas: null
 conflicts_with: [photoreal-v1]
-stacks_with_turbo: unknown       # unknown | yes | no  <- the pipeline engineer fills this in
 license: "…"
 ---
 ```
@@ -1193,12 +1188,6 @@ Prose body, in this order, because it is read by a model doing semantic matching
 - **Known failure modes** — what it breaks (faces, legible text, fast motion). These become planner
   warnings, and at 768p output (§11) a LoRA that damages small text matters more than it would at 2K.
 - **Example style openings** — one or two, in IR shape, showing the trigger in its slot.
-
-`stacks_with_turbo: unknown` is how the contract absorbs the pipeline engineer's pending measurement
-without waiting for it: the field exists now with an explicit third state, and a profile setting says
-whether `unknown` means *allow and flag* or *block*. When the numbers land, they fill a field; nothing
-is redesigned. The same is true of `constrains.steps` — if stacking disturbs the step band, that is
-where it gets recorded, per-LoRA.
 
 ### 14.4 Selection is a compiler stage, and the checkpoint constraint is real
 
@@ -1259,7 +1248,6 @@ hit — the right text, the wrong weights, and no way to tell from the artifact.
 | R52 | ERROR | every non-null `constrains` field is satisfied by the request (names the specific violation) |
 | R53 | ERROR | no selected pair appears in each other's `conflicts_with` |
 | R54 | WARN | strength was clamped into the declared range (records requested and applied) |
-| R55 | ERROR | `stacks_with_turbo: no` while the Turbo distillation LoRA is active; `unknown` is profile-gated |
 | R56 | ERROR | the on-disk file's sha256 matches the registry record |
 | R57 | WARN | a registered trigger is exempt from R42's English-body rule; an *unregistered* non-English token in the style slot still errors |
 

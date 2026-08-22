@@ -6,7 +6,8 @@ holds the intent behind its own text. Validator findings are unusually good revi
 they name the rule, the offence and the line.
 
 What stays in code is only what the model cannot know or must never re-type: label ordinals (the
-wiring owns socket order), the caller's dialogue, and unicode hazards.
+wiring owns socket order), the task-type prefix (the roles of the attachments derive it), the
+caller's dialogue, and unicode hazards.
 """
 from __future__ import annotations
 
@@ -352,3 +353,90 @@ def test_the_loop_fires_on_it_and_is_told_what_it_needs():
     assert "change nothing else" in sent.lower()
     # and the caller's own material is in front of the model to preserve
     assert "Hold the line!" in sent
+
+
+# ------------------------------------------------------- the task-type prefix is never the model's
+
+def _repaired(text, task_types=("reference generation", "video editing", "audio reuse")):
+    return repair(text, target=Target.build(8), mode=Mode.REF2VA,
+                  labels=("<Picture 1>", "<Video 1>", "<Audio 1>"), task_types=task_types)
+
+
+def test_the_shipped_prefix_is_the_one_the_wiring_derives():
+    """Rule 1: structure is computed, never chosen by a model. Measured on two live renders with
+    the same wiring shape -- a replacement picture, an edit_source clip and its paired soundtrack --
+    where one shipped all three derived types and the other dropped `reference generation`, the one
+    the picture is the whole reason for. Nothing compared the two."""
+    res = _repaired(GOOD.replace("[reference generation]", "[video editing + audio reuse]"))
+    assert "[reference generation + video editing + audio reuse]" in res.text
+    assert "[video editing + audio reuse]" not in res.text.replace(
+        "[reference generation + video editing + audio reuse]", "")
+    assert any("task-type prefix" in r for r in res.repairs), res.repairs
+
+
+def test_a_summary_that_forgot_the_prefix_is_given_the_derived_one():
+    """Rather than spending a fix-loop round on M1 to be told something the code already knows."""
+    res = _repaired(GOOD.replace("[reference generation] The target", "The target"))
+    assert res.text.count("[reference generation + video editing + audio reuse] The target") == 1
+    assert any("added the task-type prefix" in r for r in res.repairs), res.repairs
+
+
+def test_a_prefix_that_already_agrees_is_left_alone_and_reported_as_nothing():
+    """A repair line for a repair that did not happen is a report nobody can trust."""
+    res = _repaired(GOOD, task_types=("reference generation",))
+    assert res.text.count("[reference generation]") == 1
+    assert not [r for r in res.repairs if "task-type" in r], res.repairs
+
+
+def test_the_prefix_is_replaced_on_either_layout_of_the_section():
+    """Both shapes come back from the writer: the prefix on the colon's line and on the next."""
+    for head in ("summary:\n[video editing] The target", "summary: [video editing] The target"):
+        text = GOOD.replace("summary:\n[reference generation] The target", head)
+        res = _repaired(text, task_types=("reference generation",))
+        assert "[reference generation] The target" in res.text, head
+
+
+def test_only_the_opening_prefix_is_touched():
+    """A second bracket group inside the summary is M9's business, and an editor that reached for
+    it would take the evidence away from the rule that reports it.
+
+    The fixture opens with PROSE and carries the bracket group later, which is the one input that
+    tells the two readings apart. Written the obvious way -- a wrong prefix in front and a group
+    behind it -- both a match-at-the-start and a search-anywhere pass, and the test proved nothing:
+    it survived that mutation the first time it was run against one.
+    """
+    text = GOOD.replace("[reference generation] The target video shows",
+                        "The target video shows [reference generation] and")
+    res = _repaired(text, task_types=("reference generation",))
+    assert res.text.count("[reference generation]") == 2, res.text
+    body = res.text.split("summary:", 1)[1].lstrip()
+    assert body.startswith("[reference generation] The target video shows"), body
+
+
+def test_no_derived_types_means_the_prefix_is_left_exactly_as_written():
+    """Every caller that predates this passes nothing, and gets what it always got."""
+    res = _repaired(GOOD.replace("[reference generation]", "[video editing]"), task_types=())
+    assert "[video editing]" in res.text
+    assert not [r for r in res.repairs if "task-type" in r]
+
+
+def test_the_rule_behind_it_catches_a_prefix_that_disagrees_with_the_wiring():
+    ctx = Context(mode="ref2va", n_pictures=1, n_videos=1, n_audios=1,
+                  task_types=("reference generation", "video editing", "audio reuse"))
+    bad = GOOD.replace("[reference generation]", "[video editing + audio reuse]")
+    assert "M16-task-prefix-not-derived" in [f.rule for f in validate(bad, ctx)]
+
+
+def test_the_rule_abstains_when_the_wiring_did_not_say():
+    ctx = Context(mode="ref2va", n_pictures=1)
+    bad = GOOD.replace("[reference generation]", "[video editing]")
+    assert "M16-task-prefix-not-derived" not in [f.rule for f in validate(bad, ctx)]
+
+
+def test_a_reordered_prefix_is_not_a_defect():
+    """The input that must NOT trip it. Which types apply is decidable from the roles; the order
+    they print in is this pack's convention and not something the spec constrains."""
+    ctx = Context(mode="ref2va", n_pictures=1, n_videos=1, n_audios=1,
+                  task_types=("reference generation", "video editing"))
+    text = GOOD.replace("[reference generation]", "[video editing + reference generation]")
+    assert "M16-task-prefix-not-derived" not in [f.rule for f in validate(text, ctx)]

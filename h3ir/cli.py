@@ -73,7 +73,7 @@ def cmd_compile(args) -> int:
     dialogue = [DialogueLine(text=t) for t in (args.say or [])]
     brief = Brief(intent=args.intent, assets=assets, seconds=args.seconds, aspect=args.aspect,
                   dialogue=dialogue, shots=args.shots, silent=args.silent,
-                  creativity=args.creativity,
+                  creativity=args.creativity, director=args.director,
                   loras=[{"id": x} for x in (args.lora or [])])
 
     doc = compile_brief(brief, seed=args.seed,
@@ -155,8 +155,7 @@ def cmd_loras(args) -> int:
     print(f"registry revision {revision}, {len(records)} lora(s)")
     for r in records.values():
         print(f"\n  {r.id}  ({r.name})")
-        print(f"    kind={r.kind} target={r.target} variants={list(r.h3_variant)} "
-              f"turbo={r.stacks_with_turbo}")
+        print(f"    kind={r.kind} target={r.target} variants={list(r.h3_variant)}")
         print(f"    triggers={[t['text'] for t in r.triggers]} strength={r.strength}")
         if r.what_for():
             print(f"    for: {r.what_for()[:160]}")
@@ -193,6 +192,31 @@ def cmd_acceptance(args) -> int:
     return 0
 
 
+def cmd_directors(args) -> int:
+    """The seven, and the whole text of one when it is named.
+
+    The prose is printed rather than summarised, because a profile is a paragraph to read and edit,
+    not a switch to flip. `h3ir directors wong > mine.txt` is how somebody starts their own.
+    """
+    from . import director as D
+    named = (getattr(args, "which", "") or "").strip().lower()
+    if named:
+        d = D.BY_ID.get(named)
+        if d is None:
+            print(f"no director called {named!r}. The list is `h3ir directors`.")
+            return 2
+        print(d.notes)
+        return 0
+    print("whose taste fills what your prompt and your references leave open\n")
+    for d in D.DIRECTORS:
+        first = d.notes.split(".")[0]
+        print(f"  {d.id:<12} {d.name:<20} {first[:44]}...")
+    print("\n`h3ir directors <id>` prints the whole thing, which is what a profile is: prose.")
+    print("shot count and cut times are never a director's; anything your prompt states "
+          "explicitly outranks one.")
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("h3ir.service:app", host=args.host, port=args.port, log_level="info")
@@ -219,6 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--silent", action="store_true")
     c.add_argument("--creativity", choices=["restrained", "balanced", "bold", "extreme"], default="balanced",
                    help="how much the writer may add beyond the request (default: balanced)")
+    c.add_argument("--director", default="",
+                   help="whose taste fills what the request and the references leave open "
+                        "(`h3ir directors` for the list; default: nobody's)")
     c.add_argument("--lora", action="append")
     c.add_argument("--seed", type=int, default=7)
     c.add_argument("--camera-style", default="canonical", choices=["canonical", "prose"])
@@ -238,13 +265,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "mode, which is what production does.")
     e.add_argument("--creativity", choices=["restrained", "balanced", "bold", "extreme"], default=None,
                    help="force every brief to one position, to measure the dial")
+    e.add_argument("--director", default=None,
+                   help="force every brief to one director, to measure one arm across the suite")
     e.add_argument("--camera-style", default="canonical", choices=["canonical", "prose"])
     e.add_argument("--thinking", action="store_true")
     e.add_argument("--seed", type=int, default=7)
     e.add_argument("--only", action="append")
     e.add_argument("--set-baseline", action="store_true")
     e.add_argument("--note", default="", help="recorded with the run; say what a baseline supersedes")
-    e.add_argument("--omit", action="append", choices=["facts", "style", "licence", "scope"],
+    e.add_argument("--omit", action="append",
+                   choices=["facts", "style", "licence", "scope", "director"],
                    help="drop a block from the composing ask (ablation; repeatable)")
     e.set_defaults(func=cmd_eval)
 
@@ -253,6 +283,10 @@ def build_parser() -> argparse.ArgumentParser:
     b.set_defaults(func=cmd_baseline)
 
     sub.add_parser("loras").set_defaults(func=cmd_loras)
+    d = sub.add_parser("directors")
+    d.add_argument("which", nargs="?", default="",
+                   help="one id, to print the whole profile instead of the list")
+    d.set_defaults(func=cmd_directors)
 
     bu = sub.add_parser("budget")
     bu.add_argument("--seconds", type=float, default=5.0)

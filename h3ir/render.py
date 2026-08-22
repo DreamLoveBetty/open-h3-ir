@@ -15,8 +15,9 @@ import re
 from dataclasses import dataclass, field
 
 from .grid import instruction_line_for, ms_to_timestamp
-from .models import AssetKind, DialogueLine, Mode, Plan, Role, SpeakerPlan
-from .plan import ProfileOptions, audio_relations
+from .models import (AssetKind, DialogueLine, Mode, Plan, Role, SWAP_ROLES, SpeakerPlan,
+                     SubjectPlan)
+from .plan import ProfileOptions, audio_relations, taken_definition
 from .textnorm import sentences
 
 CAM_TOKEN = "{{CAM}}"
@@ -41,10 +42,37 @@ def instruction_line(plan: Plan, opts: ProfileOptions) -> str:
                                 plan.target.s_ss(opts.s_ss_policy))
 
 
+def _swap_clause(plan: Plan, s: SubjectPlan) -> str:
+    """The reference role of a swap subject, in the definition line where ref-en.txt 2 wants it.
+
+    "explain what its label denotes, its reference role, and the main features to follow" -- and
+    for these two roles the reference role IS the whole point, because the identity is what an
+    ordinary `subject` already supplies and the relationship to the clip is what it does not.
+    """
+    roles = {m.label: m.role for m in plan.manifest}
+    clip = next((m.label for m in plan.manifest if m.role is Role.EDIT_SOURCE), "")
+    role = next((roles.get(src) for src in s.sources if roles.get(src) in SWAP_ROLES), None)
+    if not clip or role is None:
+        return ""
+    if role is Role.PLACED_SUBJECT:
+        return (f" {s.label} is placed into {clip} in the target video, which is otherwise "
+                "unchanged.")
+    taken = next((x.label for x in plan.subjects if x.taken_over_by == s.label), "")
+    if not taken:
+        return ""
+    return (f" {s.label} takes the place of {taken} in {clip}, keeping that figure's position in "
+            "frame, actions and timing.")
+
+
 def render_subject_definitions(plan: Plan) -> str:
     """Templated, which is why a redundant standalone <Picture N> source line cannot occur."""
     lines: list[str] = []
     for s in plan.subjects:
+        # The figure being replaced gets a line that identifies it and nothing to draw. See
+        # plan.taken_definition for the render that made that necessary.
+        if s.taken_over_by:
+            lines.append(taken_definition(s))
+            continue
         src = ", ".join(s.sources)
         # IDENTITY only. A plate's stance, gesture and expression are properties of that
         # photograph, and the request owns what the subject does -- unless the plate IS a frame
@@ -53,10 +81,11 @@ def render_subject_definitions(plan: Plan) -> str:
         if s.pose_licensed and s.pose:
             facts += list(s.pose)
         attrs = ", ".join(facts)
+        swap = _swap_clause(plan, s)
         if attrs:
-            lines.append(f"{s.label} is {s.descriptor} in {src}, with {attrs}.")
+            lines.append(f"{s.label} is {s.descriptor} in {src}, with {attrs}.{swap}")
         else:
-            lines.append(f"{s.label} is {s.descriptor} in {src}.")
+            lines.append(f"{s.label} is {s.descriptor} in {src}.{swap}")
     for m in plan.manifest:
         if m.kind is AssetKind.VIDEO and m.role is Role.EDIT_SOURCE:
             lines.append(f"{m.label} is the source video for the target video edit.")
@@ -125,18 +154,53 @@ def render_retention(plan: Plan) -> str:
     for s in plan.subjects:
         shots = ", ".join(f"[Shot {n}]" for n in s.appears_in)
         note = s.retention_note
-        if s.retention == "attribute_transfer":
-            # The intent is stated in the brief rather than carried privately, which is the point
-            # of using the spec's own marker: the model is told a transfer is intended instead of
-            # being left to infer a contradiction between the plate and the style line.
-            note = (f"{note}, while the rendering style is replaced with "
-                    f"{plan.style_phrase or 'the requested style'}")
+        # `plan.retention_note` already writes the transfer sentence for this marker, naming what
+        # moves and where it lands. There used to be a style clause spliced on here, from the
+        # reading of `attribute_transfer` that build-log 43 deleted; nothing sets that marker for
+        # a restyle any more, and the medium travels through the style opening instead.
+        if s.retention == "attribute_transfer" and not s.taken_over_by:
+            note = f"{note} — the target subject this transfers to is not named"
         lines.append(f"{s.label} (appears in {shots}): {s.retention} - {note}.")
     for m in plan.manifest:
         if m.kind is AssetKind.VIDEO:
             if m.role is Role.EDIT_SOURCE:
-                lines.append(f"{m.label} (source video editing): fully_preserved - the original "
-                             "framing, lighting and setting are maintained while the edit is applied.")
+                # Under a swap the clip's line has to enumerate what survives, because what
+                # survives IS the request: the caller asked for the same camera, the same motion
+                # and the same words with a different figure in them, and a line that says only
+                # "while the edit is applied" leaves every one of those unstated.
+                swapped = [x for x in plan.subjects if x.taken_over_by]
+                placed = [x for x in plan.subjects
+                          if any(e.role is Role.PLACED_SUBJECT and e.label in x.sources
+                                 for e in plan.manifest)]
+                if swapped or placed:
+                    # Every change, not the first one. Two pictures can each replace a different
+                    # figure, and a line naming one of them describes an edit the wiring does not
+                    # perform: the second subject would be defined, marked and then unaccounted for
+                    # in the sentence that says what happens to the clip.
+                    changes = [f"{x.taken_over_by} takes the place of {x.label}" for x in swapped]
+                    changes += [f"{x.label} is placed into the scene" for x in placed]
+                    what = (changes[0] if len(changes) == 1
+                            else ", ".join(changes[:-1]) + f" and {changes[-1]}")
+                    # `fully_preserved` and "are maintained while ... is edited", which is the
+                    # shape MiniMax's own README gives for a video being edited: "the original
+                    # camera framing, warm golden hour lighting, grassy hill setting, and
+                    # background white lambs are maintained while the central character is edited".
+                    # Their README and not ref-en.txt: the spec defines the four markers and shows
+                    # worked examples for people and objects, and has none for an edited video. It
+                    # is the best evidence there is, and it is an example rather than a rule.
+                    #
+                    # What it replaced said `partially_preserved` -- some characteristics change --
+                    # in the same breath as "held exactly", which says none do. It also promised a
+                    # frame-for-frame match, which the measurement in AGENTS.md says these weights
+                    # do not deliver. The branch below already says almost exactly this; the two
+                    # now agree.
+                    lines.append(
+                        f"{m.label} (source video editing): fully_preserved - the original framing, "
+                        "camera movement, lighting, setting, action and timing are maintained "
+                        f"while {what}.")
+                else:
+                    lines.append(f"{m.label} (source video editing): fully_preserved - the original "
+                                 "framing, lighting and setting are maintained while the edit is applied.")
             elif m.role is Role.CONTINUATION_SOURCE:
                 lines.append(f"{m.label} (continuation source): partially_preserved - the setting "
                              "and subject continue from its final state.")

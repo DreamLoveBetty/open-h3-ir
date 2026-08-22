@@ -80,7 +80,8 @@ def _strip_fence(text: str) -> str:
 
 def repair(text: str, *, target: Target, mode: Mode, labels: tuple[str, ...],
            dialogue: tuple[str, ...] = (), style_phrase: str = "",
-           definitions: tuple[str, ...] = ()) -> RepairResult:
+           definitions: tuple[str, ...] = (),
+           task_types: tuple[str, ...] = ()) -> RepairResult:
     """Correct everything mechanical in a written brief."""
     res = RepairResult(text=_strip_fence(text))
     if res.text != text.strip():
@@ -90,9 +91,11 @@ def repair(text: str, *, target: Target, mode: Mode, labels: tuple[str, ...],
     # findings (see prose.fix_with_findings) rather than being edited by a bespoke parser here.
     # What stays is only what the model cannot know or must never re-type:
     #   * the label namespace and ordinals -- only the wiring knows the socket order
+    #   * the task-type prefix -- derived from what is attached, never chosen
     #   * the caller's dialogue -- their words, never round-tripped through a model
     #   * unicode hazards -- zero judgement, and a curly quote is a different token sequence
     res.text = _fix_unicode(res.text, res)
+    res.text = _fix_task_prefix(res.text, task_types, res)
     res.text = _fix_labels(res.text, labels, res)
     if mode is Mode.FL2VA:
         res.text = _fix_fl2va_notation(res.text, res)
@@ -105,6 +108,43 @@ def repair(text: str, *, target: Target, mode: Mode, labels: tuple[str, ...],
 
 
 # --------------------------------------------------------------------------- pieces
+
+def _fix_task_prefix(text: str, task_types: tuple[str, ...], res: RepairResult) -> str:
+    """Put the DERIVED task-type prefix on the summary, whatever the model wrote there.
+
+    Rule 1 of this codebase: structure is computed and never chosen by a model, and the prefix is
+    structure -- `plan.derive_task_types` reads it off the roles of what is attached, "from roles,
+    never from prose". The deterministic draft has always templated it (`render.render_summary`,
+    whose docstring says a prose stage that could write the prefix could invent a relationship the
+    pack does not contain). On the write-first path the model's version was the one that shipped
+    and nothing compared the two.
+
+    Measured on two live renders with the same wiring shape -- a `replacement_subject` picture, an
+    `edit_source` clip and its paired soundtrack, which derive `reference generation + video
+    editing + audio reuse`. One shipped all three. The other shipped `[video editing + audio
+    reuse]`, dropping the type the picture is the whole reason for. No rule fired on either.
+
+    Runs on every candidate, the fix loop's rounds included, so a round that rewrites the summary
+    cannot reintroduce its own. `M15` is the backstop behind it.
+    """
+    if not task_types:
+        return text
+    wanted = "[" + " + ".join(task_types) + "]"
+    head = re.search(r"^summary\s*:[ \t]*", text, re.M)
+    if not head:
+        return text
+    lead = re.match(r"\s*", text[head.end():]).group(0)
+    body = text[head.end() + len(lead):]
+    got = re.match(r"\[[^\]\n]*\]", body)
+    if got and got.group(0) == wanted:
+        return text
+    res.repairs.append(
+        (f"replaced the summary's task-type prefix {got.group(0)!r} with {wanted}, which is what "
+         "the attachments derive") if got else
+        f"added the task-type prefix {wanted}, which the attachments derive")
+    return text[:head.end()] + lead + wanted + " " + (body[got.end():].lstrip() if got else body)
+
+
 
 def _fix_unicode(text: str, res: RepairResult) -> str:
     """Verbatim spans keep whatever they contain; everything else is normalised."""

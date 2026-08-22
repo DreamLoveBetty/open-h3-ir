@@ -14,6 +14,8 @@ conversation, the Setup bundle, and the job routing.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from comfyui import h3ir_client as C
@@ -654,3 +656,62 @@ def test_a_legal_megapixels_value_travels():
                         effort="standard", seed=7, silent=False, shots="auto", assets=[],
                         transcripts={}, megapixels=0.6)
     assert p["megapixels"] == 0.6
+
+
+# --------------------------------------------------------------------------- the director
+
+def test_a_director_that_did_not_arrive_is_reported_not_swallowed():
+    """The one thing a director can do silently: direction travels, something upstream drops it, and
+    the brief compiles perfectly with no direction at all. The node knows it sent something and the
+    record says what was used; disagreement between those two is the whole failure, and it needs no
+    new channel to detect."""
+    from comfyui.h3ir_client import director_note
+    assert director_note(False, "") == ""
+    assert director_note(False, "director: none") == ""
+    assert director_note(True, "director: Wong Kar-wai") == ""
+    assert director_note(True, "director: My noir") == ""
+    assert "no direction at all" in director_note(True, "director: none")
+    assert "no direction at all" in director_note(True, "")
+
+
+def test_the_payload_omits_the_director_when_nothing_is_written():
+    """A graph with no Director node must send byte-identically to one written before the node
+    existed, or two payloads differ over a default nobody chose. A node dropped in and left blank is
+    the same request as no node at all -- it is somebody who has not written it yet."""
+    from comfyui.h3ir_client import build_payload
+    common = dict(seconds=8.0, aspect="16:9", creativity="balanced", effort="standard", seed=7,
+                  silent=False, shots="auto", assets=[], transcripts={})
+    plain = build_payload("a man walks", **common)
+    assert "director" not in plain and "director_profile" not in plain
+    blank = build_payload("a man walks", director_profile={"name": "Mine", "notes": "  "}, **common)
+    assert "director_profile" not in blank
+    steered = build_payload("a man walks",
+                            director_profile={"name": "Mine", "notes": "sodium light"}, **common)
+    assert steered["director_profile"] == {"name": "Mine", "notes": "sodium light"}
+    # The id is the CLI's and an agent's, never this pack's: what is on the canvas is prose the user
+    # can edit, so sending a name for it would send something they cannot see.
+    assert "director" not in steered
+
+
+def test_the_node_reads_its_one_field_and_refuses_only_what_is_not_that_shape():
+    """Nothing about the writing is judged on the canvas. What is judged is whether the widget holds
+    what the panel writes, because that is a fact about the widget rather than an opinion about
+    somebody's paragraph."""
+    from comfyui.h3ir_client import ServiceError, director_bundle
+    assert director_bundle(profile="") is None
+    assert director_bundle(profile="{}") is None
+    assert director_bundle(profile='{"name": "Mine", "notes": "   "}') is None
+    assert director_bundle(profile='{"notes": "sodium light"}') == {"name": "Custom",
+                                                                   "notes": "sodium light"}
+    assert director_bundle(profile='{"name": " Mine ", "notes": " sodium light "}') == {
+        "name": "Mine", "notes": "sodium light"}
+    # A paragraph far past the compiler's cap travels: the sentence about it belongs to the compiler,
+    # where the ask is assembled, and a second copy of the number here would be a second opinion.
+    long = director_bundle(profile=json.dumps({"name": "x", "notes": "y" * 9000}))
+    assert len(long["notes"]) == 9000
+    with pytest.raises(ServiceError) as e:
+        director_bundle(profile="{not json")
+    assert "not readable" in str(e.value)
+    with pytest.raises(ServiceError) as e:
+        director_bundle(profile="[1, 2]")
+    assert "has to be an object" in str(e.value)

@@ -119,6 +119,15 @@ def _mut_dialogue_marker_case(t: str) -> str:
     return t.replace("<d>[English] Hey!", "<D>[English] Hey!", 1)
 
 
+def _mut_label_not_closed(t: str) -> str:
+    r"""A label opened and never closed. Found SHIPPED with zero findings, in the first live
+    replacement brief anybody compiled: "<Subject 4> is the piece of wood in <Video 1," -- the '>'
+    dropped and a comma in its place. Every other label rule walks `<(Kind) (\d+)>`, so the broken
+    one matched none of them and the reference simply vanished."""
+    return t.replace("<Subject 2> is the fluffy white Samoyed in <Picture 2>,",
+                     "<Subject 2> is the fluffy white Samoyed in <Picture 2,", 1)
+
+
 MUTANTS: list[tuple[str, callable, str]] = [
     ("redundant <Picture N> source line", _mut_redundant_source, "L5-redundant-source-line"),
     ("<Subject N>: colon form", _mut_colon_subject, "L2-undefined-subject"),
@@ -135,6 +144,7 @@ MUTANTS: list[tuple[str, callable, str]] = [
     ("sections out of order", _mut_out_of_order, "S2-section-order"),
     ("wrapped in a code fence", _mut_code_fence, "S4-code-fence"),
     ("<D> instead of <d>", _mut_dialogue_marker_case, "D5-marker-not-byte-exact"),
+    ("a label opened and never closed", _mut_label_not_closed, "L6-label-not-closed"),
 ]
 
 

@@ -53,6 +53,14 @@ PICTURE_ROLES = {
     "something in the shot": "subject",
     "the setting": "environment",
     "a style to copy": "style",
+    # The two that are statements about another slot: a picture set to either of these says what
+    # happens to the clip in the tray that is set to "edit it", so both read as a sentence about
+    # that clip rather than about the piece. Ordered here between what a picture SHOWS and the
+    # three that say a picture IS a frame or a plan, because that is what they are: the same
+    # subject, with a job inside somebody else's footage. The service refuses either of them with
+    # a sentence when no clip is being edited, rather than quietly demoting it to `subject`.
+    "add it to the clip": "placed_subject",
+    "replace the one in the clip": "replacement_subject",
     "first frame": "frame_anchor_first",
     "last frame": "frame_anchor_last",
     "storyboard": "storyboard",
@@ -85,6 +93,8 @@ ANCHOR_FIRST = "frame_anchor_first"
 ANCHOR_LAST = "frame_anchor_last"
 ANCHORS = (ANCHOR_FIRST, ANCHOR_LAST)
 BOARD = "storyboard"
+# The one role that takes somebody's place, and so the one that has somebody to name.
+REPLACEMENT = "replacement_subject"
 
 # What happens to a clip's own soundtrack. `off` sends none of it, `paired` sends it as this clip's
 # soundtrack, which is the pairing H3 labels immediately before the clip, and `alone` sends it as a
@@ -110,6 +120,11 @@ class Slot:
     note: str = ""
     transcript: str = ""
     soundtrack: str = "off"
+    # Who this picture takes over from, in the user's own words, and only on a picture set to
+    # "replace the one in the clip". Free text rather than a list of the clip's people, because
+    # nothing in this chain can enumerate them: the service reads three sampled frames of a clip,
+    # so somebody can be in none of them and walk in later. The person looking at the clip knows.
+    replaces: str = ""
 
     @property
     def words(self) -> str:
@@ -193,9 +208,17 @@ def _one_slot(entry: dict, seen: dict[str, str]) -> Slot:
             f"{label!r} is a {kind} and it carries the words in a recording, which only a sound "
             "has. Nothing in this chain can hear a picture, and the words would be quietly "
             "dropped, so this is an error rather than a no-op.")
+    replaces = str(entry.get("replaces") or "").strip()
+    if replaces and role != REPLACEMENT:
+        raise ServiceError(
+            f"{label!r} says it replaces {replaces!r} and it is set to "
+            f"{WORDS_FOR_ROLE[kind].get(role, role)!r}. Only a picture set to "
+            f"{WORDS_FOR_ROLE['picture'][REPLACEMENT]!r} takes somebody's place, so those words "
+            "would be quietly dropped. Change what it is on the OpenH3-IR Media node, or clear "
+            "them.")
     return Slot(kind=kind, label=label, role=role, file=file,
                 note=str(entry.get("note") or "").strip(), transcript=transcript,
-                soundtrack=soundtrack)
+                soundtrack=soundtrack, replaces=replaces)
 
 
 def read_tray(text: str | None) -> list[Slot]:
@@ -345,6 +368,54 @@ def exclusivity(slots: list[Slot]) -> None:
             "one or the other, and its fl2va model takes no reference picture, clip or sound at "
             "all, so the brief would name your file and H3 would never receive it. Change one of "
             "them on the OpenH3-IR Media node.")
+
+
+def _and_list(names: list[str]) -> str:
+    """`@a`, then `@a and @b`, then `@a, @b and @c`. One joining rather than two, because this
+    sentence is written on both sides of the pack and two joinings would drift."""
+    if len(names) < 2:
+        return names[0] if names else ""
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+# The half of the sentence both halves of this pack say. The panel writes it the moment the tray
+# becomes ambiguous, and `check_swaps` writes it again when the job runs; the shared words are
+# pinned from Python by tests/test_panel_agrees_with_the_tray.py so the two cannot drift.
+SAY_WHO = "replace someone in the clip, so each has to say who"
+
+
+def check_swaps(slots: list[Slot]) -> None:
+    """Refuse a tray where two pictures take somebody's place and one of them does not say whose.
+
+    One replacement is never ambiguous: whatever it stands in for, only one picture is asking, and
+    the compiler binds it to the one figure of its kind. Two are ambiguous -- and the ambiguity is
+    NOT the count. Nothing in this chain knows how many people a clip holds: the service reads
+    three sampled frames of it, so a figure can be in none of them and walk in later, and any rule
+    resting on a head count would be guessing. What is missing is which figure each picture stands
+    in for, and the words on the picture are the only thing that can say.
+
+    So the job stops here rather than rendering a swap that picks whichever figure came first.
+    Refused before a byte is uploaded and before a model call is spent, like every other rule about
+    the wiring, and refused from Python rather than only in the panel because a tray can be written
+    by another program or edited by hand and nobody saw the panel.
+    """
+    swapping = [s for s in slots if s.role == REPLACEMENT]
+    if len(swapping) < 2:
+        return
+    silent = [s.label for s in swapping if not s.replaces]
+    if not silent:
+        return
+    # What is missing comes FIRST, and that is not a style choice. The panel says this on a line
+    # one slot wide that ends in an ellipsis, and measured on the canvas it cuts about forty
+    # characters -- which, with the general complaint in front, was exactly the part naming the
+    # picture that still has to answer. The whole sentence is in the line's tooltip either way.
+    raise ServiceError(
+        f"{_and_list([f'@{lb}' for lb in silent])} "
+        + ("does not say who it replaces." if len(silent) == 1
+           else "do not say who they replace.")
+        + f" {_and_list([f'@{s.label}' for s in swapping])} "
+        + f"{'both' if len(swapping) == 2 else 'all'} {SAY_WHO}. Say who on the OpenH3-IR Media "
+        "node, in your own words, for example: the man in the plaid shirt.")
 
 
 # --------------------------------------------------------------------------- the @ prompt

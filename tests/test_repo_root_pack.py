@@ -46,3 +46,33 @@ def test_requirements_txt_stays_directive_free():
     lines = (REPO / "requirements.txt").read_text().splitlines()
     directives = [l for l in lines if l.strip() and not l.strip().startswith("#")]
     assert directives == [], f"requirements.txt gained install directives: {directives}"
+
+
+def test_the_shipped_workflow_is_the_graph_the_readme_describes():
+    """The example is the front door: it is what "open it and run" means, and nothing else in the
+    suite reads it. Three things about it are claims the docs make out loud.
+
+    The scheduler is the one that has already gone wrong once. This chain was copied from
+    Comfy-Org's reference-to-video template, whose own note says beta or normal outperform simple
+    on reference-heavy prompts; the widget value came across and the note did not. Re-exporting the
+    graph from a canvas that has drifted back to `simple` is a silent way to lose it again.
+    """
+    import json
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    graph = json.loads((root / "comfyui" / "example" / "openh3ir_base_workflow.json")
+                       .read_text(encoding="utf-8"))
+    nodes = [n for sg in graph["definitions"]["subgraphs"] for n in sg["nodes"]]
+    kinds = {n["type"] for n in graph["nodes"]}
+    assert {"OpenH3IRSetup", "OpenH3IRMedia", "OpenH3IRCompile"} <= kinds, sorted(kinds)
+
+    scheduler = [n for n in nodes if n["type"] == "BasicScheduler"]
+    assert len(scheduler) == 1, "one scheduler, or this check no longer knows which one it reads"
+    assert scheduler[0]["widgets_values"][0] == "beta", (
+        f"the shipped graph schedules on {scheduler[0]['widgets_values'][0]!r} and comfyui/README.md "
+        "says beta, which the template it came from recommends for reference-heavy prompts")
+    assert "beta" in (root / "comfyui" / "README.md").read_text(encoding="utf-8")
+
+    # No turbo, in the graph or in any of its titles: ruled out on 2026-08-20 and stripped.
+    assert "turbo" not in json.dumps(graph).lower()
