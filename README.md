@@ -8,8 +8,8 @@ Open-source local Context-IR for MiniMax H3.
 
 ![A man sandboarding down a dune with a giant white dragon running alongside him, ending on the title OpenH3-IR](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/openh3ir-title.webp)
 
-*That title card was made by the workflow that ships in this repo: plain prose in, three named
-reference pictures, and H3 wrote the score in the same pass as the picture.* **Watch it with sound:**
+*That title card was made with this compiler: plain prose in, three named reference pictures, and
+H3 wrote the score in the same pass as the picture.* **Watch it with sound:**
 [openh3ir-title.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/openh3ir-title.mp4).
 
 ## What this is
@@ -30,7 +30,8 @@ calls MiniMax.
 
 Three ways to reach it, and none of them is the poor relation:
 
-- **In ComfyUI**, four nodes and a workflow that ships ready to run.
+- **In ComfyUI**, four nodes and a workflow that ships ready to run, from
+  [their own repository](https://github.com/ruashots/ComfyUI-OpenH3-IR).
 - **Over HTTP**, one API for an application to call.
 - **From the command line**, for trying things out and for scripting.
 
@@ -68,33 +69,7 @@ animation above is the silent version and the file is the one with audio. The br
 right half is committed beside it:
 [`off-vs-on.compiled-brief.txt`](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/off-vs-on.compiled-brief.txt).
 
-## In ComfyUI: four nodes
-
-![The three OpenH3-IR nodes on a ComfyUI canvas, tray holding three named pictures, wired to a box called Render and a save that is playing the finished title card](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/comfyui-base-workflow.png)
-
-- **OpenH3-IR Main** takes the prompt and hands the render everything it needs to run.
-- **OpenH3-IR Media** is the tray: every picture, clip and sound the piece uses, on one panel.
-- **OpenH3-IR Setup** holds the service address and the five H3 files to load.
-- **OpenH3-IR Director** is optional, and it is not in the picture. A director decides whatever your
-  prompt leaves open: how it is shot, how it is lit, how it is scored. Leave the node out and
-  nothing steers.
-
-The workflow in the picture ships with the pack:
-[`example/openh3ir_base_workflow.json`](https://github.com/ruashots/ComfyUI-OpenH3-IR/blob/main/example/openh3ir_base_workflow.json). Seven
-boxes on the canvas and that is all of it: the first three nodes, one called **Render** with the
-rendering machinery folded up inside it, one that saves the video, and two panels showing the brief
-that got written and the report of what happened. Nothing in it is set up to be fast or clever, so
-what comes out is H3 as it ships.
-
-That is the same workflow making the title card at the top of this page, caught with the finished clip
-playing in the save box. The picture is worth reading, because nearly everything the rest of this
-section explains is visible in it. The tray holds three named pictures: `@dragon` and `@man` as things
-the shot should contain, and `@desert` set to *a style to copy* with the note "a lonely anime desert"
-typed under it. The prose on Main mentions all three by name and asks for the title in words. The knobs
-are at 21:9, invention `extreme`, five shots and 1.5 megapixels. The two panels along the bottom are
-the brief that came back and the report of what happened.
-
-### Quick start
+## Quick start
 
 Two ways to get it, and they hand you different halves.
 
@@ -127,86 +102,6 @@ look at images. The list of models an endpoint serves never says which of them c
 So the compiler does not take the first id on that list. It stops, prints the ids it found, and you
 pick one. `h3ir doctor` then sends a test picture to the model you picked and says whether it saw
 it. An endpoint that serves one model gives you nothing to pick, so leave the variable unset.
-
-Restart ComfyUI and open the workflow.
-
-**Point Setup at your own five H3 files before you run it.** The shipped workflow carries the
-filenames from the machine it was built on, and yours will be named differently. Each field lists what
-is actually on your disk, and the file you choose is the file that loads: no search by name, no
-preferred build, no option meaning "work it out". The report then names every file that was opened.
-
-The nodes speak HTTP to `h3ir serve` with the standard library alone, and never import this package
-while ComfyUI is loading them. A compiler that is missing or broken costs somebody a compile, never
-their nodes.
-
-That service can also sit on another machine, media included. When it can reach your files on disk it
-opens them where they are and nothing is copied. When it cannot, which is what another machine looks
-like, the nodes send the bytes over the same connection instead. You configure none of that and there
-is no switch for it: the graph is the same either way, and a file already sent is not sent again.
-
-Besides that service, the pack needs what any H3 render needs: a ComfyUI with the MiniMax H3 nodes,
-which ship with ComfyUI itself, and H3's model files on disk.
-
-### The prompt points at the tray
-
-The prompt on Main is ordinary prose, and `@` is how it points at a file:
-
-> *@carguy prowls across @showroom and stops under the ring light, and an unseen announcer
-> @speaks("Nothing on this floor moves like it.")*
-
-A mention becomes that slot's own description in the document, so the compiler never has to guess
-which words mean which file. Whatever sits inside `@speaks("...")` comes back in the brief word for
-word and mark for mark, because a brief that rewords a locked line is refused and rewritten. A mention
-that names no slot is refused on the canvas, listing the names that do exist, before any model call is
-spent. That is the whole syntax: mentions, locked lines, prose, nothing else.
-
-### Media has meaning
-
-Every slot in the tray carries a name, a line about it, and one choice that no amount of wiring could
-express: what the file *is* to the piece.
-
-| kind | what it can be |
-| --- | --- |
-| picture | something in the shot · the setting · a style to copy · add it to the clip · replace the one in the clip · first frame · last frame · storyboard |
-| clip | copy what is in it · copy how it is shot · edit it · carry on from it |
-| sound | play it · match its style · cut to its beat · sound effect · voice to match |
-
-Those choices decide the document mechanically rather than by persuasion. A clip set to *edit it*
-produces an editing brief, whatever the prompt says. A track set to *match its style* can never be
-claimed as copied.
-
-Two of a picture's choices are about a clip in the same tray. Both need a clip set to *edit it*.
-*Add it to the clip* puts what the picture shows into that footage. It takes nothing out.
-
-*Replace the one in the clip* is a swap. Whatever the picture shows takes over from whatever is
-there now: the same place in the frame, the same movement, the same timing. The brief also says the
-old one is gone. A person, a car, a dog or a coffee cup all work the same way.
-
-If you choose either one without a clip to edit, the request is refused. The refusal names what to
-attach. Neither choice ever becomes an ordinary reference instead. An ordinary reference renders
-something plausible and wrong.
-
-A picture that replaces something gets one more field beside its role. In it you name what that
-picture stands in for, in your own words: "the man in the plaid shirt", or "the red car on the
-left".
-
-The field is free text, because nothing here can list what is in a clip. The service reads three
-frames sampled from the clip. Something can be absent from all three and still turn up later. You
-are the one watching the clip, so you are the one who knows. This field is also how two pictures can
-each replace a different thing in one edit.
-
-The line you type matters most for sound: nothing in this chain can hear, so it is the only thing
-that will ever know what a track sounds like.
-
-Some combinations stay impossible, and the nodes say so instead of rendering something wrong. A
-picture that *is* the first frame of the video and a picture that is merely something the shot should
-contain are two different jobs, and H3 released a separate model for each. The frame one accepts no
-references at all, so setting one slot to *first frame* while another slot holds a reference is two
-jobs at once. That is refused on the canvas, in a full sentence naming both slots, before a file is
-written or the writing model is called.
-
-Every node, every widget, every failure message and the wiring for building your own graph:
-[the node pack's README](https://github.com/ruashots/ComfyUI-OpenH3-IR#readme).
 
 ## A dial, for how far it goes
 
@@ -316,6 +211,10 @@ so a caller never hardcodes them. `GET /v1/contract` reports every field name, e
 refusal code this build takes. A client reads it and checks itself against the service before it
 sends anything. A field this service does not know is refused by name, never dropped.
 
+Attachments arrive two ways. A caller that shares a filesystem with the service names a path, and
+nothing is copied. A caller on another machine sends the bytes to `PUT /v1/assets/{sha256}` and then
+names the file by that hash. The same file is never sent twice.
+
 Under-specification never fails. `{"intent":"make a video of my dog"}` and nothing else comes back
 `201` with a complete, zero-error brief: five seconds, widescreen, the edit and the sound picked for
 you. Routes, request shapes, and what the service guarantees against what it only attempts:
@@ -367,7 +266,7 @@ what the entire written brief does. Write long, attach few. The arithmetic is in
 Attach two images and two subjects come back, each with its own numbered label, its own stated promise
 about what has to stay the same about it, and a mention in every shot it appears in. If an image is
 ambiguous about which of several things in it you care about, `--image path.png:"the pilot"` says which,
-straight to the model that looks at it. In ComfyUI the same hint is the slot's own line about the file.
+straight to the model that looks at it.
 
 H3 does not have one mode, it has five, and each wants the document written differently. Which one a
 request needs is settled by what you attached, because that is the only thing that can settle it
@@ -532,21 +431,20 @@ Every setting, with the reason for each default, is in [`.env.example`](https://
 
 | file | what it is for |
 | --- | --- |
-| [the node pack's README](https://github.com/ruashots/ComfyUI-OpenH3-IR#readme) | **the node pack in full**: every node and widget, the tray, the `@` prompt, the wiring, every failure message |
-| [`example/openh3ir_base_workflow.json`](https://github.com/ruashots/ComfyUI-OpenH3-IR/blob/main/example/openh3ir_base_workflow.json) | the ready-to-run ComfyUI workflow in the picture above |
 | [`HANDOFF.md`](https://github.com/ruashots/open-h3-ir/blob/main/HANDOFF.md) | **installing it and verifying it works**, top to bottom, with a check on every step and what to do when one fails |
 | [`AGENTS.md`](https://github.com/ruashots/open-h3-ir/blob/main/AGENTS.md) | **contributing**: the rules that are not preferences, which file owns what, the known gaps |
 | [`docs/calling-the-api.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/calling-the-api.md) | driving the service from an application: what it guarantees, what it only attempts, what comes back |
 | [`docs/design.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/design.md) | why every rule exists: what the encoder sees, the cost model, the contract between stages |
 | [`docs/build-log.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/build-log.md) | a dated record of what the build measured, including the positions it reversed |
+| [ComfyUI-OpenH3-IR](https://github.com/ruashots/ComfyUI-OpenH3-IR#readme) | **the other repository**: the four nodes in full, the tray, the `@` prompt, the ready-to-run workflow, every failure message |
 
 ## Licence
 
 Apache 2.0. See [LICENSE](https://github.com/ruashots/open-h3-ir/blob/main/LICENSE), and [NOTICE](https://github.com/ruashots/open-h3-ir/blob/main/NOTICE) for what belongs to whom.
 
-**That covers this compiler and this node pack. It does not cover the model you point them at, and
-H3's own licence is more restrictive than you might assume.** Three terms worth knowing before you
-build on this, because none of them is guessable:
+**That covers this compiler. It does not cover the model you point it at, and H3's own licence is
+more restrictive than you might assume.** Three terms worth knowing before you build on this,
+because none of them is guessable:
 
 - **H3 is not licensed for use in the European Union, the United Kingdom, the Republic of Korea or
   the United States of America.** Those are its Excluded Territories, and the grant is worldwide
