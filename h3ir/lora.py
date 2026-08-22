@@ -50,7 +50,6 @@ class LoraRecord:
     strength: dict[str, float]
     constrains: dict[str, Any] = field(default_factory=dict)
     conflicts_with: tuple[str, ...] = ()
-    stacks_with_turbo: str = "unknown"
     body: str = ""
     source_path: str = ""
 
@@ -73,7 +72,6 @@ class LoraRecord:
                 "variants": list(self.h3_variant), "strength": self.strength,
                 "constrains": {k: v for k, v in self.constrains.items() if v},
                 "conflicts_with": list(self.conflicts_with),
-                "stacks_with_turbo": self.stacks_with_turbo,
                 "what_for": self.what_for(), "when_not": self.when_not()}
 
 
@@ -221,7 +219,6 @@ def load_record(path: Path) -> tuple[LoraRecord | None, list[Finding]]:
                   "max": float(strength.get("max", 1.5))},
         constrains=fm.get("constrains") if isinstance(fm.get("constrains"), dict) else {},
         conflicts_with=tuple(str(x) for x in (fm.get("conflicts_with") or [])),
-        stacks_with_turbo=str(fm.get("stacks_with_turbo", "unknown")),
         body=body, source_path=str(path))
     if not rec.triggers:
         findings.append(Finding("W8-lora-no-trigger", "WARN",

@@ -15,7 +15,6 @@ triggers:
 strength: {default: 0.8, min: 0.4, max: 1.0}
 constrains: {aspect: null, duration_frames: null, steps: null, canvas: null}
 conflicts_with: [photoreal-v1]
-stacks_with_turbo: unknown
 license: "personal use only"
 ---
 

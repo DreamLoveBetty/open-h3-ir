@@ -435,7 +435,6 @@ def test_registry_reads_the_example_lora():
     assert rec.triggers[0]["text"] == "hndpntd_anim_v2"
     assert rec.strength == {"default": 0.8, "min": 0.4, "max": 1.0}
     assert rec.h3_variant == ("ref2va",)
-    assert rec.stacks_with_turbo == "unknown"
     assert "watercolour" in rec.what_for()
     assert "photoreal" in rec.when_not()
     assert revision and "hndpntd_anim_v2" not in str(rec.public()), \
