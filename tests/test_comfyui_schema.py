@@ -264,12 +264,18 @@ def test_the_shot_ceiling_is_the_compilers_own_ceiling():
     """The old field offered 0 to 8 while `shots.py` clamped to 4, so asking for 6 silently got 4.
     Offering what the engine drops is the surface lying. The engine's contract is now the pin
     ceiling: an explicit number is kept exactly up to PINNED_SHOTS_MAX (proven live and by
-    test_pinned_shots.py), so that is the number the combo may offer."""
-    from h3ir.shots import PINNED_SHOTS_MAX
+    test_pinned_shots.py), so that is the number the combo may offer.
 
+    Read off the published contract rather than by importing `h3ir.shots`, which is a reach across
+    a boundary that will not be there: `comfyui/contract.json` is what the pack ships and
+    `tests/test_contract_drift.py` is what keeps it current.
+    """
+    from comfyui.contract import SNAPSHOT
     from comfyui.h3ir_client import SHOTS
 
-    assert SHOTS == ("auto", *(str(i) for i in range(1, PINNED_SHOTS_MAX + 1)))
+    ceiling = SNAPSHOT["limits"]["max_pinned_shots"]
+    assert SHOTS == ("auto", *(str(i) for i in range(1, ceiling + 1)))
+
     kw = next(kw for _k, i, kw in COMPILE if i == "shots")
     options = _str(_kw(kw["options"], "x")) if False else kw["options"]
     assert isinstance(options, ast.Call), "the options come from the shared constant, not a literal"

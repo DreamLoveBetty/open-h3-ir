@@ -314,7 +314,9 @@ curl -s localhost:8420/v1/briefs -H 'content-type: application/json' \
 to read a format it does not care about: `presentation` is plain language for showing a person, `plan`
 is the creative decisions someone might want to change, and `ir` is the document plus the manifest for
 whoever wires the render. `GET /v1/capabilities` reports the legal durations, aspects and asset limits,
-so a caller never hardcodes them.
+so a caller never hardcodes them. `GET /v1/contract` reports every field name, every role and every
+refusal code this build takes. A client reads it and checks itself against the service before it
+sends anything. A field this service does not know is refused by name, never dropped.
 
 Under-specification never fails. `{"intent":"make a video of my dog"}` and nothing else comes back
 `201` with a complete, zero-error brief: five seconds, widescreen, the edit and the sound picked for

@@ -181,6 +181,33 @@ not separately analysed. It passed the official control the whole time. When you
 write the input that must NOT trip it. `test_hardening.py` has four such cases for G2 alone,
 because my first draft of that rule fired on "he gives an okay sign".
 
+**And a test that has never been seen failing is a test nobody has verified.** This suite shipped one
+that was green for its whole life while the field it guarded was dropped in transit, so every check
+holding the compiler and the pack together has a defect written for it in
+`research/contract_falsification.py`: it plants the defect, proves the defect is live, runs the test
+that claims to catch it, and puts the file back. Run it on a clean tree; 49 cases, all of which must
+go red.
+
+**It reports three outcomes, not two, and that distinction is the file's second draft.** RED is a
+guard that fired. GREEN is a guard that did not. BROKEN is a case that never ran -- the anchor
+moved, the write did not land, the edit made the module unimportable, or the test it names no
+longer exists. The first draft printed the same thing for GREEN and BROKEN, and two cases hid in
+that: one named a test that had been renamed, and one planted an unbalanced parenthesis. pytest
+exits non-zero for a `SyntaxError` and for an unknown node id exactly as it does for a failing
+assertion, so both printed RED for months of nothing. **Anything that plants defects has to prove it
+planted them before it is allowed an opinion about the guard.**
+
+Two traps it records rather than works around, because anything editing source in a loop will hit
+them:
+
+  * **Python validates a cached `.pyc` on (mtime, size) and mtime has one-second resolution.** A
+    defect exactly as long as what it replaces, planted within a second of the restore before it,
+    runs against the OLD bytecode. Five cases reported a guard that does not fire before
+    `__pycache__` was wiped between them.
+  * **`python -O` strips `assert`.** The first draft checked its anchors with one, so under `-O` a
+    moved anchor became a silent no-op: nothing was edited, the test passed on untouched source,
+    and the case printed GREEN. Nothing in that file uses `assert` any more.
+
 ## Where things are
 
 | file | what it owns |
@@ -199,19 +226,23 @@ because my first draft of that rule fired on "he gives an okay sign".
 | `validate.py` | the rules. Proved by `evalloop/controls.py` in both directions. |
 | `compile.py` | the orchestrator and the stage order (with the reason for that order). |
 | `director.py` | the third authority: whose taste fills what neither the request nor the references settle. A name and a paragraph, the seven that ship, and the one cap. |
+| `contract.py` | everything that crosses to a client: the wire field names, the roles per kind, every refusal code, the seven directions, the camera table and the limits. Built from the authorities, never restating them. Published by `GET /v1/contract`, by `h3ir contract`, and by import. |
 | `service.py` | the HTTP surface and the three response layers. |
 | `uploads.py` | the content-addressed store behind `PUT /v1/assets/{sha256}`: the digest is computed as the bytes arrive, the ceilings and the age limit come from `config.py`, and eviction is least-recently-used. Write-only by design, so every other method on an asset is a 405. |
 | `comfy.py` | ComfyUI over HTTP; graph prompt substitution that refuses to guess. |
 | `acceptance.py` | the five-arm comparison, built without touching the GPU. |
 
-The ComfyUI pack in `comfyui/` is six Python files plus a `web/` folder of four JS files, and imports nothing from `h3ir`:
+The ComfyUI pack in `comfyui/` is seven Python files plus a `web/` folder of five JS files, and imports nothing from `h3ir`. Two of those files are generated; both say so at the top:
 
 | file | what it owns |
 |---|---|
 | `h3ir_client.py` | the service protocol, the option lists, the report. No ComfyUI, no torch, no third-party packages. |
 | `media.py` | tensors and mappings to files on disk, content-addressed. No ComfyUI at module scope. |
 | `nodes.py` | the four node schemas -- Main, Media, Setup and the optional Director -- the model loaders and the socket-to-file mapping. This is the only file that needs a canvas. |
-| `web/director.js` | the Director panel, and a verbatim second copy of the seven profiles, the twenty camera moves and the cap. See below. |
+| `contract.py` | the snapshot of the contract this pack was built against, and the decision about what a difference costs: what stops a queue, what is a line in the report. Imports nothing from `h3ir`. |
+| `contract.json` | GENERATED. `h3ir contract` wrote it. The snapshot the file above reads. |
+| `web/contract.data.js` | GENERATED. `h3ir contract --js` wrote it. The seven profiles, the camera table and the cap, for a panel that has to draw with nothing running. |
+| `web/director.js` | the Director panel. It imports the three above rather than declaring them. See below. |
 
 **Media and Director each carry a DOM board; Main and Setup are widget nodes** the theme draws, with
 `prompt.js` putting an @ picker over Main's sentence. All of it is decoration in the strict sense:
@@ -246,23 +277,145 @@ absence is the default and it is load-bearing**, so anything that makes the node
 a graph that does not have one is a bug. There is no `none` on it for the same reason: the node IS
 the choice, and unplugging it is the absence of the only one rather than a third state.
 
-### The seven directors are written down twice, and the copy is checked
+### What crosses to a client, and how drift is made loud
 
-`h3ir/director.py` is the authority: it is what the compiler sends to the writer, what
-`h3ir directors` prints, and what `GET /v1/directors` publishes. `comfyui/web/director.js` carries a
-verbatim copy, because the pack imports nothing from `h3ir`, the compiler is usually on another
-machine, and a text box that needs a running service before it can show you a paragraph is a text box
-that is empty exactly when somebody is trying to write in it.
+`h3ir/contract.py` is the compiler's statement of everything a client has to agree with it about,
+and it is the answer to a problem the two halves of this repository are about to have: they ship to
+two audiences, they are becoming two repositories, and a test that opens the other half's source
+file and reads it as text cannot exist after that.
 
-The panel writes that copy straight into the node's field, so a drift between the two is not
-cosmetic: it is a graph that compiles a different director from the one the canvas said it loaded,
-with nothing anywhere to say so. Three things are duplicated and all three are checked -- the seven
-texts word for word, the twenty `CAMERA_MOVES`, and `MAX_NOTES_CHARS` against the panel's
-`MAX_NOTES`. `tests/test_director_panel.py` fails if any of them moves on one side only, it also
-checks that the panel still binds to a widget called `profile`, and every scan in it asserts that it
-found something first, because a regex that quietly stops matching is a test that passes forever.
+**The pack becomes an all-in-one, so IN-PROCESS is the ordinary case.** A ComfyUI user installs the
+pack, points it at their own language model, and works: no service to start, no port, no second
+process. The compiler runs in the same Python ComfyUI runs, out of the installed `open-h3-ir`. HTTP
+stays for a compiler on another machine and stops being the normal way in. The two are still
+installed separately and still drift, which is exactly why the contract is not an HTTP thing --
+in-process there is no round trip to reveal a mismatch at all.
 
-**So editing `h3ir/director.py` is not finished until `director.js` says the same words.**
+**Read off the authority wherever there is one.** The roles come from `Role`, the profiles and the
+camera table from `director.py`, the ceilings from `grid.py` and `shots.py`. Two lists are literals
+and both are pinned by `tests/test_contract.py` from this side, where the thing they describe is
+importable: the wire field names, which live on pydantic models `contract.py` may not import because
+a client runs it inside ComfyUI's Python; and the refusal codes, which are raised across two files.
+
+**`CONTRACT_VERSION` is not the package version**, and `test_the_version_moves_when_any_part_of_the_contract_moves`
+holds a digest of every section against it. Changing a director's prose without bumping it is a red
+test. That is the whole ceremony and it is what stops the number becoming one nobody maintains.
+
+**An unknown field is refused, never dropped.** `AssetIn` and `BriefIn` set `extra="forbid"` and a
+handler turns that into `code: unknown-field` naming the key. pydantic's default is to ignore it,
+and that default cost this project a real bug: see below.
+
+#### The seven directors are still written down twice, and the copy is now generated
+
+`h3ir/director.py` is the authority. `comfyui/web/contract.data.js` carries the copy, for the reason
+it always did -- the pack may be talking to another machine, and a text box that needs a running
+service before it can show you a paragraph is empty exactly when somebody is trying to write in it.
+
+What changed is that nobody types the copy. `h3ir contract --js` writes that file, `director.js`
+imports `DIRECTORS`, `CAMERA_MOVES` and `MAX_NOTES` from it, and
+`tests/test_contract_drift.py::test_the_generated_copies_are_what_this_compiler_publishes`
+regenerates both copies and compares them byte for byte. So the instruction that used to be here --
+*editing `h3ir/director.py` is not finished until `director.js` says the same words* -- is now:
+
+```bash
+h3ir contract       > comfyui/contract.json
+h3ir contract --js  > comfyui/web/contract.data.js
+```
+
+Eleven thousand characters of prose maintained by hand in two languages is drift with a schedule.
+After the split that test runs in the pack's repository against the `open-h3-ir` it depends on,
+which is a better comparison than a sibling working tree: it holds the pack against the released
+compiler.
+
+#### Assert about the payload, never about the source text
+
+Two of the three cross-boundary tests were guarding the wrong hop, and one of them had been wrong
+for its whole life. `tests/test_swap_roles.py` asserted that `nodes.py` contains the line
+`extra["replaces"] = slot.replaces` and that `AssetIn` declares a field called `replaces`. Both were
+true. In between them, `h3ir_client._asset_facts` copied four keys out of `extra` into the request
+and this was not one of them.
+
+So the words a user typed to say who a picture takes over from never left the machine. The panel
+collected them, `check_swaps` refused a swap that named nobody, the service declared the field, and
+the compiler knew what to do with it -- and what the user got was the compiler refusing a question
+they had already answered, or a swap bound to whoever the analyser happened to find in three sampled
+frames. The test was green throughout, because it compared two pieces of source text and never
+looked at the request.
+
+`h3ir_client.payload_shape` runs the very functions that build the request and reports what comes
+out. Anything asserting about what crosses uses that. A description of a payload taken from anywhere
+else can be true while the payload is wrong.
+
+#### Asking the compiler that is actually going to do the work
+
+Two ways to get the live contract, and the choice is the caller's:
+
+| where the compile happens | how to ask |
+|---|---|
+| the same Python, from the installed package | `comfyui.contract.installed_contract()` |
+| a service on another machine | `h3ir_client.fetch_contract(server)` |
+
+**Never merge them or fall back from one to the other.** Reading the local package's contract while
+compiling against a remote service compares this machine's version to another machine's work, and
+refuses graphs that are fine. The compile node talks HTTP today, so it asks over HTTP, and a test
+fails if it starts reading the local one.
+
+**The compiler import is lazy, and stays lazy.** The old rule was "the pack imports nothing from
+`h3ir`", which was right while the nodes only spoke HTTP and is wrong for an all-in-one. What
+replaces it is narrower and still load-bearing: no `h3ir` import at module scope anywhere in the
+pack, and exactly one function that does it at all. ComfyUI takes a pack whose import raises off the
+menu entirely; a pack driving a remote compiler needs no local package; and the compiler brings
+fastapi, uvicorn, pydantic and tiktoken, which have no business being pulled into ComfyUI's Python
+on every start for a graph that may never compile. `installed_contract` answers None for absent,
+broken and half-installed alike, because a client never fails on the CHECK.
+
+#### What an in-process caller does NOT get for free
+
+Measured, with fastapi and pydantic blocked: every compiler module imports except `service.py`.
+That one holds `_to_brief`, the only conversion from a request into a `Brief`, and the eleven
+refusals it raises along the way -- role resolution, the unknown-role message, the soundtrack
+pairing, the upload checks.
+
+So an in-process caller has two options and both cost something. Reuse that conversion and fastapi
+comes into ComfyUI's Python with it. Build `models.Brief` and `models.AssetRef` directly and the
+field names are checked by Python at call time, which is loud and free, but `role_stated` and the
+pairing rules become the caller's to get right -- and `role_stated` is silent when it is wrong,
+because mode inference reads it.
+
+This pack is well placed for the second option: it states every role explicitly and never infers
+one, so `role_stated` is always true for it and the unknown-role refusal is pre-empted by the
+contract check. A caller that under-specifies is not. **`ROLE_OF_THE_FIELD_LISTS` is published in
+the contract for this reason**: the field lists describe a `POST /v1/briefs` request and NOT the
+dataclasses, and the two are similar enough to be mistaken for each other by somebody building the
+all-in-one.
+
+#### Two halves at different versions have to keep working
+
+`comfyui/contract.py` decides what a difference costs, and it decides it against **what this graph is
+sending**, not against everything the pack can do. A pack that knows about `replaces` talking to a
+compiler that does not is perfectly good for every brief that replaces nobody, and refusing those
+would be breaking working setups to protect a feature they are not using.
+
+    stop      the compiler cannot do what this graph is asking. Refused before any media travels,
+              naming the field or the slot and which half to update.
+    note      something differs and this graph does not depend on it. One line in the report.
+    silence   nothing differs, or nothing either half can see.
+
+A drifted director copy is never a stop: the Director node sends the prose in its box, so what
+compiles is always what the canvas showed. A service too old to publish a contract is one note, not
+a failure.
+
+#### The scan that saw one refusal out of twelve
+
+`compile.py` raises twelve refusal codes as a `BriefRefused`. The test that was supposed to prove
+every refusal reaches the node pack with a sentence attached scanned for `super().__init__("...")`,
+which is how exactly one of them is raised. The other eleven -- every refusal about a contradictory
+request, including all four about who a picture replaces -- were invisible to it, and reached the
+user through a branch that says "the service rejected the request".
+
+They are published now, `h3ir_client.REFUSED_AS_ASKED` gives the class one branch, and
+`tests/test_comfyui_node.py` reads its list from the shipped contract instead of from this
+repository's source, which is what carries it across the split.
 
 ## ComfyUI frontend mechanics, measured rather than assumed
 

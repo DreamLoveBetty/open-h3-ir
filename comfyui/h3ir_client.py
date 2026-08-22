@@ -34,6 +34,22 @@ from typing import Any
 DEFAULT_PORT = 8420
 DEFAULT_SERVER = f"http://127.0.0.1:{DEFAULT_PORT}"
 
+# The refusals that are about the REQUEST rather than about the service, the transfer or a file:
+# the compiler read what the graph asked for, found it contradictory, and said so in a sentence the
+# person can act on. They share one branch in `compile_brief` because they share one answer.
+#
+# `over-capacity` is deliberately not here. It is the same class and it earns its own branch,
+# because the number of sockets H3 has is a fact worth stating rather than leaving to the message.
+#
+# Kept current by `tests/test_comfyui_node.py`, which drives this module with every refusal the
+# shipped contract publishes and fails on any that reaches the generic branch. Eleven of these were
+# invisible to that test until the contract listed them.
+REFUSED_AS_ASKED = (
+    "aspect-invalid", "director-profile-invalid", "duration-invalid", "intent-empty",
+    "replacement-subject-undefined", "replacement-target-ambiguous", "replacement-target-unnamed",
+    "replaces-without-the-role", "shots-do-not-fit", "shots-invalid", "swap-without-edit-source",
+)
+
 CREATIVITY = ("restrained", "balanced", "bold", "extreme")
 EFFORT = ("fast", "standard", "max")
 # Reported by GET /v1/capabilities. Duplicated as a widget list because a combo has to be populated
@@ -327,6 +343,20 @@ def _asset_facts(name: str, kind: str, extra: dict[str, Any], sizing: str) -> di
     note = str(extra.get("note") or "")
     if note.strip():
         a["note"] = note.strip()
+    # Who a `replacement_subject` picture takes over from, in the user's own words. It was recorded
+    # on the slot, validated by the tray and written into `extra` by the node, and then dropped
+    # HERE: this function copied four keys and this was not one of them. Everything on both sides of
+    # the gap was correct and tested -- the panel collected the words, `check_swaps` refused a swap
+    # that named nobody, the service declared the field, the compiler bound the subject with it --
+    # and the words never crossed. What the user saw was the compiler refusing a question they had
+    # already answered, or a swap bound to whoever the analyser happened to find.
+    #
+    # The lesson is in `test_contract_drift.py`: the test guarding this compared a line of
+    # `nodes.py` against a field of `AssetIn` and never looked at the payload in between, so it
+    # passed for as long as the bug lived. Assert about what goes out, not about what is written
+    # down.
+    if str(extra.get("replaces") or "").strip():
+        a["replaces"] = str(extra["replaces"]).strip()
     for key in ("seconds", "frames"):
         if extra.get(key) is not None:
             a[key] = extra[key]
@@ -384,6 +414,69 @@ def plan_uploaded_assets(written: list[tuple[str, str, str, dict[str, Any]]],
             a["paired_video_sha256"] = sha_of(extra["paired_video_path"])
         assets.append(a)
     return assets
+
+
+def payload_shape(written: list[tuple[str, str, str, dict[str, Any]]], brief: dict[str, Any],
+                  transcripts: dict[str, str] | None = None
+                  ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Exactly what this graph is about to say: its attachment keys, its brief keys, and its roles.
+
+    Derived by running the very functions that build the request rather than by listing what the
+    pack can do, and that is the entire point. A list of what the pack CAN send is a second
+    statement that drifts from what it does send -- which is the failure this whole module was
+    audited for: `replaces` was written into the node's `extra`, declared on the service's model,
+    guarded by a test that read both of those as text, and dropped in between by a function that
+    copied four keys. Nothing that describes the payload from the outside would have caught it.
+
+    Both delivery routes are asked, because which one runs is decided later by whether the service
+    can open ComfyUI's disk, and a check that only covered one of them would pass on a machine that
+    shares a filesystem and stop covering anything on a machine that does not.
+
+    The roles come back as (kind, role) in the WIRE's words -- image, video, audio -- because that
+    is what the contract publishes them under. A tray calls a picture a picture; the request says
+    image.
+    """
+    by_path = plan_assets(written, "match", "", "")
+    by_hash = plan_uploaded_assets(written, "match", lambda _p: "0" * 64)
+    asset_fields: dict[str, None] = {}
+    roles: dict[tuple[str, str], None] = {}
+    for a in (*by_path, *by_hash):
+        for key in a:
+            asset_fields[key] = None
+        if a.get("role"):
+            roles[(str(a.get("kind", "image")), str(a["role"]))] = None
+    # Built with no attachments, so the asset half above is the only statement about attachments and
+    # this one is only about the piece. An empty list is a legal request and `build_payload` refuses
+    # nothing else here that a real one would pass.
+    #
+    # The transcripts ARE passed, and that is not symmetry with the assets: `build_payload` drops
+    # the key when there are none, so describing a graph that has them with an empty dict would miss
+    # `transcripts` entirely -- and passing a fake one on a graph without them would report a field
+    # the request never carries, which against an older service is a stop for something nobody is
+    # doing. Every optional key in a request has to be decided by the real value.
+    brief_fields = tuple(build_payload(assets=[], transcripts=dict(transcripts or {}), **brief))
+    return tuple(asset_fields), brief_fields, tuple(roles)
+
+
+def fetch_contract(server: str, *, timeout: float = 30.0) -> dict[str, Any] | None:
+    """What the service says crosses between it and whatever drives it, or None if it does not say.
+
+    None means one thing only: this service predates the contract endpoint. It is not an error and
+    must never be raised as one -- a service that is simply older still compiles every brief that
+    uses nothing newer than itself, and refusing those would be this pack breaking working setups.
+    The caller turns None into a sentence; see `comfyui/contract.differences`.
+
+    Anything that is not a clean answer is also None rather than an exception, for the same reason.
+    The request that matters is the one after this, and it has its own messages for every way a
+    service can be unreachable. Failing a queue here would replace those with a worse one.
+    """
+    try:
+        status, body = _request(server, "/v1/contract", timeout=timeout)
+    except ServiceError:
+        return None
+    if status != 200 or not isinstance(body, dict) or "contract_version" not in body:
+        return None
+    return body
 
 
 def expected_mode(has_first: bool, has_last: bool, n_pictures: int, n_clips: int,
@@ -942,6 +1035,44 @@ def compile_brief(server: str, payload: dict[str, Any], *, timeout: float = 600.
                 f"{_sentence(det.get('message', code))} That is about the file rather than about the wiring: a "
                 "different path would fail the same way. Check the file in the tray slot the message "
                 "names on the OpenH3-IR Media node.")
+        if code == "unknown-field":
+            # The two halves at different versions, caught at the wire instead of before it. The
+            # node asks `GET /v1/contract` first and refuses there with the tray slot named, so
+            # reaching this branch means the service is old enough to publish no contract at all --
+            # and old enough that something this graph sends did not exist when it was built. The
+            # service's own message names the field and says what to install, so it is passed
+            # through whole and only the location is added.
+            raise ServiceError(
+                f"the OpenH3-IR service at {server} is older than this node pack and refused "
+                f"something this graph sent: {_sentence(det.get('message', code))} Update it where "
+                "it runs, or take off whatever in the graph fills that field. Nothing was rendered "
+                "with part of your request missing, which is what refusing it buys.")
+        if code == "malformed-request":
+            # This node writes the request, so its shape is never the user's doing. Same answer as
+            # the two `asset-` codes below that describe a request this pack cannot write: say that
+            # it is ours, and say what still works.
+            raise ServiceError(
+                f"the service could not read the request this node wrote: "
+                f"{_sentence(det.get('message', code))} That request is written here rather than by "
+                "you, so it is a defect in OpenH3-IR rather than something in your graph. A prompt "
+                "with nothing in the tray may still work.")
+        if code in REFUSED_AS_ASKED:
+            # The compiler read the request, understood it, and will not write it as stated. Every
+            # one of these names the specific contradiction in words the person can act on -- which
+            # slot says nothing about who it replaces, which shot count does not fit the duration --
+            # so the message is passed through whole and this only says whose decision it was and
+            # where the fix is.
+            #
+            # One branch for the class rather than eleven for the members, because the answer is the
+            # same for all of them and eleven paraphrases of one sentence is eleven things to keep
+            # true. The list is what makes the branch reachable, and `comfyui/contract.json`
+            # publishes the codes so a new one added over there fails a test over here instead of
+            # falling through to a sentence that says nothing.
+            raise ServiceError(
+                "the compiler will not write this brief as asked: "
+                f"{_sentence(det.get('message', code))} Nothing is wrong with the service or the "
+                "connection; this is about what the graph is asking for, and the sentence above "
+                "says which part. Change it and queue again.")
         if code == "over-capacity":
             raise ServiceError(
                 f"more references than H3 has sockets for: {_sentence(det.get('message', code))} Nothing "

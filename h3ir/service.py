@@ -21,9 +21,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from . import contract as C
 from . import uploads
 from .analyse import AssetAnalysisError, ToolMissing, sha256_file
 from .backend import Backend, BackendError, BackendUnavailable
@@ -48,6 +51,13 @@ _LOCK = threading.Lock()
 class AssetIn(BaseModel):
     """One attachment, and exactly one statement of where its bytes are.
 
+    **Unknown keys are refused, not dropped.** pydantic ignores an extra key by default, and that
+    default is the quietest failure this service can have: a client sending `replaces` to a build
+    that does not know the word gets a perfectly valid brief back with the swap bound to whoever the
+    analyser happened to find, and nothing anywhere says so. Forbidding extras turns that into a 422
+    that names the key, which a newer client can read and act on. `h3ir.contract.ASSET_FIELDS` is
+    the same list, published so a client can check before it spends the request.
+
     `path` is the fast way and needs one filesystem: nothing is copied, and the bytes H3 is
     conditioned on are the bytes the caller already had. `sha256` is the way in for a caller on
     another machine, naming an attachment it has already sent to `PUT /v1/assets/{sha256}`.
@@ -55,6 +65,8 @@ class AssetIn(BaseModel):
     Both at once is refused rather than one winning. They can disagree, and a request that says two
     things about which file it means renders something plausible about the wrong one.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     path: str | None = Field(None, description="Readable path on the service host")
     sha256: str | None = Field(
@@ -82,6 +94,8 @@ class AssetIn(BaseModel):
 
 
 class DialogueIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str
     language: str = "English"
     speaker: str | None = None
@@ -89,7 +103,14 @@ class DialogueIn(BaseModel):
 
 
 class BriefIn(BaseModel):
-    """The minimum viable request is `intent`. Everything else has a good default."""
+    """The minimum viable request is `intent`. Everything else has a good default.
+
+    Unknown keys are refused for the reason `AssetIn` gives: a key this build does not know is a
+    caller asking for something it will not get, and a silent drop is the one answer nobody can act
+    on. `h3ir.contract.BRIEF_FIELDS` publishes the list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     intent: str
     assets: list[AssetIn] = []
@@ -157,23 +178,14 @@ class RefineIn(BaseModel):
 
 _ROLE_BY_NAME = {r.value: r for r in Role}
 
-# Which roles make sense for which kind, for the error message only. A picture cannot be a voice
-# reference and a wav cannot be a first frame, and listing every role under a typo'd audio role
-# would be a worse message than naming the ones that apply.
-_ROLES_BY_KIND = {
-    "image": (Role.FRAME_ANCHOR_FIRST, Role.FRAME_ANCHOR_LAST, Role.SUBJECT, Role.ENVIRONMENT,
-              Role.STYLE, Role.STORYBOARD, Role.PLACED_SUBJECT, Role.REPLACEMENT_SUBJECT),
-    # `structure` was added to the enum and not to this line, so the message that lists a video's
-    # roles has been omitting one ever since. The list is only ever read to build that message, so
-    # the effect was a caller told a legal role does not exist.
-    "video": (Role.EDIT_SOURCE, Role.CONTINUATION_SOURCE, Role.SUBJECT, Role.ENVIRONMENT,
-              Role.STYLE, Role.STORYBOARD, Role.STRUCTURE),
-    "audio": (Role.VOICE_TIMBRE, Role.BGM, Role.MUSIC_STYLE, Role.BEAT_REFERENCE, Role.SFX),
-}
+# Which roles make sense for which kind. It used to live here and be read only to build an error
+# message, which is how `structure` came to be in the enum and missing from the video line for as
+# long as it was: the effect was a caller told a legal role does not exist. It is a published
+# vocabulary in `contract.py` now, and this file is one of its readers rather than its owner.
 
 
 def _role_fits(role: Role, kind: str) -> bool:
-    return role in _ROLES_BY_KIND.get(kind, ())
+    return role in C.ROLES_BY_KIND.get(kind, ())
 
 
 def _require_uploaded(b: BriefIn) -> None:
@@ -399,6 +411,60 @@ def health() -> dict[str, Any]:
         return {"ok": True, "llm": b.health(), "profile": get_config().profile}
 
 
+@app.exception_handler(RequestValidationError)
+async def unreadable_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """A malformed request, answered in the same shape every other refusal here uses.
+
+    FastAPI's own 422 body is a list of pydantic error objects, which is precise and unreadable, and
+    every client in this repository reads `detail` as an object with a `code` and a `message`. So
+    the list is turned into one sentence about the first thing wrong, and the raw list is kept
+    beside it for whoever is debugging a client.
+
+    **The `extra_forbidden` case is the one this handler exists for.** `AssetIn` and `BriefIn` used
+    to drop a key they did not recognise, so a client one version ahead of this service sent
+    `replaces` and got back a valid brief with the swap bound to whoever the analyser happened to
+    find. Nothing said so. Now it is refused, and the refusal has to name the key and the fact that
+    the two halves are at different versions -- a reader who only sees "extra inputs are not
+    permitted" learns nothing about what to do.
+    """
+    problems = exc.errors()
+    first = problems[0] if problems else {}
+    where = ".".join(str(p) for p in first.get("loc", ()) if p != "body") or "the request"
+    if first.get("type") == "extra_forbidden":
+        detail = {
+            "code": "unknown-field",
+            "message": (
+                f"this build does not know the field {where!r}. It was refused rather than "
+                "ignored, because a field this service drops in silence is a request that comes "
+                "back looking correct and describing something else. Whatever sent it is newer "
+                "than this service: update open-h3-ir where the service runs (this one is "
+                f"contract {C.CONTRACT_VERSION}, package "
+                f"{C._package_version() or 'unknown'}), or stop sending the field. "
+                "GET /v1/contract lists every field this build takes.")}
+    else:
+        detail = {
+            "code": "malformed-request",
+            "message": f"{where}: {first.get('msg', 'the request could not be read')}."}
+    detail["problems"] = jsonable_encoder(problems)
+    return JSONResponse(status_code=422, content={"detail": detail})
+
+
+@app.get("/v1/contract")
+def get_contract() -> dict[str, Any]:
+    """Everything a client has to agree with this service about, and the digest of each part.
+
+    Published so that a client checks itself against this build instead of a test reading across a
+    folder that will not be there after the two halves are separate repositories. The node pack
+    fetches this before it sends anything and compares it against what THIS graph is about to use,
+    which is what lets an older service keep working for every brief that does not touch the part
+    that moved.
+
+    Cheap on purpose: no configuration is read, nothing is computed per request, and a client may
+    call it on every queue.
+    """
+    return C.contract()
+
+
 @app.get("/v1/directors")
 def list_directors() -> dict[str, Any]:
     """Every profile a caller can name, with the prose of each.
@@ -455,7 +521,7 @@ def capabilities() -> dict[str, Any]:
         "trained_band_seconds": [round(124 / 24, 3), round(362 / 24, 3)],
         "longer_durations": "supported if frame-aligned; slower, not rejected",
         "canvas": "any multiple of 32; 768 short edge is the default, larger renders fine",
-        "aspects": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "aspects": list(C.ASPECTS),
         # The runtime's own socket maxima, and now enforced: over capacity is a 422 refusal naming
         # what to drop rather than a manifest that publishes a socket the graph does not have.
         # `total_files` used to say 12, which the runtime does not impose -- 9 images, 3 videos,
@@ -466,9 +532,13 @@ def capabilities() -> dict[str, Any]:
                        "video_soundtracks": MAX_REF_VIDEO_SOUNDTRACKS,
                        "total_files": (MAX_REF_IMAGES + MAX_REF_VIDEOS + MAX_REF_AUDIOS
                                        + MAX_REF_VIDEO_SOUNDTRACKS)},
-        "dialogue_languages": ["Arabic", "Chinese", "English", "French", "German", "Italian",
-                               "Japanese", "Korean", "Portuguese", "Russian", "Spanish"],
-        "output": {"short_edge": 768, "fps": 24, "audio": "32 kHz stereo"},
+        "dialogue_languages": list(C.DIALOGUE_LANGUAGES),
+        "output": {"short_edge": 768, "fps": C.contract()["limits"]["fps"],
+                   "audio": "32 kHz stereo"},
+        # Where the rest of what crosses a client boundary is published. Named from here because
+        # `/v1/capabilities` is the route a client already knows to ask, and a client that has never
+        # heard of the contract finds it by reading this.
+        "contract": {"version": C.CONTRACT_VERSION, "endpoint": "GET /v1/contract"},
         # How attachments can reach this deployment, which is not the same on every one of them and
         # is not something a caller can find out by trying: a client that can read this refuses an
         # oversized file locally, in one sentence, instead of spending the transfer to be told.

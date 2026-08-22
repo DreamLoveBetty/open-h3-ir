@@ -16,10 +16,15 @@ that this package stays importable outside ComfyUI: the parts worth testing do n
 
 `WEB_DIRECTORY` is how a pack ships frontend code: ComfyUI reads this name off this module and serves
 that folder, and the browser loads every `.js` in it. What is in there is the media tray's panel, the
-prompt's @ picker and the director's panel, and all three are decoration in the strict sense. The
+prompt's @ picker, the director's panel, the family's colours, and one generated data module the
+director's panel reads its seven directions out of. All of it is decoration in the strict sense. The
 tray and the direction are JSON in ordinary widgets and the prompt is plain text in one; delete this
 folder and all three nodes still work, still API-drive, and still restore from a saved workflow, with
 the strings visible as themselves.
+
+`contract.py` is the other half of that: the pack's snapshot of what the compiler takes, and what a
+difference between the two costs. It reads a generated JSON file beside it with the standard library
+and imports nothing from `h3ir`, so the rule above still holds.
 
 `web_api` is imported at module scope because its two HTTP routes have to be registered while ComfyUI
 is starting, and it is written to import cleanly with no ComfyUI present: an exception here would take

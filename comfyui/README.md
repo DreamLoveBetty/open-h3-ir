@@ -121,6 +121,16 @@ send the bytes when no spelling of ComfyUI's folder works. A service on another 
 uploads for two days, 512 MiB per file at most, and the exact figures come from its own
 `/v1/capabilities`.
 
+**The pack and the compiler are updated separately, so the nodes check before they queue.** Before
+any media travels, the Compile node asks the compiler that is going to write the brief what it
+takes. It holds that against what this graph is about to send. Something the service has no name for
+stops the queue there. The message names the field or the slot, and which half to update.
+
+Anything else that differs is a line in the report and never stops a render: a job the service takes
+that this pack cannot offer yet, a ceiling that moved, directions that are not the ones the service
+publishes. A service too old to answer the question at all is one note saying so, and everything it
+does understand still works.
+
 Then open the workflow that ships with it, which is already wired and runs on a prompt alone:
 [the workflow that ships with this](#the-workflow-that-ships-with-this). That is the fastest way to
 see the thing work before you read another word.

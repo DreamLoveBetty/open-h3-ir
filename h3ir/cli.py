@@ -6,6 +6,7 @@
   h3ir eval [--label X]           run the suite, score it, gate against the baseline
   h3ir baseline                   record the last run as the baseline
   h3ir loras                      what the registry sees
+  h3ir contract [--js]            what crosses to a client, and the digest of each part
   h3ir budget                     packed-sequence cost for a duration/canvas
   h3ir serve                      run the HTTP service
 """
@@ -217,6 +218,20 @@ def cmd_directors(args) -> int:
     return 0
 
 
+def cmd_contract(args) -> int:
+    """What crosses the boundary to anything that drives this compiler, printed.
+
+    Three readers. A person working out why their node pack and their service disagree, who wants
+    the whole thing indented. Whoever regenerates the pack's own copy of it, who redirects this into
+    a file. And `--js`, which prints the browser module the ComfyUI director panel draws its picker
+    from -- the one copy that cannot be fetched at runtime, because a panel that needs a service
+    before it can show you a paragraph is empty exactly when you are trying to write in it.
+    """
+    from . import contract as C
+    print(C.as_js() if getattr(args, "js", False) else C.as_json(), end="")
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("h3ir.service:app", host=args.host, port=args.port, log_level="info")
@@ -283,6 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
     b.set_defaults(func=cmd_baseline)
 
     sub.add_parser("loras").set_defaults(func=cmd_loras)
+    ct = sub.add_parser("contract")
+    ct.add_argument("--js", action="store_true",
+                    help="print the browser module the ComfyUI director panel reads, instead of JSON")
+    ct.set_defaults(func=cmd_contract)
     d = sub.add_parser("directors")
     d.add_argument("which", nargs="?", default="",
                    help="one id, to print the whole profile instead of the list")

@@ -49,6 +49,7 @@ from typing import Any
 from comfy_api.latest import ComfyExtension, io
 
 from . import tray as T
+from .contract import differences as contract_differences
 from .media import (digest, load_image, load_sound, load_video, resolve, sha256_file, stamp,
                     write_sound)
 from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER,
@@ -57,7 +58,7 @@ from .h3ir_client import (ASPECTS, CREATIVITY, DEFAULT_SERVER,
                           director_bundle, director_note,
                           ServiceError, bindings_by_content, check_mode,
                           clip_loader_for, compile_with_media, family_warning,
-                          inputs_fingerprint, is_gguf,
+                          fetch_contract, inputs_fingerprint, is_gguf, payload_shape,
                           length_notes, line,
                           merge_model_options, precision_ignored_note, render_fields, report,
                           setup_bundle, unet_loader_for)
@@ -360,14 +361,34 @@ class OpenH3IRCompile(io.ComfyNode):
         written, transcripts = cls._describe_everything(loaded, order, sha_of)
         bindings = bindings_by_content(written, sha_of)
 
+        brief = dict(intent=resolved.intent, seconds=seconds, aspect=aspect,
+                     creativity=creativity, effort=effort, seed=seed, silent=silent, shots=shots,
+                     megapixels=megapixels, spoken=list(resolved.spoken),
+                     spoken_language=spoken_language, director_profile=director)
+
+        # Are the two halves talking about the same thing? The pack and the compiler are installed
+        # separately and drift apart on purpose, and until this ran there was nothing anywhere that
+        # noticed. Asked BEFORE the media travels, because a clip can be hundreds of megabytes and
+        # the answer does not depend on it, and compared against what THIS graph is sending rather
+        # than against everything the pack can do -- an older compiler is perfectly good for every
+        # brief that uses nothing newer than itself, and breaking those would be worse than the
+        # drift. One small GET; see comfyui/contract.py for what is a stop and what is a line.
+        asset_fields, brief_fields, roles = payload_shape(written, brief, transcripts)
+        gaps = contract_differences(
+            # Capped rather than given the compile timeout. The contract is a static dict with no
+            # computation behind it, so a service that has not answered in half a minute is not
+            # working on it -- and waiting out a ten-minute compile timeout here would push the
+            # failure the NEXT request explains well past the point anybody is still watching.
+            fetch_contract(machine["server"], timeout=min(30.0, float(machine["timeout_s"]))),
+            asset_fields=asset_fields, brief_fields=brief_fields, roles=roles)
+        stops = [g.message for g in gaps if g.stop]
+        if stops:
+            raise ServiceError("\n\n".join(stops))
+
         body, handoff = compile_with_media(
             server=machine["server"], written=written, sizing=sizing, sha_of=sha_of,
             comfy_root=_comfy_root(), transcripts=transcripts, timeout=float(machine["timeout_s"]),
-            brief=dict(intent=resolved.intent, seconds=seconds, aspect=aspect,
-                       creativity=creativity, effort=effort, seed=seed, silent=silent, shots=shots,
-                       megapixels=megapixels, spoken=list(resolved.spoken),
-                       spoken_language=spoken_language,
-                       director_profile=director))
+            brief=brief)
 
         prompt, width, height, length, ref_sizing = render_fields(body)
         warning = check_mode(declared, str(body.get("mode", "")))
@@ -399,6 +420,10 @@ class OpenH3IRCompile(io.ComfyNode):
             text += "\n" + line("note", mismatch)
         elif director:
             text += "\n" + line("director", str(body.get("director_used", director["name"])))
+        # Everything the two halves disagree about that this graph did not depend on. After the
+        # report's own facts, because they describe the render and these describe the setup.
+        for gap in gaps:
+            text += "\n" + line("note", gap.message)
         for said in T.mention_notes(resolved, slots):
             text += "\n" + said
         for said in cls._resample_notes(loaded):

@@ -313,38 +313,24 @@ def test_more_references_than_h3_has_sockets_for_names_the_ceilings(monkeypatch)
 
 
 def _service_failures(where: str = "briefs") -> set[tuple[int, str]]:
-    """Every (status, code) pair `h3ir/service.py` can raise, read out of the service's own source.
+    """Every (status, code) pair the compiler can hand this pack, read off the published contract.
 
-    Read rather than listed, so adding a failure over there and no branch over here fails this test
-    instead of shipping a caller that shrugs at something it could have explained.
+    It used to be read out of `h3ir/service.py` and `h3ir/compile.py` by regex, which worked while
+    the two halves shared a checkout and stops working the moment they are two repositories. The
+    compiler publishes the list now -- `h3ir contract` writes it into `comfyui/contract.json` -- so
+    this reads a file the pack ships and nothing here reaches across the boundary.
 
-    Split by route, because the node now talks to two of them and their messages are not
-    interchangeable: a `POST /v1/briefs` failure is explained by `compile_brief`, and a
-    `PUT /v1/assets/{sha256}` failure by `upload_asset`. Attributed by slicing the file on its own
-    `@app.` decorators rather than by a list of codes kept over here, so a new endpoint's failures
-    land in the right half on their own. Everything above the first decorator -- `_to_brief` and the
-    helpers it calls -- belongs to the brief half, which is what reaches it.
+    Split by route, because the node talks to two of them and their messages are not
+    interchangeable: a `POST /v1/briefs` failure is explained by `compile_brief` in terms of the
+    graph, and a `PUT /v1/assets/{sha256}` failure by `upload_asset`, which has to name the tray
+    slot. One code is raised on both, so the contract states routes as a list and this filters.
     """
-    import pathlib
-    import re
+    from comfyui.contract import SNAPSHOT
 
-    repo = pathlib.Path(__file__).resolve().parents[1]
-    src = (repo / "h3ir" / "service.py").read_text()
-    assets = [c for c in re.split(r"\n(?=@app\.)", src)
-              if re.match(r'@app\.\w+\("/v1/assets', c)]
-    assert assets, "no /v1/assets route found; this scan is now blind to the upload half"
-    chosen = "\n".join(assets) if where == "assets" else "\n".join(
-        c for c in re.split(r"\n(?=@app\.)", src) if c not in assets)
-    found = set(re.findall(r'HTTPException\((\d+),\s*detail=\{\s*\n?\s*"code": "([a-z-]+)"', chosen))
-    found |= set(re.findall(r'HTTPException\((\d+), detail=\{"code": "([a-z-]+)"', chosen))
-    if where == "assets":
-        return found
-    # `except BriefRefused` re-raises the exception's OWN code, so the literal is in compile.py and
-    # a scan of service.py alone would miss every one of them. That blind spot is the reason this
-    # helper reads two files: `over-capacity` was invisible to the first version of it.
-    refusals = re.findall(r'super\(\)\.__init__\("([a-z-]+)"', (repo / "h3ir" / "compile.py").read_text())
-    assert refusals, "BriefRefused subclasses stopped declaring literal codes; this scan is now blind"
-    return found | {("422", code) for code in refusals}
+    published = SNAPSHOT["error_codes"]
+    assert published, "the shipped contract lists no refusals, so this scan is blind"
+    return {(int(spec["status"]), code) for code, spec in published.items()
+            if where in spec["on"]}
 
 
 @pytest.mark.parametrize("status,code", sorted(

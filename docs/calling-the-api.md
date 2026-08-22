@@ -21,6 +21,7 @@ wiring that brief is true for**. Nothing else in your system has to understand H
 |---|---|---|
 | `GET` | `/health` | liveness |
 | `GET` | `/v1/capabilities` | legal durations, aspects, asset limits, dialogue languages, output geometry |
+| `GET` | `/v1/contract` | every field name, role, refusal and limit that crosses to a client, and a digest per part |
 | `POST` | `/v1/briefs` | compile. `201` with the brief, `422` if the request cannot be honoured as stated |
 | `GET` | `/v1/briefs/{id}` | fetch a compiled brief again |
 | `PATCH` | `/v1/briefs/{id}` | refine in plain language: `{"change":"make it darker"}` → `200`, new version |
@@ -130,13 +131,42 @@ Four things a surface must not get wrong about it:
   `N1-director-empty`.
 - **The one refusal is length.** A `notes` over 5,000 characters is a `422` with
   `code: director-profile-invalid`, because all of it rides in the ask on every call and a pasted
-  document crowds out the request itself. That number is not in `GET /v1/capabilities` today, so a
-  client that wants to say it before the round trip has to copy it. It is the one ceiling in this API
-  you cannot read back, and the ComfyUI panel copies it for exactly that reason.
+  document crowds out the request itself. Read the number rather than copying it:
+  `GET /v1/contract` publishes it as `limits.director_notes_max_chars`, so a client can say it while
+  somebody is still typing instead of after a round trip.
 
 `GET /v1/directors` returns the seven in full, the twenty camera-move names H3 recognises, and one
 sentence saying what a profile governs, so a surface can show somebody a real paragraph to start from
 and edit rather than a menu of names that select something invisible.
+
+## The contract, and what happens when your client is a different age
+
+`GET /v1/contract` is the answer to "will this build understand what I am about to send". It publishes
+the field names of a request, the roles each kind of attachment can have, every refusal code with the
+status and the route it arrives on, and the limits a surface restates so it can offer or refuse
+something before a round trip. Each part carries a digest, so a client compares one string per part
+and can say *which* part differs rather than that something does.
+
+```bash
+curl -s localhost:8420/v1/contract | jq '{contract_version, package_version, digests}'
+```
+
+Three things about it are worth building on:
+
+- **`contract_version` is not the package version.** It moves only when one of the published parts
+  moves, and a test in this repository fails until it does. `package_version` is beside it and says
+  which build answered.
+- **A field this build does not know is refused, never dropped.** It comes back `422` with
+  `code: unknown-field`, naming the field. This is deliberate and it is the reason the endpoint
+  exists: a request that arrives one field short compiles, validates and renders something plausible
+  about the wrong thing, and nothing anywhere says so. A refusal you can read is strictly better.
+- **Compare what you are sending, not what you can send.** A client that knows a newer field is
+  perfectly fine against an older service for every request that does not use it. Checking the
+  particular fields and roles of the request in hand is what lets two halves at different versions
+  keep working; checking capabilities in the abstract breaks setups that were fine.
+
+`h3ir contract` prints the same document, and `h3ir contract --js` prints the browser module the
+ComfyUI pack ships so its director picker works with nothing running.
 
 ## What it guarantees, and is safe to build on
 

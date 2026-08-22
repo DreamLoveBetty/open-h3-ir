@@ -12,13 +12,15 @@
  * pointer to a name, so a workflow opened on a machine that has never seen this store still
  * compiles exactly what you wrote.
  *
- * The seven texts below are h3ir/director.py's DIRECTORS, duplicated for the same reason every
- * other list in this pack is duplicated: the pack imports nothing from `h3ir`, the compiler may be
- * on another machine, and a text box that needs a running service before it can show you a
- * paragraph is a text box that is empty when you need it. tests/test_director_panel.py fails if the
- * two copies ever drift apart. Here they are a SEED rather than a menu: the first time the node is
- * opened they are written into the store as ordinary directions, and from then on the list is just
- * what is in the store — no shipped category, nothing that cannot be renamed or deleted.
+ * The seven texts come from ./contract.data.js, which is GENERATED from the compiler's own
+ * h3ir/director.py by `h3ir contract --js`. The panel carries a copy because the compiler may be on
+ * another machine or not running at all, and a text box that needs a service before it can show you
+ * a paragraph is a text box that is empty when you need it. It is generated rather than typed
+ * because eleven thousand characters of prose maintained by hand in two languages is drift with a
+ * schedule; tests/test_contract_drift.py fails while the copy is stale. Here they are a SEED rather
+ * than a menu: the first time the node is opened they are written into the store as ordinary
+ * directions, and from then on the list is just what is in the store — no shipped category, nothing
+ * that cannot be renamed or deleted.
  *
  * **Where the store is, and why not in the service.** Files in ComfyUI's own per-user folder,
  * `user/default/openh3ir/directors/<name>.json`, through the `/userdata` routes ComfyUI already
@@ -30,6 +32,12 @@
  */
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+/* The compiler's own three, generated rather than typed: the seven directions word for word, H3's
+ * closed motion table, and the length the compiler refuses a longer direction at. See the header
+ * for why the panel carries a copy at all. `h3ir contract --js` writes that file and
+ * tests/test_contract_drift.py fails while it is stale, so the eleven thousand characters below the
+ * import are never maintained by hand in two languages. */
+import { CAMERA_MOVES, DIRECTORS, MAX_NOTES } from "./contract.data.js";
 
 const VERSION = "director v3";
 console.log("[OpenH3-IR]", VERSION);
@@ -39,205 +47,10 @@ const NODE_H_EXTRA = 34;
 const PANEL_H = 430;
 const MIN_W = 380;
 const MIN_H = 300;
-/* The cap h3ir/director.py enforces. Restated so the panel can say it while there is still
- * something to do about it, rather than after a queue. */
-const MAX_NOTES = 5000;
-
 /* Where every direction lives, under ComfyUI's per-user folder. One JSON per direction, named as
  * you named it, holding exactly the two keys the node's field holds. See the header for why this
  * and not the compiler's service. */
 const SAVED_DIR = "openh3ir/directors";
-
-/* H3's closed motion table (base-en.txt 4.3). Off-vocabulary wording measurably under-uses the
- * strongest lever the model has, so somebody writing their own direction needs to be able to see
- * the twenty names. Shown on request, because a permanent block of twenty words above the box you
- * are meant to be writing in is noise. */
-const CAMERA_MOVES = [
-  "Zoom In", "Zoom Out", "Push In", "Pull Out", "Pan Left", "Pan Right", "Truck Left",
-  "Truck Right", "Tilt Up", "Tilt Down", "Pedestal Up", "Pedestal Down", "Arc Shot",
-  "Tracking Shot", "Static Shot", "Shake Slightly", "Shake Strongly", "POV", "Roll Clockwise",
-  "Roll Counterclockwise",
-];
-
-/* ---------------------------------------------------------------- the seven, verbatim */
-const DIRECTORS = [
-  {
-    id: "cameron", name: "James Cameron",
-    notes:
-      "The camera is mounted and travelling — it rides with the body or the machine rather than " +
-      "observing them, and it finishes a move on a different part of the space from the one it " +
-      "started on. Reach first for Tracking Shot, Push In, Truck Left, Truck Right, Pull Out, Arc " +
-      "Shot, Pedestal Up, Pedestal Down and Shake Strongly; leave Static Shot and the rolls " +
-      "alone.\n" +
-      "Frame wide enough that the space and the hardware in it read as large against the person, " +
-      "and tighten onto a face only at the moment a decision gets made. Low angles, letting a " +
-      "structure loom over whoever is under it.\n" +
-      "Light with hard sources that exist inside the frame — work lamps, flares, screens, fire — " +
-      "carving figures out of a cold cyan-blue ambient, with atmosphere thick enough that a beam " +
-      "has a shape in the air, and one warm amber source somewhere against the blue.\n" +
-      "Spend the description on the mechanism: what a thing is made of, what is bolted to what, " +
-      "the readout, the water, the load a surface is taking. Then the face, at the point where the " +
-      "person decides.\n" +
-      "Bodies show competence under load. They brace, grip, take weight and keep working, and the " +
-      "effort shows in the hands and the jaw before it reaches the voice. Delivery is clipped, " +
-      "functional, and pitched slightly too loud for the room.\n" +
-      "The room is close mechanical detail over a low pressurised bed — servo, hydraulic, metal " +
-      "under stress, water moving as mass — with its own hum continuing underneath all of it. A " +
-      "score is full orchestra with one solo instrument carrying the line above it, percussion " +
-      "entering under the movement, a wide dynamic range, building across a long sustained rise " +
-      "instead of arriving already loud.",
-  },
-  {
-    id: "tarantino", name: "Quentin Tarantino",
-    notes:
-      "The camera sits still and keeps holding after the action in the shot has finished. When it " +
-      "does move it starts abruptly, travels fast and stops dead instead of easing out. Reach " +
-      "first for Static Shot, Zoom In, Zoom Out, Pan Left, Pan Right, Truck Left, Truck Right, " +
-      "Tilt Down and POV; leave Arc Shot, the pedestals and the shakes alone.\n" +
-      "Frame flat and frontal while people talk, from a lens height that is either eye level or " +
-      "startlingly low, looking up from below the tabletop. An insert is enormous relative to the " +
-      "thing it shows.\n" +
-      "Light from ordinary sources — daylight through a window, tungsten in a room, the flat " +
-      "fluorescent of a public interior — but the colour off them is rich and heavily saturated: " +
-      "deep reds, hot yellows, warm browns, blacks that stay warm. Surfaces are worn, greasy and " +
-      "used, lit so the wear reads as colour rather than as grime.\n" +
-      "Point the camera at hands, feet and footwear, the object on the table, what somebody is " +
-      "eating, the thing being carried, the boot of a car — and a face kept in frame after it has " +
-      "stopped speaking.\n" +
-      "People talk at length about small unrelated things, relaxed and unhurried, then stop " +
-      "mid-thought and change tone inside a single beat. Delivery is easy and conversational until " +
-      "it drops flat and quiet.\n" +
-      "The room is dry and close — a chair on a hard floor, cutlery, a hard-soled step, the exact " +
-      "mechanical sound an object makes as it is picked up and set down, very little air in it. A " +
-      "score is source-flavoured rather than orchestral: reverb-heavy surf guitar, a soul rhythm " +
-      "section, spaghetti-western brass, an isolated whistled line, holding one tempo and one " +
-      "volume from start to finish with no swell under the action.",
-  },
-  {
-    id: "anderson", name: "Wes Anderson",
-    notes:
-      "The camera sits dead centre and moves only along a rigid axis — a fast flat pivot to the " +
-      "next arrangement, a straight lateral, or a straight advance. It never curves and never " +
-      "comes off the horizontal. Reach first for Static Shot, Pan Left, Pan Right, Truck Left, " +
-      "Truck Right, Zoom In, Tilt Down and Push In; leave Arc Shot, Tracking Shot, the shakes, the " +
-      "rolls and POV alone.\n" +
-      "Frame in one-point perspective, perfectly symmetrical, the subject centred and square to " +
-      "the lens looking very nearly down the barrel. An insert is a flat overhead plan view of " +
-      "objects laid out in a row.\n" +
-      "Light evenly and almost shadowlessly, high key, with no source doing anything dramatic. A " +
-      "small closed palette of related saturated colours — buttery yellows, pinks, faded reds, " +
-      "sage — against a pale ground.\n" +
-      "Point the camera at things that were arranged on purpose: labelled objects, printed matter, " +
-      "the contents of a container, a hand presenting an item flat to the lens, an itemised row of " +
-      "possessions.\n" +
-      "Performance is deadpan and upright. Bodies are held square and still, heads turn on the " +
-      "horizontal, and feeling is said out loud instead of shown. Delivery is flat and quick, " +
-      "evenly paced, with no emphasis on any word.\n" +
-      "The room is clean and slightly stylised — a small number of specific isolated sounds, each " +
-      "one distinct, over a quiet and almost neutral room tone. A score is plucked strings, " +
-      "harpsichord or celesta playing a brisk repeated figure at a fixed tempo held steady " +
-      "throughout, or one unaccompanied acoustic guitar.",
-  },
-  {
-    id: "villeneuve", name: "Denis Villeneuve",
-    notes:
-      "The camera stays still for a long time, and when it moves it travels in one continuous " +
-      "motion at a constant slow rate from the start of the move to the end of it. Reach first for " +
-      "Static Shot, Push In, Pull Out, Pedestal Up, Pedestal Down, Tilt Up, Arc Shot and Tracking " +
-      "Shot; leave the zooms, the shakes, the rolls and the pans alone.\n" +
-      "Frame the extreme wide where a figure is a small mark against the mass of the thing behind " +
-      "it, cut against a face filling the frame with nothing legible behind it. Nothing in the " +
-      "middle.\n" +
-      "Light with one hard directional source through a great deal of atmosphere — dust, fog, " +
-      "particulate — so the light has volume. Reduce the frame nearly to a single hue at a time, " +
-      "ochre or slate or near-black, and let figures go to silhouette against a bright void.\n" +
-      "Spend the description on mass and scale — the surface of a structure, the distance to a " +
-      "horizon, how much empty space surrounds a body — and then a face, small in the frame, with " +
-      "the rest of the frame empty.\n" +
-      "Performance is withheld. Bodies move slowly and deliberately, hold still for a long time " +
-      "before acting, and give almost nothing away. Delivery is quiet, low and unhurried, often " +
-      "barely above the room.\n" +
-      "The room is enormous low-frequency air: wind across open ground, a long decay on every " +
-      "impact, and real near-silence between events rather than a bed filling the gaps. A score is " +
-      "a sustained low drone with brass swelling out of it at a very slow tempo and no discernible " +
-      "melody, instruments added one at a time, the volume rising continuously to the end.",
-  },
-  {
-    id: "bigelow", name: "Kathryn Bigelow",
-    notes:
-      "The camera is carried and reacting rather than planned — it finds the subject a beat late, " +
-      "corrects, and gets jostled by what is happening beside it. It stands among the people in " +
-      "the scene rather than apart from them. Reach first for Shake Slightly, Shake Strongly, " +
-      "Tracking Shot, Truck Left, Truck Right, Pan Left, Pan Right, Push In and POV; leave Arc " +
-      "Shot, the rolls and Static Shot alone.\n" +
-      "Frame on a long lens from a real distance, so the frame is cropped tight and partly blocked " +
-      "by whatever sits between the camera and the subject. The subject falls wherever it happens " +
-      "to fall, often off-centre and part-cut by the frame edge.\n" +
-      "Light with whatever the location actually has and nothing added — flat overcast daylight, " +
-      "dust-bleached sun, one work light, night lit only by what somebody switched on. The colour " +
-      "is drained rather than rich: greys, dust, washed blue-white, no warmth put back anywhere " +
-      "and no source arranged to flatter anything.\n" +
-      "Point the camera at procedure: the sequence of actions a trained person performs, equipment " +
-      "being used correctly, hands doing a specific technical job, and the periphery being scanned " +
-      "for what is about to happen.\n" +
-      "Performance is professional and unglamorous. People do a job under stress, and effort and " +
-      "fear show as breathing and small errors rather than as expression. Delivery is terse, " +
-      "overlapping and functional.\n" +
-      "The room is immediate and unmixed — breathing inside the frame, gear and fabric, sharp " +
-      "transient impacts with no tail, and a background that keeps intruding on the foreground. A " +
-      "score is very quiet and very sparse: one low sustained tone, or a dry percussive pulse at a " +
-      "steady unchanging rate, mixed below the sound of the room.",
-  },
-  {
-    id: "wong", name: "Wong Kar-wai",
-    notes:
-      "The camera watches from just outside the moment, low and close, drifting slowly sideways " +
-      "past whatever is in the way, and never repositions for a clear view. Reach first for Static " +
-      "Shot, Truck Left, Truck Right, Push In, Pan Left, Pan Right and Tilt Down; leave Arc Shot, " +
-      "the pedestals, Shake Strongly and the rolls alone.\n" +
-      "Frame tight and obstructed — taken through a doorway, a grille, a mirror or the back of " +
-      "someone's head, with a foreground object cutting into a third of the frame and the subject " +
-      "pushed to the edge of it.\n" +
-      "Light in saturated practical colour at night: neon and signage bleeding into the air, " +
-      "tungsten pools, jade green and deep red against black, a smear of light around every source " +
-      "and no even fill anywhere.\n" +
-      "Point the camera at repeated intimate detail — a cigarette, a clock, a sleeve, steam coming " +
-      "off food, a hand not quite touching another one — and at the small distance between two " +
-      "people who are not looking at each other.\n" +
-      "People stand very close together and do not touch. A hand lifts partway and comes back " +
-      "down. Movements start late and finish slowly, and delivery is soft, quiet and aimed " +
-      "slightly away from whoever it was meant for.\n" +
-      "The room keeps the intimate layer close and the world muffled behind it — a fan, rain on an " +
-      "awning, distant traffic, crockery in another room, all of it slightly too far away. A score " +
-      "is one instrument carrying a short melody that repeats without developing — solo strings, a " +
-      "plucked guitar, a slow Latin waltz — at a fixed unhurried tempo, the same figure repeating " +
-      "from beginning to end at one volume.",
-  },
-  {
-    id: "spielberg", name: "Steven Spielberg",
-    notes:
-      "The camera advances steadily onto whoever is seeing something and keeps advancing after " +
-      "they have registered it — the move ends on a face rather than on the thing that caused it. " +
-      "Reach first for Push In, Tracking Shot, Truck Left, Truck Right, Pedestal Up, Tilt Up, Arc " +
-      "Shot and Pull Out; leave Shake Strongly, the rolls and POV alone.\n" +
-      "Frame at eye level or slightly below, so the world reads at the height of whoever is " +
-      "smallest in the scene. A clean wide that holds the whole group, then a slow tightening onto " +
-      "one reaction inside it.\n" +
-      "Light with a strong warm source from behind or beside the subject, throwing a visible shaft " +
-      "through haze or dust, edges rimmed bright, faces lifted by a soft bounce, and the source " +
-      "often flaring straight into the lens.\n" +
-      "Point the camera at the reaction rather than the cause — what a face does at the moment it " +
-      "understands, a group turning together, a small object held out on an open palm. The thing " +
-      "itself is frequently kept out of frame.\n" +
-      "Performance is readable and unguarded. Wonder, fear and recognition arrive on the face " +
-      "fully and without irony; bodies lean in, reach out, take a step forward. Delivery is warm " +
-      "and overlapping, and people talk over each other.\n" +
-      "The room has layered naturalistic depth — the near sound, the middle-distance activity and " +
-      "a real horizon behind them — with the specific sound of the thing being reacted to arriving " +
-      "before it is seen. A score is a full orchestra carrying one clear melodic line on strings " +
-      "or a solo horn, which plays through in full at least once, rises, and lands resolved.",
-  },
-];
 
 const PLACEHOLDER =
   "How they shoot, shape a scene, what makes their style unique, and what kind of personality " +

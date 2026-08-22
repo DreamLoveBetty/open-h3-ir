@@ -787,21 +787,35 @@ def test_a_silent_picture_is_refused_by_both_halves_when_another_one_replaces_to
     assert str(t.value).startswith("@two does not say who it replaces.")
 
 
-def test_the_key_the_node_sends_is_the_field_the_service_reads():
-    """The one hop none of the tests above crosses: the pack writes a dict key and the service
-    declares a model field, in two packages that never import each other. A typo between them is
-    the quietest failure available -- pydantic drops an unknown key and the picture arrives saying
-    nothing about who it replaces, which compiles, validates and renders the wrong swap.
-    """
-    import pathlib
+def test_the_words_the_node_collects_reach_the_field_the_compiler_reads():
+    """The one hop none of the tests above crosses, and the one that was broken the whole time.
 
+    The version of this test that stood here asserted two things: that `nodes.py` contains the line
+    `extra["replaces"] = slot.replaces`, and that `AssetIn` declares a field called `replaces`. Both
+    were true. Between them, `h3ir_client._asset_facts` copied four keys out of `extra` into the
+    request and this was not one of them, so the words never left the machine -- and this test was
+    green for as long as that lasted, because it compared two pieces of source text and never looked
+    at the request.
+
+    So it is asked of the REQUEST now, through the same function the node calls, and it is asked of
+    both delivery routes because which one runs is decided later by whether the service can open
+    ComfyUI's disk. `tests/test_contract_drift.py` holds the general form of this: nothing about
+    what crosses is asserted from source text where it can be asserted from the payload.
+    """
     from h3ir.service import AssetIn
 
+    from comfyui.h3ir_client import plan_assets, plan_uploaded_assets
+
     field = "replaces"
-    assert field in AssetIn.model_fields, "the service no longer takes it under that name"
-    nodes = (pathlib.Path(__file__).resolve().parents[1] / "comfyui" / "nodes.py").read_text()
-    assert f'extra["{field}"] = slot.replaces' in nodes, (
-        "the node no longer sends it under that name, so it would be dropped in transit")
+    assert field in AssetIn.model_fields, "the compiler no longer takes it under that name"
+    written = [("carguy", "image", "/comfy/input/a.png",
+                {"role": "replacement_subject", "note": "carguy",
+                 field: "the man in the plaid shirt"})]
+    for planned in (plan_assets(written, "match", "", ""),
+                    plan_uploaded_assets(written, "match", lambda _p: "0" * 64)):
+        assert planned[0].get(field) == "the man in the plaid shirt", (
+            "the words saying who this picture takes over from do not reach the request, so the "
+            "compiler binds the swap to whoever it happens to find instead")
 
 
 def test_the_clip_line_does_not_contradict_its_own_marker():
