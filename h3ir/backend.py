@@ -16,6 +16,13 @@ don't handle it. They are handled in this wrapper so no stage has to remember:
   F17  Even with thinking off the grammar constrains shape, not completion or sense: a
        string can run to max_tokens and return unterminated, unparseable JSON. -> we
        check finish_reason, parse, and re-validate required keys ourselves.
+
+The other thing this file owns is that "OpenAI-compatible" is a family, not a contract. The
+servers below all speak `/v1/chat/completions` and disagree about everything around it: where
+liveness lives, whether the model list carries a context length, whether one id means one model,
+and whether a credential is wanted. Each of those is handled here, once, against what the server
+itself publishes rather than against the one endpoint this was built on. See `health_probe`,
+`_discover_model` and `_headers`.
 """
 from __future__ import annotations
 
@@ -23,8 +30,12 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 import re
+import struct
+import tempfile
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,6 +63,54 @@ class TruncatedResponse(BackendError):
     pass
 
 
+class EndpointRefused(BackendError):
+    """The server answered with an error status.
+
+    Separate from the other two because it is a JUDGEMENT the server made about the request, and
+    that is information rather than only a failure. `h3ir doctor` reads a 400 on an image as an
+    answer about the model, which is how a text-only model gets named as one instead of printing
+    a stack of escaped JSON at somebody.
+    """
+
+    def __init__(self, status: int, body: str):
+        self.status = status
+        self.body = body
+        super().__init__(f"HTTP {status}: {_server_sentence(body)[:400]}")
+
+
+def _server_sentence(body: str) -> str:
+    """The human sentence inside an error body, however many times it was wrapped.
+
+    Every server here answers an error with JSON and no two agree on the shape. Ollama nests a
+    whole JSON document inside `error.message` as a STRING, so the one sentence a reader needs
+    ("model does not support multimodal requests") arrives escaped twice and reads as noise. Dug
+    out rather than printed raw, because an error nobody can read is the same as no error. Falls
+    back to the body untouched, since a wrong guess about the shape must not lose the evidence.
+    """
+    text = (body or "")[:8000]
+    for _ in range(4):          # bounded: each pass peels one layer of encoding
+        try:
+            obj = json.loads(text)
+        except ValueError:
+            return text.strip()
+        if isinstance(obj, str):
+            text = obj
+            continue
+        if isinstance(obj, dict):
+            err = obj.get("error")
+            if isinstance(err, str):
+                text = err
+                continue
+            if isinstance(err, dict):
+                obj = err
+            msg = obj.get("message") or obj.get("detail")
+            if isinstance(msg, str):
+                text = msg
+                continue
+        return (body or "").strip()
+    return text.strip()
+
+
 @dataclass
 class Reply:
     content: str
@@ -69,6 +128,20 @@ class Reply:
         # crude but useful: reasoning chars vs content chars
         total = len(self.reasoning) + len(self.content)
         return len(self.reasoning) / total if total else 0.0
+
+
+@dataclass(frozen=True)
+class HealthProbe:
+    """Whether the endpoint answers, and what every path that was tried said.
+
+    `via` is the point of it. Liveness is where a reader's debugging starts, the answer differs by
+    server, and `h3ir doctor` exists to tell somebody the truth about the setup in front of them:
+    "healthy" without naming which path replied is a claim they cannot check.
+    """
+
+    ok: bool
+    via: str
+    attempts: tuple[tuple[str, str], ...]
 
 
 def image_data_url(path: str | Path) -> str:
@@ -111,25 +184,69 @@ class Backend:
         return self.cfg.model or self._resolved_model or ""
 
     def _discover_model(self) -> None:
-        """Ask the endpoint what it serves and take the first id.
+        """Ask the endpoint what it serves, and take an id only when there is no choice in it.
 
         Only called from `require_available`, i.e. only on a path that is about to talk to a real
-        server. A local server almost always serves exactly one model, so making its full name a
-        required setting is a configuration step with no decision in it — and getting it wrong
-        returns a 400 that reads like a malformed request rather than a typo in an env var.
+        server. On a server with one model on it there is no decision to make and requiring its
+        full name would be configuration with nothing in it, so the id is taken.
+
+        On an endpoint that routes several models, taking the first one is a guess, and it is a
+        guess about a property the model list does not carry. This compiler reads reference images
+        through the endpoint, so it needs the model with a vision tower, and `GET /v1/models`
+        reports vision on none of these servers: Ollama's entries carry `id`, `object`, `created`
+        and `owned_by` and nothing else. Reported from a real Ollama install, where the first id
+        was a large text-only coding model, every reference image went unread, and nothing said so.
+        So it refuses, and names what it found.
+
+        Several ids are not necessarily several models. vLLM's `--served-model-name` publishes one
+        set of weights under several ids and gives every entry the same `root`, so entries are
+        counted by `root` where there is one. Where there is none, as on Ollama, each id counts as
+        its own model, which is the safe direction: it can only make this refuse, never guess.
         """
         try:
-            data = self._http().get(f"{self.cfg.base_url}/models", timeout=10.0).json()
-            ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+            data = self._get(f"{self.base_url()}/models", 10.0).json()
+            entries = [m for m in (data.get("data") or []) if m.get("id")]
         except Exception as e:  # noqa: BLE001 - re-raised as a BackendError below
             raise BackendUnavailable(
-                f"H3IR_LLM_MODEL is not set and {self.cfg.base_url}/models could not be read to "
+                f"H3IR_LLM_MODEL is not set and {self.base_url()}/models could not be read to "
                 f"discover it: {e}") from e
+        ids = [str(m["id"]) for m in entries]
         if not ids:
             raise BackendUnavailable(
-                f"H3IR_LLM_MODEL is not set and {self.cfg.base_url}/models named no models. "
+                f"H3IR_LLM_MODEL is not set and {self.base_url()}/models named no models. "
                 "Set H3IR_LLM_MODEL to the id your endpoint serves.")
+        distinct = {m.get("root") or m["id"] for m in entries}
+        if len(distinct) > 1:
+            raise BackendUnavailable(
+                f"H3IR_LLM_MODEL is not set and {self.base_url()}/models names {len(ids)} model "
+                f"ids, so which one to use is a real choice and this will not guess it. It reads "
+                f"reference images, and a model list does not say which model can see. "
+                f"Set H3IR_LLM_MODEL to one of: {', '.join(ids)}. Then run `h3ir doctor`, which "
+                f"reads a test image through the model you chose and reports whether it saw it.")
+        if len(ids) > 1:
+            log.info("H3IR_LLM_MODEL is not set; %d ids resolve to one model, using %r",
+                     len(ids), ids[0])
         self._resolved_model = ids[0]
+
+    def _headers(self) -> dict[str, str]:
+        """Bearer auth, when a credential was actually configured.
+
+        `H3IR_LLM_KEY` existed as a setting and was never sent anywhere, which is invisible against
+        a local server that wants no credential and is a 401 against every endpoint that does.
+
+        The default is the literal placeholder from `.env.example`, and sending THAT as a
+        credential would be worse than sending nothing: a server with auth on would reject it as a
+        bad key rather than a missing one, and the message a user has to debug would name the wrong
+        problem. So the placeholder means "no header".
+        """
+        key = (self.cfg.api_key or "").strip()
+        if not key or key == "not-needed":
+            return {}
+        return {"Authorization": f"Bearer {key}"}
+
+    def _get(self, url: str, timeout: float) -> httpx.Response:
+        """Every GET this file makes, so a configured credential is on all of them."""
+        return self._http().get(url, timeout=timeout, headers=self._headers())
 
     def _http(self) -> httpx.Client:
         if self._client is None:
@@ -149,27 +266,102 @@ class Backend:
 
     # ------------------------------------------------------------------ health
 
+    def base_url(self) -> str:
+        """The configured API base, with any trailing slash taken off.
+
+        `H3IR_LLM_URL=http://host:11434/v1/` is an ordinary thing for somebody to paste out of a
+        browser, and left alone it sends every request to `/v1//chat/completions`, which Starlette
+        answers with a 404 that says nothing about the extra slash.
+        """
+        return self.cfg.base_url.rstrip("/")
+
+    def _root_url(self) -> str:
+        """The server root, for the paths that sit beside `/v1` rather than under it.
+
+        The suffix is removed rather than cut at the last `/v1` anywhere in the string, because a
+        gateway can mount the OpenAI surface under a path: `http://gw/v1/openai` cut that way
+        leaves `http://gw`, and the liveness check then asks a different service entirely.
+        """
+        base = self.base_url()
+        return base[: -len("/v1")] if base.endswith("/v1") else base
+
+    def liveness_urls(self) -> tuple[str, ...]:
+        """The paths tried, in order, to decide whether an endpoint is up.
+
+        There is no standard one, and every server this project claims to support puts it
+        somewhere else. Read off each server's own routing table rather than assumed:
+
+          | server                  | liveness            |
+          |-------------------------|---------------------|
+          | vLLM, llama.cpp, SGLang | `/health`           |
+          | Ollama                  | no `/health` at all |
+          | LM Studio, hosted APIs  | `/v1/models`        |
+
+        Ollama's `server/routes.go` registers `/`, `/api/version`, `/v1/models` and the inference
+        paths, and nothing named health, so asking it for `/health` returns 404 forever. Asking
+        only there is what made `h3ir doctor` report a working Ollama as unreachable.
+
+        `/v1/models` is first because it is the surface every call in this file goes through and
+        all of those servers serve it, so the ordinary case is one request and the answer is about
+        the API rather than about the process. `/health` is second because a gateway can expose
+        chat completions without a model list, and an endpoint answering only there is still usable
+        once `H3IR_LLM_MODEL` is set. Either one answering means up, which is the reporter's own
+        suggestion and the right one.
+
+        The server root itself is deliberately NOT tried. Ollama answers `/` with "Ollama is
+        running", but so does every unrelated web server on that port, and a liveness check that
+        passes against a wrong port is worse than one that fails.
+        """
+        return (f"{self.base_url()}/models", f"{self._root_url()}/health")
+
+    def health_probe(self) -> HealthProbe:
+        """Which liveness path answered, and what each one said. See `liveness_urls`."""
+        attempts: list[tuple[str, str]] = []
+        for url in self.liveness_urls():
+            try:
+                r = self._get(url, 5.0)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                # The socket never opened, so the path was never the question and the second one
+                # would spend another timeout learning the same thing. Stopping here keeps the
+                # wrong-port case as fast as it was when only one path was tried.
+                attempts.append((url, f"{type(e).__name__}: {e}"))
+                break
+            except httpx.HTTPError as e:
+                attempts.append((url, f"{type(e).__name__}: {e}"))
+                continue
+            attempts.append((url, f"HTTP {r.status_code}"))
+            if r.status_code == 200:
+                return HealthProbe(True, url, tuple(attempts))
+        return HealthProbe(False, "", tuple(attempts))
+
     def health(self) -> bool:
-        try:
-            r = self._http().get(self.cfg.base_url.rsplit("/v1", 1)[0] + "/health", timeout=5.0)
-            return r.status_code == 200
-        except httpx.HTTPError:
-            return False
+        return self.health_probe().ok
 
     def server_version(self) -> str:
         """Recorded with every render. This bug family is version-dependent, so an upgrade
-        invalidates the assumptions in this file."""
-        try:
-            r = self._http().get(self.cfg.base_url.rsplit("/v1", 1)[0] + "/version", timeout=5.0)
-            return str(r.json().get("version", "?"))
-        except Exception:  # noqa: BLE001 - provenance only
-            return "?"
+        invalidates the assumptions in this file.
+
+        Two spellings, for the same reason liveness has two: vLLM and llama.cpp answer `/version`,
+        Ollama answers `/api/version`, and both return `{"version": ...}`. Provenance that reads
+        `?` on every run is provenance nobody can use.
+        """
+        for url in (f"{self._root_url()}/version", f"{self._root_url()}/api/version"):
+            try:
+                v = self._get(url, 5.0).json().get("version")
+            except Exception:  # noqa: BLE001 - provenance only
+                continue
+            if v:
+                return str(v)
+        return "?"
 
     def require_available(self) -> None:
-        if not self.health():
+        hp = self.health_probe()
+        if not hp.ok:
+            tried = "; ".join(f"{u} -> {w}" for u, w in hp.attempts)
             raise BackendUnavailable(
-                f"the reasoning model at {self.cfg.base_url} is not reachable. "
-                "Start it, or set H3IR_LLM_URL. Refusing to produce a lower-quality IR silently.")
+                f"the reasoning model at {self.base_url()} is not reachable. "
+                "Start it, or set H3IR_LLM_URL. Refusing to produce a lower-quality IR silently. "
+                f"Tried: {tried}")
         if not self.cfg.model and self._resolved_model is None:
             self._discover_model()
 
@@ -235,10 +427,11 @@ class Backend:
 
     def _once(self, body: dict[str, Any]) -> Reply:
         t0 = time.time()
-        r = self._http().post(f"{self.cfg.base_url}/chat/completions", json=body)
+        r = self._http().post(f"{self.base_url()}/chat/completions", json=body,
+                              headers=self._headers())
         wall = time.time() - t0
         if r.status_code >= 400:
-            raise BackendError(f"HTTP {r.status_code}: {r.text[:400]}")
+            raise EndpointRefused(r.status_code, r.text)
         data = r.json()
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
@@ -248,12 +441,20 @@ class Backend:
         finish = choice.get("finish_reason") or "?"
 
         # F15: reasoning ate the budget. Loud, not empty-string.
+        #
+        # The cause is only named when the reply carries the evidence for it. This message used to
+        # assert the reasoning budget every time, and a small non-reasoning model that simply
+        # stopped produced "the reasoning budget was consumed" beside "reasoning_chars=0" in the
+        # same sentence: a diagnosis its own numbers contradict, sending the reader to raise a
+        # budget that was never the problem.
         if content is None or not str(content).strip():
+            why = ("the reasoning budget was consumed before any answer was emitted" if reasoning
+                   else "no reasoning came back either, so the budget is not the explanation and "
+                        "this model stopped without answering")
             raise TruncatedResponse(
                 f"model returned no content (finish_reason={finish}, "
                 f"completion_tokens={usage.get('completion_tokens')}, "
-                f"reasoning_chars={len(reasoning)}) — the reasoning budget was consumed "
-                "before any answer was emitted")
+                f"reasoning_chars={len(reasoning)}): {why}")
         if finish == "length":
             raise TruncatedResponse(
                 f"response hit max_tokens ({body['max_tokens']}); output is incomplete")
@@ -391,28 +592,163 @@ def _extract_json(text: str) -> str:
     return t
 
 
+# --------------------------------------------------------------------- the vision self-test
+
+# Three digits, so a text-only model cannot land on them by chance, and fixed so two runs of
+# `h3ir doctor` are the same question.
+VISION_PROBE_DIGITS = "473"
+
+# A 5x7 cell per digit. A blockier 3x5 font is smaller and is also where a legible-enough glyph
+# stops being obvious, and a vision check that fails on its own typography would be reporting on
+# this file rather than on the endpoint.
+_DIGIT_GLYPHS = {
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
+    "3": ("11111", "00010", "00100", "00010", "00001", "10001", "01110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
+    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
+}
+
+
+def _png_chunk(tag: bytes, data: bytes) -> bytes:
+    return (struct.pack(">I", len(data)) + tag + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+
+def digits_png(digits: str, *, scale: int = 16, pad: int = 16) -> bytes:
+    """A greyscale PNG of `digits`, black on white, drawn here rather than shipped as a blob.
+
+    No image library: this is one dependency the compiler does not otherwise need, and a picture a
+    reader can regenerate and diff is worth more here than a binary file they have to trust.
+    """
+    glyphs = [_DIGIT_GLYPHS[d] for d in digits]
+    gw, gh = 5 * scale, 7 * scale
+    gap = scale
+    w = 2 * pad + len(glyphs) * gw + (len(glyphs) - 1) * gap
+    h = 2 * pad + gh
+    rows = []
+    for y in range(h):
+        row = bytearray(b"\xff" * w)
+        gy = (y - pad) // scale
+        if 0 <= gy < 7:
+            for i, g in enumerate(glyphs):
+                x0 = pad + i * (gw + gap)
+                for gx, cell in enumerate(g[gy]):
+                    if cell == "1":
+                        row[x0 + gx * scale: x0 + (gx + 1) * scale] = b"\x00" * scale
+        rows.append(b"\x00" + bytes(row))
+    return (b"\x89PNG\r\n\x1a\n"
+            + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+            + _png_chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+            + _png_chunk(b"IEND", b""))
+
+
+def vision_check(b: Backend) -> tuple[bool, str]:
+    """Ask the configured model to read three digits off a generated picture.
+
+    The one capability this compiler cannot do without, and until now the one thing nothing
+    checked. A text-only model answers the `chat_ok` probe perfectly and then reads no reference
+    image at all, which is exactly what the first Ollama report was: the endpoint was up, the
+    model was fine, and it could not see. `doctor` is where somebody looks when they are confused,
+    so the question belongs here.
+
+    The image is written to a file and passed through `user_message`, so this exercises the
+    production wiring including the mime sniff, rather than a shortcut built for the check.
+    """
+    fd, path = tempfile.mkstemp(suffix=".png")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(digits_png(VISION_PROBE_DIGITS))
+        reply = b.chat(
+            [user_message(f"This picture shows {len(VISION_PROBE_DIGITS)} digits. "
+                          "Reply with only those digits.", [path])],
+            # 256 rather than a tight budget: a captioning model answers a question about a
+            # picture with a sentence, and a check that fails on verbosity would be reporting on
+            # the model's manners rather than on whether it saw anything. Measured: moondream on
+            # Ollama truncated at 64 and produced no verdict at all.
+            thinking=False, max_tokens=256, temperature=0.0, retries=0)
+    finally:
+        os.unlink(path)
+    seen = "".join(c for c in reply.content if c.isdigit())
+    return VISION_PROBE_DIGITS in seen, reply.content.strip()[:160]
+
+
 def probe(cfg=None) -> dict[str, Any]:
-    """Report what the endpoint is and what it supports. Used by `h3ir doctor`."""
+    """Report what the endpoint is and what it supports. Used by `h3ir doctor`.
+
+    Every line here is a fact somebody has had to work out the hard way, so each one says what
+    answered and where, never just that something was fine.
+    """
     c = cfg or get_config()
-    out: dict[str, Any] = {"url": c.llm.base_url,
-                           "model": c.llm.model or "(unset — will use the endpoint's first)"}
+    out: dict[str, Any] = {"url": c.llm.base_url}
     with Backend(c) as b:
-        out["health"] = b.health()
-        if not out["health"]:
+        # Whether, never what. Somebody debugging a 401 needs to know if a credential went out at
+        # all, and a key printed here would be a key in a terminal, a scrollback and a bug report.
+        out["credential"] = "Authorization: Bearer sent" if b._headers() else "none sent"
+        hp = b.health_probe()
+        out["health"] = hp.ok
+        out["health_via"] = hp.via or "(nothing answered)"
+        out["health_tried"] = "; ".join(f"{u} -> {w}" for u, w in hp.attempts)
+        if not hp.ok:
             return out
+        ids: list[str] = []
         try:
-            r = b._http().get(f"{c.llm.base_url}/models", timeout=10.0).json()
-            ids = [m.get("id") for m in r.get("data", [])]
+            r = b._get(f"{b.base_url()}/models", 10.0).json()
+            entries = [m for m in (r.get("data") or []) if m.get("id")]
+            ids = [str(m["id"]) for m in entries]
             out["model_ids"] = ids
+            # vLLM publishes it here; Ollama's model objects carry id, object, created and
+            # owned_by only. Absent is not small, and printing None invites the wrong repair.
             out["max_model_len"] = next(
-                (m.get("max_model_len") for m in r.get("data", []) if m.get("max_model_len")), None)
+                (m.get("max_model_len") for m in entries if m.get("max_model_len")),
+                "(this endpoint does not report one)")
         except Exception as e:  # noqa: BLE001 - diagnostics only
             out["models_error"] = str(e)
+        if c.llm.model:
+            out["model"] = c.llm.model
+            out["model_from"] = "H3IR_LLM_MODEL"
+            if ids and c.llm.model not in ids:
+                out["model_warning"] = (
+                    f"H3IR_LLM_MODEL is {c.llm.model!r} and this endpoint does not list it. "
+                    "Every call will fail. Use one of the ids above.")
+        else:
+            try:
+                b._discover_model()
+                out["model"] = b.model_id()
+                out["model_from"] = ("H3IR_LLM_MODEL is unset and this endpoint serves one model, "
+                                     "so there was nothing to choose")
+            except BackendError as e:
+                out["model"] = "(none: H3IR_LLM_MODEL is unset and this will not guess)"
+                out["model_from"] = str(e)
+                return out
         try:
             reply = b.chat([{"role": "user", "content": "Reply with the single word: ready"}],
                            thinking=False, max_tokens=32, temperature=0.0)
             out["chat_ok"] = "ready" in reply.content.lower()
             out["latency_s"] = round(reply.wall_s, 2)
         except BackendError as e:
+            # Not a return: a model that fails the word-back instruction may still read a picture,
+            # and which of the two failed is the thing the reader came here to find out.
             out["chat_error"] = str(e)
+        try:
+            ok, said = vision_check(b)
+        except EndpointRefused as e:
+            # The server looked at the request and refused it. That is an answer about the model.
+            ok, said = False, str(e)
+        except BackendError as e:
+            # A timeout or a truncation says nothing either way, so no verdict is recorded.
+            out["vision_error"] = str(e)
+            return out
+        out["vision_ok"] = ok
+        out["vision_reply"] = said
+        if not ok:
+            out["vision_note"] = (
+                "the model did not read the test picture, so it has no vision tower or cannot use "
+                "it. Reference images are read through this model, so a brief with a picture "
+                "attached cannot work. Point H3IR_LLM_MODEL at a model that can see.")
     return out

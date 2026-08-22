@@ -52,8 +52,12 @@ class LLMConfig:
     # API. It needs a vision tower — reference images are analysed through it. The default is a
     # placeholder for "a server on this machine"; set H3IR_LLM_URL to yours.
     base_url: str = field(default_factory=lambda: _env("H3IR_LLM_URL", "http://127.0.0.1:8000/v1"))
-    # Whatever `GET /v1/models` on your endpoint reports. `h3ir doctor` prints the list.
+    # Whatever `GET /v1/models` on your endpoint reports. `h3ir doctor` prints the list. Unset is
+    # fine on a server with one model on it. On one that routes several the compiler refuses to
+    # pick, because the model it needs is the one with a vision tower and no model list says which.
     model: str = field(default_factory=lambda: _env("H3IR_LLM_MODEL", ""))
+    # Sent as `Authorization: Bearer`, unless it is left at this placeholder, in which case no
+    # header goes out. See `Backend._headers` for why the placeholder is not sent as a credential.
     api_key: str = field(default_factory=lambda: _env("H3IR_LLM_KEY", "not-needed"))
     # Reasoning is the bulk of the spend and silently truncates the answer if starved.
     max_tokens: int = field(default_factory=lambda: _env_int("H3IR_LLM_MAX_TOKENS", 16000))
