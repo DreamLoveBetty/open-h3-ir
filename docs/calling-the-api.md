@@ -5,8 +5,8 @@ nothing about H3. It says what the service promises, what it only attempts, and 
 can safely build a screen or a workflow on.
 
 If you are changing the compiler itself, you want [../AGENTS.md](../AGENTS.md) instead. If your caller
-is ComfyUI, the client is already written: [../comfyui/README.md](../comfyui/README.md) is the node
-pack, and [`../comfyui/h3ir_client.py`](../comfyui/h3ir_client.py) is a worked example of this API
+is ComfyUI, the client is already written: [ComfyUI-OpenH3-IR](https://github.com/ruashots/ComfyUI-OpenH3-IR) is the node
+pack, and [`h3ir_client.py`](https://github.com/ruashots/ComfyUI-OpenH3-IR/blob/main/h3ir_client.py) in it is a worked example of this API
 consumed over the standard library alone, with every failure branch below turned into a sentence for a
 person to read.
 

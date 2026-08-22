@@ -34,10 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# numpy is here for the ComfyUI node's tests only. The node converts IMAGE tensors to files, and
-# that conversion is where a silent resize or a dropped channel would hide, so it gets tested rather
-# than skipped. Nothing in `h3ir` itself imports numpy, and ComfyUI already ships it at runtime.
-dev = ["pytest", "numpy"]
+# numpy was here for the ComfyUI node pack's tests, which converted IMAGE tensors to files. The pack
+# is its own repository now and declares it there; nothing in `h3ir` imports numpy.
+dev = ["pytest"]
 
 [project.urls]
 # The package page's sidebar is built from these, and without them the only way back to the repo is a

@@ -98,14 +98,3 @@ def test_the_fact_is_stated_to_the_writer():
 def test_no_structure_source_means_no_fact_block():
     assert structure_facts((("<Video 1>", "subject"),)) == ""
 
-
-def test_the_tray_offers_the_words_and_the_token():
-    from comfyui import tray as T
-
-    assert T.VIDEO_ROLES.get("copy how it is shot") == "structure"
-    # a structure clip is a reference use, so the job stays in the reference family
-    import json
-    slots = T.read_tray(json.dumps([{
-        "kind": "video", "label": "clip", "file": "a.mp4 [input]",
-        "role": "structure", "soundtrack": "off", "note": "its camera and cutting"}]))
-    assert T.job_for(slots) == "ref2va"

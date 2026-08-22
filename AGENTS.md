@@ -185,8 +185,10 @@ because my first draft of that rule fired on "he gives an okay sign".
 that was green for its whole life while the field it guarded was dropped in transit, so every check
 holding the compiler and the pack together has a defect written for it in
 `research/contract_falsification.py`: it plants the defect, proves the defect is live, runs the test
-that claims to catch it, and puts the file back. Run it on a clean tree; 49 cases, all of which must
-go red.
+that claims to catch it, and puts the file back. Run it on a clean tree; 13 cases here, all of which
+must go red. The other 36 are the node pack's, in its own copy of that file, and neither list is
+complete on its own: a guard over there is falsified over there, against the compiler it has
+installed.
 
 **It reports three outcomes, not two, and that distinction is the file's second draft.** RED is a
 guard that fired. GREEN is a guard that did not. BROKEN is a case that never ran -- the anchor
@@ -232,50 +234,16 @@ them:
 | `comfy.py` | ComfyUI over HTTP; graph prompt substitution that refuses to guess. |
 | `acceptance.py` | the five-arm comparison, built without touching the GPU. |
 
-The ComfyUI pack in `comfyui/` is seven Python files plus a `web/` folder of five JS files, and imports nothing from `h3ir`. Two of those files are generated; both say so at the top:
+The ComfyUI node pack is its own repository, [ComfyUI-OpenH3-IR][pack]. It depends on the published
+`open-h3-ir` package, it carries no copy of the compiler, and nothing in this repository imports it
+or reads its files. What used to be written out here -- the pack's own file table, the store its
+directions live in, the ComfyUI frontend behaviour measured rather than assumed, and how to prove a
+change is live in a running ComfyUI -- moved with it, into `AGENTS.md` there.
 
-| file | what it owns |
-|---|---|
-| `h3ir_client.py` | the service protocol, the option lists, the report. No ComfyUI, no torch, no third-party packages. |
-| `media.py` | tensors and mappings to files on disk, content-addressed. No ComfyUI at module scope. |
-| `nodes.py` | the four node schemas -- Main, Media, Setup and the optional Director -- the model loaders and the socket-to-file mapping. This is the only file that needs a canvas. |
-| `contract.py` | the snapshot of the contract this pack was built against, and the decision about what a difference costs: what stops a queue, what is a line in the report. Imports nothing from `h3ir`. |
-| `contract.json` | GENERATED. `h3ir contract` wrote it. The snapshot the file above reads. |
-| `web/contract.data.js` | GENERATED. `h3ir contract --js` wrote it. The seven profiles, the camera table and the cap, for a panel that has to draw with nothing running. |
-| `web/director.js` | the Director panel. It imports the three above rather than declaring them. See below. |
+What stayed is the half this side owns: `h3ir/contract.py`, what it publishes, and why every literal
+in it is pinned by `tests/test_contract.py`. Read on.
 
-**Media and Director each carry a DOM board; Main and Setup are widget nodes** the theme draws, with
-`prompt.js` putting an @ picker over Main's sentence. All of it is decoration in the strict sense:
-each node's real state is ordinary widget values, and the two boards edit ONE string each -- the
-tray's JSON on Media, the direction's on Director. Delete `web/` and every node still works, still
-API-drives and still restores from a saved workflow, with the strings visible as themselves.
-
-**The Director's stored directions are the pack's only piece of state outside a graph, and they are
-deliberately outside the compiler.** They are files in ComfyUI's own per-user store,
-`user/default/openh3ir/directors/<name>.json`, each holding exactly the two keys the node's field
-holds, written and deleted through the `/userdata` routes ComfyUI already serves. The compiler's
-service was the other candidate and it lost on three counts: it may be on another machine or down,
-which would empty the list exactly when somebody is writing in it; it would have needed new write
-routes on a service that binds `0.0.0.0`; and none of it buys anything a graph needs, because **a
-graph carries the words, never a pointer to a name**. Nothing in `nodes.py`, `h3ir_client.py` or the
-service knows the store exists, and that is the property to keep: delete `web/` and every stored
-direction becomes irrelevant rather than missing.
-
-**The seven that ship are a SEED, not a menu**, and that is the owner's shape: "just preload the
-list with them, they should be able to be removed too." On first use `director.js` writes them into
-that store as ordinary directions, and from then on the list is simply what the store holds. There
-is no shipped category, no protected name, and no branch anywhere that recognises one — which is
-what makes rename and delete work on them with no special case, and `tests/test_director_panel.py`
-pins `DIRECTORS` to exactly two readings in the file, its declaration and the seed. **Seeding is
-keyed on the FOLDER not existing**, because that is the only state meaning "never used": deleting
-every direction leaves the folder, so a removed one stays removed. Deleting the folder by hand is
-therefore the documented way to get the seven back, and the only way, on purpose.
-
-`OpenH3IRDirector` takes one input, `profile`, and hands down one `H3IR_DIRECTOR` bundle. Main's
-`director` socket is optional, and a graph without the node steers exactly as it always has. **That
-absence is the default and it is load-bearing**, so anything that makes the node's presence matter to
-a graph that does not have one is a bug. There is no `none` on it for the same reason: the node IS
-the choice, and unplugging it is the absence of the only one rather than a third state.
+[pack]: https://github.com/ruashots/ComfyUI-OpenH3-IR
 
 ### What crosses to a client, and how drift is made loud
 
@@ -307,7 +275,7 @@ and that default cost this project a real bug: see below.
 
 #### The seven directors are still written down twice, and the copy is now generated
 
-`h3ir/director.py` is the authority. `comfyui/web/contract.data.js` carries the copy, for the reason
+`h3ir/director.py` is the authority. The pack's `web/contract.data.js` carries the copy, for the reason
 it always did -- the pack may be talking to another machine, and a text box that needs a running
 service before it can show you a paragraph is empty exactly when somebody is trying to write in it.
 
@@ -318,8 +286,8 @@ regenerates both copies and compares them byte for byte. So the instruction that
 *editing `h3ir/director.py` is not finished until `director.js` says the same words* -- is now:
 
 ```bash
-h3ir contract       > comfyui/contract.json
-h3ir contract --js  > comfyui/web/contract.data.js
+h3ir contract       > contract.json          # run in the node pack's repository
+h3ir contract --js  > web/contract.data.js
 ```
 
 Eleven thousand characters of prose maintained by hand in two languages is drift with a schedule.
@@ -352,7 +320,7 @@ Two ways to get the live contract, and the choice is the caller's:
 
 | where the compile happens | how to ask |
 |---|---|
-| the same Python, from the installed package | `comfyui.contract.installed_contract()` |
+| the same Python, from the installed package | the pack's `contract.installed_contract()` |
 | a service on another machine | `h3ir_client.fetch_contract(server)` |
 
 **Never merge them or fall back from one to the other.** Reading the local package's contract while
@@ -391,7 +359,7 @@ all-in-one.
 
 #### Two halves at different versions have to keep working
 
-`comfyui/contract.py` decides what a difference costs, and it decides it against **what this graph is
+The pack's `contract.py` decides what a difference costs, and it decides it against **what this graph is
 sending**, not against everything the pack can do. A pack that knows about `replaces` talking to a
 compiler that does not is perfectly good for every brief that replaces nobody, and refusing those
 would be breaking working setups to protect a feature they are not using.
@@ -414,90 +382,8 @@ request, including all four about who a picture replaces -- were invisible to it
 user through a branch that says "the service rejected the request".
 
 They are published now, `h3ir_client.REFUSED_AS_ASKED` gives the class one branch, and
-`tests/test_comfyui_node.py` reads its list from the shipped contract instead of from this
-repository's source, which is what carries it across the split.
-
-## ComfyUI frontend mechanics, measured rather than assumed
-
-Four of these cost a rebuild of the node surface to discover. They are recorded so nobody re-derives
-them, and each has a test in `tests/test_comfyui_schema.py` that fails if the surface stops respecting
-it. Measured against `comfyui_frontend_package 1.48.7` and `comfy_api/latest/_io.py`.
-
-- **`advanced` is not a hide.** The per-node expander exists only under Nodes 2.0 and is gated on the
-  setting `Comfy.Node.AlwaysShowAdvancedWidgets`. Under the legacy canvas renderer it does nothing at
-  all. Design as if every input is visible; treat the collapse as a bonus.
-- **A label and its value share one row of about 38 characters.** So a long display name makes both
-  unreadable. This is why every label in the pack is one or two words.
-- **A multiline STRING with no placeholder prints its own input id** on the canvas:
-  `addMultilineWidget` calls `createMultilineInputElement(default, placeholder || name)`. On a
-  multiline widget the placeholder is the only label there is, so it has to be the label and the
-  example at once and its first line has to stand alone under truncation. A **single-line** STRING's
-  placeholder is not drawn at all on the legacy canvas, so there the display name carries everything.
-- **Autogrow socket labels come from `names[ordinal]`, or from `prefix + ordinal` zero-based, and they
-  overwrite whatever the template declared.** `autogrowOrdinalToName` returns
-  `{name, display_name: s}` and `s` wins. So `TemplatePrefix` gives you `reference_0` on the canvas no
-  matter what the template's `display_name` says, and `TemplateNames` is the only way to get one-based
-  readable labels. Ids with a space in them (`pictures.picture 1`) round-trip through the API format
-  and the workflow save without trouble; verified by running one.
-- **The frontend already supports several inputs per grown item** (`inputSpecs` is a list and
-  `ensureWidgetForInput` runs when its length is not 1), but the Python side takes a single template
-  input and `_expand_schema_for_dynamic` reads only the first. That is the mechanical reason the
-  picture notes are one positional block and a clip's role lives on a satellite node, not a preference.
-- **An AUDIO is a Mapping, not necessarily a dict.** Load Video (Upload) hands out a `LazyAudioMap`
-  that shells out to ffmpeg on first key access. `isinstance(audio, dict)` refuses it.
-- **A DOM widget's wrapper follows `widget.width`, and the frontend rewrites that on every value
-  change.** The Vue side patches the wrapper's inline style each render from a node layout pass, and
-  what that pass computes is the node's *content* width, not the node box. Measured: choosing a
-  director set `width` to 238 on a node that was still 480 wide, the panel's wrapper went to 218px,
-  and the name field was squeezed to eleven pixels -- `Denis Villeneuve` drawn as `De`. It never
-  recovered at any node size, and no `computeSize` on either the widget or the node changes it,
-  because neither is what the wrapper reads. `width` unset is the state a widget starts in and the
-  one that renders full-bleed, so a board that fills its node holds it there:
-  `Object.defineProperty(w, "width", { get: () => null, set: () => {} })`. The media tray never hit
-  this because it pins its node to one size; anything resizable has to say it.
-
-## Proving a change is live in a running ComfyUI
-
-**A ComfyUI install holds a COPY of this pack, not this checkout.** `custom_nodes/openh3ir` is a
-directory somebody copied there; nothing links it to the tree you are editing unless somebody made a
-link, and `dir /AL` (or `ls -l`) is how you find out rather than assuming. So a change you make here
-is live in a running ComfyUI only after you have put it there.
-
-The two halves fail differently, and the difference is what makes this a trap rather than an
-inconvenience:
-
-- **`web/*.js` is served from that copy on every page load.** So fetching
-  `/extensions/openh3ir/tray.js` and diffing it against the tree is a real check of what the browser
-  is running -- but a match proves only that the two files are equal right now, which is also what
-  you see when somebody synced it an hour ago. It is evidence about the file, never about a link.
-- **The `.py` files are imported once, at ComfyUI startup.** A copied-in change does nothing until
-  the server restarts. This is the half that goes stale silently: the panel offers a new option
-  because the JavaScript is current, the user picks it, and the queue refuses it because the Python
-  is five days old.
-
-Measured on 2026-08-20: the served `tray.js` matched this checkout byte for byte while `tray.py` in
-the same install was five days behind, and the conclusion drawn from the first fact was that the
-whole pack was live.
-
-**The cheap read-out is the pack's own refusal.** Set the tray to whatever the change makes possible
-and queue the graph. If the running Python predates the change, the node refuses it with the OLD
-table's own sentence, naming the options it still believes in, and the failure lands on the Media
-node before a model is loaded, so it costs no GPU and no minutes. A refusal quoting the state you
-just left is the running process telling you which file it is holding, which is the same discipline
-as reading the artifact back instead of trusting the code that wrote it.
-
-**And there is one that costs no queue at all: ask the server for its own node table.**
-`GET /object_info/<NodeId>` is built from the `.py` the process imported at startup, so it is the
-schema the canvas is actually drawing. Diff it against `define_schema` in the tree and a stale import
-is one read away, before anybody opens a browser.
-
-Measured on 2026-08-21, and it is the same trap from the other end: `comfyui/nodes.py` in the install
-was byte-identical to this checkout -- every file was, `web/` included -- while
-`/object_info/OpenH3IRDirector` answered with a twelve-field schema from an earlier session, a
-`director` combo with `none` in it plus `moves`, `avoids` and a save/load `library`, none of which
-exist in the file either copy holds. Equal files on both sides of a copy and a running process three
-hours behind them. The `.pyc` timestamps under `custom_nodes/openh3ir/__pycache__` said the same
-thing and are the other cheap tell: older than the `.py` beside them means the import is stale.
+the pack's `tests/test_comfyui_node.py` reads its list from the shipped contract instead of from
+this repository's source, which is what carried it across the split.
 
 ## Known gaps, honestly
 

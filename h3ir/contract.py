@@ -31,7 +31,7 @@ makes later.
 **What a client does about a difference is the client's business, not this module's.** Nothing here
 refuses anything. It publishes facts and the digests that make comparing them cheap; the node pack
 decides which differences stop a queue and which are worth a line in a report, because only the
-caller knows what its own graph is about to send. See `comfyui/contract.py`.
+caller knows what its own graph is about to send. See `contract.py` in the node pack.
 """
 from __future__ import annotations
 
@@ -326,7 +326,7 @@ def as_js() -> str:
     thousand characters of prose maintained by hand in two languages is drift with a schedule.
 
     Only these three. The wire keys, the roles and the limits are the pack's Python's business and
-    reach it through `comfyui/contract.json`; the browser draws a picker and nothing else.
+    reach it through the pack's `contract.json`; the browser draws a picker and nothing else.
 
     `JSON.stringify`-shaped values rather than hand-quoted strings, so no escape in the prose has to
     be thought about twice.

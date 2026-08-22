@@ -41,6 +41,7 @@ import pytest
 
 from h3ir.analyse import _camera_or_blank
 from h3ir.compile import BriefRefused, _edit_source_worlds, _taken_over, check_swap
+from h3ir import contract as C
 from h3ir.draft import deterministic_draft
 from h3ir.models import (AssetCard, AssetKind, AssetRef, Brief, Mode, Role, SWAP_ROLES,
                          SubjectPlan)
@@ -388,42 +389,6 @@ def test_unknown_camera_is_stored_as_nothing():
     assert _camera_or_blank("the framing tightens") == "the framing tightens"
 
 
-# ------------------------------------------------------------------ the surface it is picked on
-
-def test_both_swap_roles_can_be_picked_in_the_media_tray():
-    """The half that shipped missing: a role no interface offers is a role nobody can use.
-
-    Everything above proves the compiler does the right thing with these two, and every one of
-    those tests passed while `ROLES["picture"]` in the node pack offered the original six and the
-    only way to ask for a swap was to write JSON into the tray widget by hand.
-
-    The pack imports nothing from `h3ir` and must not start now -- it talks to the service over
-    HTTP and is installed on machines where this package is absent. So the tie is asserted from
-    here, which is the one place that legitimately sees both sides. tray.js is held against
-    `comfyui/tray.py` by tests/test_panel_agrees_with_the_tray.py, so these two lines reach the
-    dropdown a user actually opens.
-    """
-    from comfyui.tray import PICTURE_ROLES
-    offered = set(PICTURE_ROLES.values())
-    missing = sorted(r.value for r in SWAP_ROLES if r.value not in offered)
-    assert not missing, (
-        f"{missing} cannot be picked on a picture slot in the media tray, so this feature is "
-        "reachable over HTTP and not from the node pack it was built for. Add it to PICTURE_ROLES "
-        "in comfyui/tray.py, in the words the panel shows.")
-
-
-def test_the_words_the_tray_shows_for_a_swap_are_not_the_role_tokens():
-    """P9's ground again, one layer out. The panel's vocabulary is the user's craft, not the wire
-    format: a dropdown reading `replacement_subject` is a dropdown that has to be explained."""
-    from comfyui.tray import PICTURE_ROLES
-    for words, role in PICTURE_ROLES.items():
-        if role in {r.value for r in SWAP_ROLES}:
-            assert "_" not in words and words != role, words
-            assert "clip" in words, (
-                f"{words!r} says nothing about the clip, and both of these roles are statements "
-                "about one: a picture set to either without a clip being edited is refused.")
-
-
 # ------------------------------------------------------------------ the rules
 
 _GOOD = """subject_definitions:
@@ -766,56 +731,47 @@ def test_the_two_swap_draft_passes_its_own_validator():
     assert not errs, (errs, text)
 
 
-def test_a_silent_picture_is_refused_by_both_halves_when_another_one_replaces_too():
-    """Two replacements and one of them silent is refused on both sides of the pack, and neither
-    refusal rests on a head count. The tray refuses because two pictures replace and one says
-    nothing, which is decidable without seeing the clip at all. The compiler refuses because the
-    clip it CAN see holds more than one figure of that kind, so the leftover is not a fact. Binding
-    the figure nobody named would be answering the question by picking what was left."""
-    from comfyui.tray import ServiceError as TrayRefusal, Slot, check_swaps
+def test_a_silent_picture_is_refused_when_another_one_replaces_too():
+    """Two replacements and one of them silent, and the refusal does not rest on a head count.
+
+    The compiler refuses because the clip it CAN see holds more than one figure of that kind, so
+    the leftover is not a fact. Binding the figure nobody named would be answering the question by
+    picking what was left.
+
+    The node pack refuses the same tray earlier and for a different reason -- two pictures replace
+    and one says nothing, which is decidable without seeing the clip at all -- and that half was
+    asserted here until the pack became its own repository. It is
+    `tests/test_tray.py::test_two_pictures_replacing_and_one_silent_stops_the_job` over there.
+    """
     brief, cards = _two_swaps("the man in the plaid shirt", "")
     plan = build_plan(brief, Mode.REF2VA, cards)
     with pytest.raises(BriefRefused) as e:
         check_swap(brief, plan)
     assert e.value.code == "replacement-target-ambiguous"
 
-    slots = [Slot(kind="picture", label="one", role="replacement_subject", file="a.png [input]",
-                  replaces="the man in the plaid shirt"),
-             Slot(kind="picture", label="two", role="replacement_subject", file="b.png [input]")]
-    with pytest.raises(TrayRefusal) as t:
-        check_swaps(slots)
-    assert str(t.value).startswith("@two does not say who it replaces.")
 
-
-def test_the_words_the_node_collects_reach_the_field_the_compiler_reads():
-    """The one hop none of the tests above crosses, and the one that was broken the whole time.
+def test_the_compiler_still_takes_the_field_the_words_arrive_in():
+    """Half of the hop that was broken the whole time, kept on the side that owns it.
 
     The version of this test that stood here asserted two things: that `nodes.py` contains the line
     `extra["replaces"] = slot.replaces`, and that `AssetIn` declares a field called `replaces`. Both
-    were true. Between them, `h3ir_client._asset_facts` copied four keys out of `extra` into the
-    request and this was not one of them, so the words never left the machine -- and this test was
-    green for as long as that lasted, because it compared two pieces of source text and never looked
-    at the request.
+    were true. Between them, the node pack's client copied four keys out of `extra` into the request
+    and this was not one of them, so the words never left the machine -- and this test was green for
+    as long as that lasted, because it compared two pieces of source text and never looked at the
+    request.
 
-    So it is asked of the REQUEST now, through the same function the node calls, and it is asked of
-    both delivery routes because which one runs is decided later by whether the service can open
-    ComfyUI's disk. `tests/test_contract_drift.py` holds the general form of this: nothing about
-    what crosses is asserted from source text where it can be asserted from the payload.
+    So the hop itself is asked of the REQUEST, through the very functions that build it, and after
+    the split that is asked where the request is built:
+    `tests/test_contract_drift.py::test_who_a_picture_replaces_reaches_the_request` in the node
+    pack's repository, against the contract this compiler publishes. What is left here is the end
+    of the hop that lives here, and `tests/test_contract.py` is what publishes it to the other side.
     """
     from h3ir.service import AssetIn
 
-    from comfyui.h3ir_client import plan_assets, plan_uploaded_assets
-
-    field = "replaces"
-    assert field in AssetIn.model_fields, "the compiler no longer takes it under that name"
-    written = [("carguy", "image", "/comfy/input/a.png",
-                {"role": "replacement_subject", "note": "carguy",
-                 field: "the man in the plaid shirt"})]
-    for planned in (plan_assets(written, "match", "", ""),
-                    plan_uploaded_assets(written, "match", lambda _p: "0" * 64)):
-        assert planned[0].get(field) == "the man in the plaid shirt", (
-            "the words saying who this picture takes over from do not reach the request, so the "
-            "compiler binds the swap to whoever it happens to find instead")
+    assert "replaces" in AssetIn.model_fields, "the compiler no longer takes it under that name"
+    assert "replaces" in C.ASSET_FIELDS, (
+        "the field is on the wire model and not in the published contract, so a client cannot "
+        "learn that it can send it")
 
 
 def test_the_clip_line_does_not_contradict_its_own_marker():

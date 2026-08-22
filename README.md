@@ -80,7 +80,7 @@ right half is committed beside it:
   nothing steers.
 
 The workflow in the picture ships with the pack:
-[`comfyui/example/openh3ir_base_workflow.json`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/example/openh3ir_base_workflow.json). Seven
+[`example/openh3ir_base_workflow.json`](https://github.com/ruashots/ComfyUI-OpenH3-IR/blob/main/example/openh3ir_base_workflow.json). Seven
 boxes on the canvas and that is all of it: the first three nodes, one called **Render** with the
 rendering machinery folded up inside it, one that saves the video, and two panels showing the brief
 that got written and the report of what happened. Nothing in it is set up to be fast or clever, so
@@ -102,9 +102,11 @@ Two ways to get it, and they hand you different halves.
 pip install open-h3-ir     # the compiler: the h3ir command and the service
 ```
 
-That is everything except the ComfyUI nodes. A node pack has to be a folder inside ComfyUI's
-`custom_nodes`, which is not something a wheel can put there, so the nodes come from the repo. Clone it
-if you want them, or if you are going to change anything:
+That is everything except the ComfyUI nodes, which are their own repository and their own install:
+[ComfyUI-OpenH3-IR](https://github.com/ruashots/ComfyUI-OpenH3-IR). Search for **OpenH3-IR** in ComfyUI Manager, or clone that
+repository into `custom_nodes`. It depends on this package and installs it for you.
+
+Clone this one if you want to run the compiler from source, or if you are going to change anything:
 
 ```bash
 git clone https://github.com/ruashots/open-h3-ir.git
@@ -115,7 +117,6 @@ pip install -e .
 export H3IR_LLM_URL=http://your-endpoint:8000/v1   # your own OpenAI-compatible endpoint
 export H3IR_LLM_MODEL=qwen3.8                     # which model on it, if it serves more than one
 h3ir doctor                                        # says what is actually answering
-cp -r comfyui /path/to/ComfyUI/custom_nodes/openh3ir
 h3ir serve --port 8420                             # keeps running while you work
 ```
 
@@ -127,19 +128,16 @@ So the compiler does not take the first id on that list. It stops, prints the id
 pick one. `h3ir doctor` then sends a test picture to the model you picked and says whether it saw
 it. An endpoint that serves one model gives you nothing to pick, so leave the variable unset.
 
-Restart ComfyUI and open the workflow. On Windows a junction means a `git pull` updates the pack too:
-
-```
-mklink /J "C:\ComfyUI\custom_nodes\openh3ir" "C:\path\to\open-h3-ir\comfyui"
-```
+Restart ComfyUI and open the workflow.
 
 **Point Setup at your own five H3 files before you run it.** The shipped workflow carries the
 filenames from the machine it was built on, and yours will be named differently. Each field lists what
 is actually on your disk, and the file you choose is the file that loads: no search by name, no
 preferred build, no option meaning "work it out". The report then names every file that was opened.
 
-The pack adds no packages to ComfyUI's Python. The nodes speak HTTP to `h3ir serve` with the standard
-library alone, so the compiler's dependencies can never break a ComfyUI install.
+The nodes speak HTTP to `h3ir serve` with the standard library alone, and never import this package
+while ComfyUI is loading them. A compiler that is missing or broken costs somebody a compile, never
+their nodes.
 
 That service can also sit on another machine, media included. When it can reach your files on disk it
 opens them where they are and nothing is copied. When it cannot, which is what another machine looks
@@ -208,7 +206,7 @@ jobs at once. That is refused on the canvas, in a full sentence naming both slot
 written or the writing model is called.
 
 Every node, every widget, every failure message and the wiring for building your own graph:
-[`comfyui/README.md`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/README.md).
+[the node pack's README](https://github.com/ruashots/ComfyUI-OpenH3-IR#readme).
 
 ## A dial, for how far it goes
 
@@ -302,7 +300,7 @@ your own. From the command line, `--director` takes one of the seven ids.
 
 The API is the product and the other two doors are its clients. No field that affects the output is
 reachable from only one of them, and no path skips the validator. The install is the one in the
-[quick start](#quick-start) above, minus the line that copies the pack into ComfyUI.
+[quick start](#quick-start) above.
 
 ```bash
 h3ir serve --port 8420
@@ -423,12 +421,11 @@ trip the rule that defect earns, by name. The whole gate runs in under a second 
 ```console
 $ pytest -q
 […]
-1024 passed, 2 skipped, 1 warning in 2.71s
+981 passed, 1 skipped, 1 warning in 2.74s
 ```
 
 That suite needs no model, no GPU and no network, which is the point: everything decidable without a
-model is decided without one. The two skips are about this machine rather than holes in the suite: one
-wants `torch` installed so it can check the ComfyUI file readers against real image data, the other
+model is decided without one. The one skip is about this machine rather than a hole in the suite: it
 wants an `ffprobe` that can measure a webp. Run it with `pip install -e ".[dev]"`.
 
 Legality is not quality, so `h3ir eval` measures the writing separately: it scores six briefs and gates
@@ -535,8 +532,8 @@ Every setting, with the reason for each default, is in [`.env.example`](https://
 
 | file | what it is for |
 | --- | --- |
-| [`comfyui/README.md`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/README.md) | **the node pack in full**: every node and widget, the tray, the `@` prompt, the wiring, every failure message |
-| [`comfyui/example/openh3ir_base_workflow.json`](https://github.com/ruashots/open-h3-ir/blob/main/comfyui/example/openh3ir_base_workflow.json) | the ready-to-run ComfyUI workflow in the picture above |
+| [the node pack's README](https://github.com/ruashots/ComfyUI-OpenH3-IR#readme) | **the node pack in full**: every node and widget, the tray, the `@` prompt, the wiring, every failure message |
+| [`example/openh3ir_base_workflow.json`](https://github.com/ruashots/ComfyUI-OpenH3-IR/blob/main/example/openh3ir_base_workflow.json) | the ready-to-run ComfyUI workflow in the picture above |
 | [`HANDOFF.md`](https://github.com/ruashots/open-h3-ir/blob/main/HANDOFF.md) | **installing it and verifying it works**, top to bottom, with a check on every step and what to do when one fails |
 | [`AGENTS.md`](https://github.com/ruashots/open-h3-ir/blob/main/AGENTS.md) | **contributing**: the rules that are not preferences, which file owns what, the known gaps |
 | [`docs/calling-the-api.md`](https://github.com/ruashots/open-h3-ir/blob/main/docs/calling-the-api.md) | driving the service from an application: what it guarantees, what it only attempts, what comes back |

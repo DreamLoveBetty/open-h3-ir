@@ -42,10 +42,10 @@ def _min_version() -> tuple[int, int]:
 
 def _python_files() -> list[pathlib.Path]:
     out: list[pathlib.Path] = []
-    # `comfyui` is here because the ComfyUI node pack ships in this repo and runs on whatever
-    # Python the user's ComfyUI was built with, which is frequently older than this one. The same
-    # f-string trap applies to it, and it was outside this walk until it was added.
-    for sub in ("h3ir", "tests", "comfyui"):
+    # The node pack used to be walked here too, because it shipped in this repository and runs on
+    # whatever Python the user's ComfyUI was built with. It is its own repository now and carries
+    # its own copy of this file.
+    for sub in ("h3ir", "tests"):
         out += [p for p in (REPO / sub).rglob("*.py")]
     return sorted(out)
 
