@@ -130,17 +130,17 @@ class BriefIn(BaseModel):
     constraints: list[str] = []
     creativity: Literal["restrained", "balanced", "bold", "extreme"] = Field(
         "balanced",
-        description="How much the writer may add beyond what the request states. "
-                    "restrained = the request and nothing else; balanced = the request, shaped, "
-                    "plus a score if the piece wants one; bold = may introduce a spoken line, a "
-                    "score, on-screen text or a beat the request never mentioned. An explicit "
+        description="How much the writer can add beyond what the request states. "
+                    "restrained = the request and nothing else. balanced = the request, shaped, "
+                    "plus music if the video wants it. bold = can introduce a spoken line, "
+                    "music, on-screen text or a beat the request never mentioned. An explicit "
                     "prohibition in the request (\"no dialogue\") overrides every setting.")
     director: str = Field(
         "",
         description="One of the profiles that ship with this service, by id: whose taste fills what "
-                    "the request and the references leave open — the camera, the framing, the light "
+                    "the request and the references leave open: the camera, the framing, the light "
                     "and colour, what the frame attends to, how bodies and delivery are written, "
-                    "and what the room and any score are made of. It never decides how many shots "
+                    "and what the room and any music are made of. It never decides how many shots "
                     "there are or where they cut, and anything the request states explicitly "
                     "outranks it. GET /v1/directors for the list and the prose of each. Empty means "
                     "no direction, which is what every brief written before this existed compiles "
@@ -148,7 +148,7 @@ class BriefIn(BaseModel):
     director_profile: dict[str, Any] | None = Field(
         None,
         description="Direction in your own words, instead of a shipped id: {\"name\": ..., "
-                    "\"notes\": ...}. `notes` is prose — how the piece should be shot — and it is "
+                    "\"notes\": ...}. `notes` is prose, how the video should be shot, and it is "
                     "handed to the writer as taste, not as rules: it is placed under the statement "
                     "of which attributes the request and the references already govern, and under "
                     "the creativity setting's prohibitions. `name` reaches the report and never the "
