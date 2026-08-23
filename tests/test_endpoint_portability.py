@@ -473,6 +473,67 @@ def test_a_transport_failure_during_the_vision_check_is_not_read_as_a_verdict():
     assert "vision_error" in out
 
 
+def _refuses_the_picture_with(status: int, body: str):
+    """A server that lists a model, answers the word probe, and refuses the PICTURE with `status`.
+
+    Everything before the picture succeeds on purpose. That is the shape of the bug: a reader gets
+    green all the way down and then one wrong verdict at the bottom.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": VLLM_ALIASES})
+        body_in = json.loads(request.content)
+        content = body_in["messages"][0]["content"]
+        if isinstance(content, list) and any(p.get("type") == "image_url" for p in content):
+            return httpx.Response(status, text=body)
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop",
+                                                      "message": {"content": "ready"}}]})
+    return handler
+
+
+@pytest.mark.parametrize("status", [400, 415, 422])
+def test_a_server_that_rejects_the_picture_is_a_verdict_about_the_model(status):
+    """The one refusal that IS an answer. The server read the request and would not take a picture,
+    which is exactly what a text-only model on a strict server does."""
+    out = _doctor(_refuses_the_picture_with(status, OLLAMA_NO_VISION_BODY), model="qwen3.8u")
+    assert out["vision_ok"] is False
+    assert "H3IR_LLM_MODEL" in out["vision_note"]
+
+
+@pytest.mark.parametrize("status,says", [
+    (404, "no model called"),
+    (401, "credential"),
+    (403, "credential"),
+    (500, "about the server"),
+    (502, "about the server"),
+])
+def test_a_refusal_that_judged_nothing_is_never_reported_as_a_model_that_cannot_see(status, says):
+    """MEASURED against a live vLLM: a model id the endpoint does not serve answers
+    `HTTP 404: The model does not exist`, and `doctor` reported it as a model with no vision tower.
+    Somebody reading that goes hunting for a vision model to replace one that was never there.
+
+    A missing model, a rejected credential and a broken server each have their own fix, so each gets
+    its own sentence, and none of them gets a verdict.
+    """
+    body = '{"error": {"message": "The model `qwen3.8u` does not exist."}}'
+    out = _doctor(_refuses_the_picture_with(status, body), model="qwen3.8u")
+    assert "vision_ok" not in out, (
+        f"HTTP {status} judged nothing about the picture and was reported as a verdict anyway")
+    assert "vision_error" in out, "the refusal itself is not reported at all"
+    assert says in out["vision_note"], out["vision_note"]
+    assert "vision tower" not in out["vision_note"], (
+        "the reader is sent looking for a model that can see, over a request nobody judged")
+
+
+def test_which_statuses_judge_a_picture_is_stated_once():
+    """The rule lives in one predicate rather than in the branch that happens to need it, because
+    the ComfyUI node pack makes the same decision and the two have to agree."""
+    from h3ir.backend import judges_the_picture
+
+    assert [s for s in (400, 415, 422) if not judges_the_picture(s)] == []
+    assert [s for s in (401, 403, 404, 408, 429, 500, 502, 503) if judges_the_picture(s)] == []
+
+
 def test_the_vision_check_failure_is_a_backend_error_callers_already_catch():
     """Nothing outside `doctor` calls it, but if it ever grows a caller, the exception has to be
     one the compiler's existing `except BackendError` already handles."""

@@ -52,7 +52,7 @@ from .shots import PINNED_SHOTS_MAX
 # 2 are interchangeable" -- what it needs to know is whether the particular field, role or limit IT
 # is about to use exists on the other side, and that is answered by comparing the sections, not the
 # number. The number is what a message quotes so two people can say which contract they each have.
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 
 
 # --------------------------------------------------------------------------- the wire

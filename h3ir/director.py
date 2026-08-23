@@ -28,10 +28,10 @@ edit, which is what `auto` means and has always meant, and a profile is one more
 reads while deciding, like the request itself. That is steering, and it is the setting's own
 promise. `tests/test_director.py` holds both halves.
 
-**What it costs to be prose, stated plainly.** A profile that describes a score the creativity dial
+**What it costs to be prose, stated plainly.** A profile that describes music the creativity dial
 will not license would be a contradiction we authored, which the model then spends a fix round on --
 `Scope.brief_instruction`'s docstring records that failure from the other direction. So one sentence
-is added to the head when no score can exist, saying so. It is a sentence, not a suppression: the
+is added to the head when no music can exist, saying so. It is a sentence, not a suppression: the
 caller's words are never edited, only placed under an instruction that outranks them.
 
 **Naming a director to the model is off, and that is the owner's call rather than a measurement.**
@@ -109,7 +109,7 @@ DIRECTORS: tuple[Director, ...] = (
             "clipped, functional, and pitched slightly too loud for the room.\n"
             "The room is close mechanical detail over a low pressurised bed — servo, hydraulic, "
             "metal under stress, water moving as mass — with its own hum continuing underneath all "
-            "of it. A score is full orchestra with one solo instrument carrying the line above it, "
+            "of it. The music is full orchestra with one solo instrument carrying the line above it, "
             "percussion entering under the movement, a wide dynamic range, building across a long "
             "sustained rise instead of arriving already loud.")),
     Director(
@@ -133,7 +133,7 @@ DIRECTORS: tuple[Director, ...] = (
             "until it drops flat and quiet.\n"
             "The room is dry and close — a chair on a hard floor, cutlery, a hard-soled step, the "
             "exact mechanical sound an object makes as it is picked up and set down, very little air "
-            "in it. A score is source-flavoured rather than orchestral: reverb-heavy surf guitar, a "
+            "in it. The music is source-flavoured rather than orchestral: reverb-heavy surf guitar, a "
             "soul rhythm section, spaghetti-western brass, an isolated whistled line, holding one "
             "tempo and one volume from start to finish with no swell under the action.")),
     Director(
@@ -156,7 +156,7 @@ DIRECTORS: tuple[Director, ...] = (
             "horizontal, and feeling is said out loud instead of shown. Delivery is flat and quick, "
             "evenly paced, with no emphasis on any word.\n"
             "The room is clean and slightly stylised — a small number of specific isolated sounds, "
-            "each one distinct, over a quiet and almost neutral room tone. A score is plucked "
+            "each one distinct, over a quiet and almost neutral room tone. The music is plucked "
             "strings, harpsichord or celesta playing a brisk repeated figure at a fixed tempo held "
             "steady throughout, or one unaccompanied acoustic guitar.")),
     Director(
@@ -179,8 +179,8 @@ DIRECTORS: tuple[Director, ...] = (
             "time before acting, and give almost nothing away. Delivery is quiet, low and unhurried, "
             "often barely above the room.\n"
             "The room is enormous low-frequency air: wind across open ground, a long decay on every "
-            "impact, and real near-silence between events rather than a bed filling the gaps. A "
-            "score is a sustained low drone with brass swelling out of it at a very slow tempo and "
+            "impact, and real near-silence between events rather than a bed filling the gaps. The "
+            "music is a sustained low drone with brass swelling out of it at a very slow tempo and "
             "no discernible melody, instruments added one at a time, the volume rising continuously "
             "to the end.")),
     Director(
@@ -205,7 +205,7 @@ DIRECTORS: tuple[Director, ...] = (
             "terse, overlapping and functional.\n"
             "The room is immediate and unmixed — breathing inside the frame, gear and fabric, sharp "
             "transient impacts with no tail, and a background that keeps intruding on the "
-            "foreground. A score is very quiet and very sparse: one low sustained tone, or a dry "
+            "foreground. The music is very quiet and very sparse: one low sustained tone, or a dry "
             "percussive pulse at a steady unchanging rate, mixed below the sound of the room.")),
     Director(
         id="wong", name="Wong Kar-wai", notes=(
@@ -227,7 +227,7 @@ DIRECTORS: tuple[Director, ...] = (
             "slightly away from whoever it was meant for.\n"
             "The room keeps the intimate layer close and the world muffled behind it — a fan, rain "
             "on an awning, distant traffic, crockery in another room, all of it slightly too far "
-            "away. A score is one instrument carrying a short melody that repeats without "
+            "away. The music is one instrument carrying a short melody that repeats without "
             "developing — solo strings, a plucked guitar, a slow Latin waltz — at a fixed unhurried "
             "tempo, the same figure repeating from beginning to end at one volume.")),
     Director(
@@ -250,7 +250,7 @@ DIRECTORS: tuple[Director, ...] = (
             "warm and overlapping, and people talk over each other.\n"
             "The room has layered naturalistic depth — the near sound, the middle-distance activity "
             "and a real horizon behind them — with the specific sound of the thing being reacted to "
-            "arriving before it is seen. A score is a full orchestra carrying one clear melodic line "
+            "arriving before it is seen. The music is a full orchestra carrying one clear melodic line "
             "on strings or a solo horn, which plays through in full at least once, rises, and lands "
             "resolved.")),
 )
@@ -281,7 +281,7 @@ def brief_instruction(d: Director, *, scored: bool = True) -> str:
     anyone can see or hear, which base-en.txt 4.1 rules out in as many words: "Every detail should
     correspond to something visible or audible."
 
-    `scored` is false when the dial licenses no score. Then a third sentence says so, because a
+    `scored` is false when the dial licenses no music. Then a third sentence says so, because a
     profile describing music that cannot exist is a contradiction WE placed in the ask -- see the
     module docstring. The caller's words are never edited; they are placed under an instruction that
     outranks them.
@@ -290,8 +290,8 @@ def brief_instruction(d: Director, *, scored: bool = True) -> str:
             "open, and it overrides neither of them. Apply it to this scene; do not copy these "
             "sentences into it.")
     if not scored:
-        head += (" This piece gets no score, so ignore anything below about music — that decision "
-                 "is already made and the direction does not reopen it.")
+        head += (" This piece gets no music, so ignore anything below about music, because that "
+                 "decision is already made and the direction does not reopen it.")
     return head + "\n" + (d.notes or "").strip()
 
 

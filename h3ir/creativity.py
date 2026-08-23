@@ -13,7 +13,7 @@ restrained.
 **The axis is addition, not effort.** The dial does not mean "more shots" or "more camera moves" --
 that is the taste-as-mechanics trap the rule audit removed from the validator, and it would put shot
 count back in through a side door. What the dial governs is whether the writer may introduce
-*content the request never supplied*: words for a character to speak, a score for the audience, text
+*content the request never supplied*: words for a character to speak, music for the audience, text
 burned into the frame. Those three are decidable, and each carries information that came from
 nowhere but the model.
 
@@ -36,7 +36,9 @@ from enum import Enum
 # The three addable elements. Each is content whose source can only be the model, and each is
 # decidable from the finished text.
 SPEECH = "speech"                 # a <d> block when the caller supplied no lines
-SCORE = "score"                   # non_diegetic_music beyond N/A when no music was asked for
+SCORE = "music"                   # non_diegetic_music beyond N/A when no music was asked for
+                                  # The VALUE is what a person reads; the identifier is code and
+                                  # stays, because the patterns below are keyed by it.
 ONSCREEN_TEXT = "on-screen text"  # quoted text in frame when the caller supplied none
 
 ELEMENTS = (SPEECH, SCORE, ONSCREEN_TEXT)
@@ -45,7 +47,7 @@ ELEMENTS = (SPEECH, SCORE, ONSCREEN_TEXT)
 # and "ONSCREEN_TEXT" is not a thing anyone writes.
 _PHRASE = {
     SPEECH: "a spoken line",
-    SCORE: "a score for the audience",
+    SCORE: "music for the audience",
     ONSCREEN_TEXT: "text visible in the frame",
 }
 
@@ -65,7 +67,7 @@ class Creativity(str, Enum):
 
 # What each position licenses the writer to introduce where the request is silent.
 #
-# RESTRAINED renders the request and nothing else. BALANCED adds the audience layer -- a score is
+# RESTRAINED renders the request and nothing else. BALANCED adds the audience layer -- music is
 # the one addition that serves a request without inventing anything a character does or says, and
 # the format gives it a section whose only alternative is N/A. BOLD may put words in a mouth and
 # text on the screen, which is where the brief that beat this service sat.
@@ -261,7 +263,7 @@ class Scope:
 
         The addable list is GENERATED from the licence, never hardcoded per position. An earlier
         version wrote bold's latitude as fixed prose and then appended the prohibitions underneath,
-        so a request that forbade music produced "you may add a score" followed by "a score is ruled
+        so a request that forbade music produced "you may add music" followed by "music is ruled
         out" — a contradiction we authored, which the model would spend a fix round on.
 
         Written as latitude rather than as a quota: naming a number of shots or camera moves here
@@ -323,7 +325,7 @@ def build(intent: str, *, level: str | Creativity | None = None,
 
     Precedence, and the order matters:
       1. A prohibition beats a mention of the same word — "no background music" says *music*, and
-         reading that as a request for a score inverts the instruction.
+         reading that as a request for music inverts the instruction.
       2. Content the caller actually supplied beats a prohibition — filling in a dialogue line and
          also writing "no dialogue" is a contradiction, and the concrete lines are the better
          evidence of intent than a phrase that may be stale in a long request.

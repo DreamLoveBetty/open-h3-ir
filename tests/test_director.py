@@ -98,13 +98,13 @@ def test_the_name_never_reaches_the_writer():
     assert "Ridley Scott" in D.note(d)
 
 
-def test_the_ask_says_so_when_no_score_can_exist():
+def test_the_ask_says_so_when_no_music_can_exist():
     """A profile describing music the dial will not license is a contradiction WE placed in the ask,
     and `Scope.brief_instruction`'s docstring records what that costs. The caller's words are never
     edited; a sentence that outranks them is added above."""
     d = D.BY_ID["cameron"]
-    assert "gets no score" not in D.brief_instruction(d, scored=True)
-    assert "gets no score" in D.brief_instruction(d, scored=False)
+    assert "gets no music" not in D.brief_instruction(d, scored=True)
+    assert "gets no music" in D.brief_instruction(d, scored=False)
     # and the words themselves survive either way, because they are the caller's
     assert "full orchestra" in D.brief_instruction(d, scored=False)
 

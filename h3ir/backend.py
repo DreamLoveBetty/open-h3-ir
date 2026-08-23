@@ -678,6 +678,50 @@ def vision_check(b: Backend) -> tuple[bool, str]:
     return VISION_PROBE_DIGITS in seen, reply.content.strip()[:160]
 
 
+# The statuses that mean "I looked at this request and it is not acceptable". Those are the only
+# ones that say anything about whether a model can read a picture, and a text-only model on a strict
+# server answers with one of them.
+JUDGED_THE_REQUEST = (400, 415, 422)
+
+
+def judges_the_picture(status: int) -> bool:
+    """Did the server judge the picture, or was the model never asked?
+
+    **A refused request is not automatically an answer about vision**, and reading it as one is the
+    wrong-message failure this whole file is written against. MEASURED against a live vLLM: asking
+    about a model the endpoint does not serve answers `HTTP 404: The model does not exist`, and
+    reporting that as `vision_ok: False` sends somebody hunting for a model with a vision tower to
+    replace one that was never there.
+
+    Four things get refused and only one of them is a verdict:
+
+        400, 415, 422   the server read the request and rejected the picture. That IS the answer,
+                        and it is what a text-only model on a strict server does.
+        404             there is no such model here. Nothing was asked.
+        401, 403        the server wants a credential. Nothing was asked.
+        anything else   the server broke, or something in front of it did. Nothing was asked.
+
+    The same rule holds the ComfyUI node pack's own vision route, which is where it was found.
+    """
+    return status in JUDGED_THE_REQUEST
+
+
+def _why_nothing_was_asked(status: int, model: str) -> str:
+    """What really happened, for the three refusals that are not about vision.
+
+    Each one has its own fix, and a reader handed the wrong one goes and repairs something that is
+    working.
+    """
+    if status == 404:
+        return (f"this endpoint has no model called {model!r}, so nothing was asked and nothing is "
+                "known about whether it can see. Check H3IR_LLM_MODEL against the ids above.")
+    if status in (401, 403):
+        return (f"this endpoint refused the request as unauthorised, so {model!r} was never asked. "
+                "It wants a credential. Set H3IR_LLM_KEY.")
+    return (f"this endpoint answered with an error rather than a verdict, so nothing is known about "
+            f"whether {model!r} can see. That is about the server rather than about the model.")
+
+
 def probe(cfg=None) -> dict[str, Any]:
     """Report what the endpoint is and what it supports. Used by `h3ir doctor`.
 
@@ -738,7 +782,12 @@ def probe(cfg=None) -> dict[str, Any]:
         try:
             ok, said = vision_check(b)
         except EndpointRefused as e:
-            # The server looked at the request and refused it. That is an answer about the model.
+            # A refused request is not automatically an answer about vision. See `judges_the_picture`
+            # for which statuses are and which are not.
+            if not judges_the_picture(e.status):
+                out["vision_error"] = str(e)
+                out["vision_note"] = _why_nothing_was_asked(e.status, b.model_id())
+                return out
             ok, said = False, str(e)
         except BackendError as e:
             # A timeout or a truncation says nothing either way, so no verdict is recorded.

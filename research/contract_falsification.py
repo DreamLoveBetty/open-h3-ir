@@ -75,7 +75,7 @@ CANNOT_ASK = {2: "pytest was interrupted", 3: "an internal pytest error",
 
 
 TOUCHES = ["h3ir/compile.py", "h3ir/director.py", "h3ir/service.py", "h3ir/models.py",
-           "h3ir/contract.py", "h3ir/cli.py", "tests/test_contract.py"]
+           "h3ir/contract.py", "h3ir/cli.py", "h3ir/backend.py", "tests/test_contract.py"]
 
 
 class CaseBroken(RuntimeError):
@@ -255,6 +255,30 @@ CASES = [
     ("capabilities grows its own copy of a list the contract owns",
      patch("h3ir/service.py", '"aspects": list(C.ASPECTS),', '"aspects": ["16:9", "9:16"],'),
      "tests/test_contract.py::test_the_service_publishes_one_statement_of_the_lists_it_shares_with_the_contract"),
+
+    # `doctor` turning a refused request into a verdict about vision. MEASURED against a live vLLM:
+    # a model id the endpoint does not serve answers `HTTP 404: The model does not exist`, and this
+    # reported it as a model with no vision tower. A reader then goes hunting for a model that can
+    # see, to replace one that was never there.
+    ("doctor reads every refused request as a model that cannot see",
+     patch("h3ir/backend.py", "            if not judges_the_picture(e.status):",
+           "            if False:"),
+     "tests/test_endpoint_portability.py::test_a_refusal_that_judged_nothing_is_never_reported_as_a_model_that_cannot_see"),
+
+    ("a status that judged nothing is quietly added to the ones that judge",
+     patch("h3ir/backend.py", "JUDGED_THE_REQUEST = (400, 415, 422)",
+           "JUDGED_THE_REQUEST = (400, 404, 415, 422)"),
+     "tests/test_endpoint_portability.py::test_a_refusal_that_judged_nothing_is_never_reported_as_a_model_that_cannot_see "
+     "tests/test_endpoint_portability.py::test_which_statuses_judge_a_picture_is_stated_once"),
+
+    ("a server that really did reject the picture stops being a verdict",
+     patch("h3ir/backend.py", "JUDGED_THE_REQUEST = (400, 415, 422)", "JUDGED_THE_REQUEST = ()"),
+     "tests/test_endpoint_portability.py::test_a_server_that_rejects_the_picture_is_a_verdict_about_the_model "
+     "tests/test_endpoint_portability.py::test_doctor_reports_a_text_only_model_as_the_reason_nothing_works"),
+
+    ("the three refusals that judged nothing collapse into one sentence",
+     patch("h3ir/backend.py", "    if status == 404:", "    if False:"),
+     "tests/test_endpoint_portability.py::test_a_refusal_that_judged_nothing_is_never_reported_as_a_model_that_cannot_see"),
 ]
 
 

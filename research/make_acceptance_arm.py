@@ -82,7 +82,7 @@ def brief(intent: str | None = None, creativity: str = "balanced",
                      path=str(CORRIDOR), note="the stone corridor (environment reference)",
                      px=(403, 552)),
         ],
-        # The canonical request says no background music. That is non-diegetic score only;
+        # The canonical request says no background music. That is non-diegetic music only;
         # torchlight and footsteps still belong in the soundscape. The plain arm clears it, because
         # a prohibition outranks every creativity setting -- leaving it on would make restrained and
         # bold identical and the dial invisible, which is the opposite of what that arm is for.
@@ -116,7 +116,7 @@ def _ask_sheet(name: str, b: Brief, doc) -> str:
         f"| cuts | {[s.cut_timestamp for s in doc.plan.shots if s.cut_timestamp] or 'none'} |\n"
         f"| words in {main_field} | {word_count(doc.sections[main_field])} |\n"
         f"| speech | {'yes' if '<d>' in doc.prompt else 'none'} |\n"
-        f"| score | {doc.sections.get('non_diegetic_music', '').strip()!r} |\n\n"
+        f"| music | {doc.sections.get('non_diegetic_music', '').strip()!r} |\n\n"
         f"## What came back\n\n```text\n{doc.prompt}```\n"
     )
 

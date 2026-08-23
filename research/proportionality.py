@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Does the creativity dial scale with the ask, or is it just loud?
 
-Two settings on one request cannot answer that. A dial that adds a score and 130 words to
+Two settings on one request cannot answer that. A dial that adds music and 130 words to
 *everything* looks identical, at one request, to a dial that reads the ask correctly.
 
 So: two requests x two settings, and what matters is the INTERACTION.
