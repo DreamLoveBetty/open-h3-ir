@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # The distribution is `open-h3-ir`; the import package and the command are both `h3ir`, which is
 # what you actually type. Stated in the README install block so nobody has to discover it.
 name = "open-h3-ir"
-version = "0.4.0"
+version = "0.4.1"
 description = "Open-source local implementation of MiniMax H3 Context-IR. Turn simple prompts into structured, validated H3 video briefs."
 readme = "README.md"
 requires-python = ">=3.10"
