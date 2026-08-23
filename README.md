@@ -4,23 +4,23 @@ Open-source local Context-IR for MiniMax H3.
 
 [![tests](https://github.com/ruashots/open-h3-ir/actions/workflows/ci.yml/badge.svg)](https://github.com/ruashots/open-h3-ir/actions/workflows/ci.yml)
 
-**Type one sentence. Get better video out of MiniMax H3.**
+**Write one prompt. Get better video out of MiniMax H3.**
 
 ![A man sandboarding down a dune with a giant white dragon running alongside him, ending on the title OpenH3-IR](https://raw.githubusercontent.com/ruashots/open-h3-ir/main/docs/media/openh3ir-title.webp)
 
 *That title card was made with this compiler: plain prose in, three named reference pictures, and
-H3 wrote the score in the same pass as the picture.* **Watch it with sound:**
+H3 wrote the music in the same pass as the picture.* **Watch it with sound:**
 [openh3ir-title.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/openh3ir-title.mp4).
 
 ## What this is
 
-H3 does not want a prompt. It wants a structured document: named sections in a fixed order, every
+MiniMax H3 does not want a prompt. It wants a structured document: named sections in a fixed order, every
 subject bound to a numbered picture label, cut times that land on a legal frame grid. That document is
 what MiniMax calls the Context-IR, and writing it is the whole job here.
 
 MiniMax open-sourced the model but not the stage that writes that document, saying only that
 ["H3-Context-IR is critical to the quality of the final output"](https://huggingface.co/MiniMaxAI/MiniMax-H3)
-and that you should call their hosted service for it. This is an independent open implementation of
+and that the way to get one is to call their hosted service. This is an independent open implementation of
 that missing layer, running on your own machine, with a dial on top of it.
 
 It talks to any OpenAI-compatible endpoint you already have running: Ollama, llama.cpp's server, LM
@@ -31,7 +31,8 @@ calls MiniMax.
 Three ways to reach it, and none of them is the poor relation:
 
 - **In ComfyUI**, four nodes and a workflow that ships ready to run, from
-  [their own repository](https://github.com/ruashots/ComfyUI-OpenH3-IR).
+  [their own repository](https://github.com/ruashots/ComfyUI-OpenH3-IR). Those nodes install this
+  package and run it inside ComfyUI's own Python, so there is nothing to start.
 - **Over HTTP**, one API for an application to call.
 - **From the command line**, for trying things out and for scripting.
 
@@ -46,53 +47,58 @@ commit if you build on it.
 *Same model, same seed, same reference image. The only difference is the words.*
 
 Both halves are the same request: *"she walks out onto the wet gantry in the rain and stops when she
-sees the city below."* On the left the sentence goes to H3 as typed. On the right it goes through
+sees the city below."* On the left the prompt goes to H3 as typed. On the right it goes through
 `h3ir` first. Nothing else moved between the two runs: same reference image, same seed, same 10.125
 seconds, same settings.
 
-The right side does what the sentence asked. She walks out along the gantry, and at five seconds it
+The right side does what the prompt asked. She walks out along the gantry, and at five seconds it
 cuts to a low-angle close-up of her looking down at the city.
 
 The left side is a good-looking clip that never arrives. It cannot decide where she is going, walking
 toward camera for the first half and away from it in the second. Nothing on that side is badly rendered, and that is the point:
 the model was fine, the words were the problem.
 
-That is one pair, but it is the pattern I keep seeing. Run the same sentence again and again at flat
+That is one pair, but it is the pattern I keep seeing. Run the same prompt again and again at flat
 defaults, dial untouched, and the character and the ambience come back the same either way, while the
 compiled side keeps arriving with more direction in it: sometimes mild, sometimes a lot, never
 overdone. The difference I care about is the one between a clip of the thing and a clip of the thing
 that actually means something.
 
 **Watch it with sound:** [off-vs-on.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/off-vs-on.mp4). H3 generates the rain and the
-score in the same pass as the picture, and GitHub cannot play a repo-hosted mp4 inline, so the
+music in the same pass as the picture, and GitHub cannot play a repo-hosted mp4 inline, so the
 animation above is the silent version and the file is the one with audio. The brief that produced the
 right half is committed beside it:
 [`off-vs-on.compiled-brief.txt`](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/off-vs-on.compiled-brief.txt).
 
 ## Quick start
 
-Two ways to get it, and they hand you different halves.
-
 ```bash
-pip install open-h3-ir     # the compiler: the h3ir command and the service
+pip install open-h3-ir
 ```
 
-That is everything except the ComfyUI nodes, which are their own repository and their own install:
-[ComfyUI-OpenH3-IR](https://github.com/ruashots/ComfyUI-OpenH3-IR). Search for **OpenH3-IR** in ComfyUI Manager, or clone that
-repository into `custom_nodes`. It depends on this package and installs it for you.
+That is the compiler: the `h3ir` command and the HTTP service. Point it at a language model you
+already run, and compile:
 
-Clone this one if you want to run the compiler from source, or if you are going to change anything:
+```bash
+export H3IR_LLM_URL=http://your-endpoint:8000/v1   # your own OpenAI-compatible endpoint
+export H3IR_LLM_MODEL=qwen3.8                      # which model on it, if it serves more than one
+
+h3ir doctor                                        # says what is actually answering
+h3ir compile "a lighthouse keeper lights the lamp in a storm" --seconds 10
+```
+
+**In ComfyUI you install none of that by hand, and you start no service.** Search for
+**OpenH3-IR** in ComfyUI Manager, or clone [ComfyUI-OpenH3-IR](https://github.com/ruashots/ComfyUI-OpenH3-IR)
+into `custom_nodes`. It depends on this package, installs it for you, and runs it inside ComfyUI's
+own Python. Your language model's address goes on a node instead of in a variable.
+
+Clone this repository to run the compiler from source, or to change anything:
 
 ```bash
 git clone https://github.com/ruashots/open-h3-ir.git
 cd open-h3-ir
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
-
-export H3IR_LLM_URL=http://your-endpoint:8000/v1   # your own OpenAI-compatible endpoint
-export H3IR_LLM_MODEL=qwen3.8                     # which model on it, if it serves more than one
-h3ir doctor                                        # says what is actually answering
-h3ir serve --port 8420                             # keeps running while you work
 ```
 
 **When your endpoint serves more than one model, set `H3IR_LLM_MODEL`.** Ollama usually serves
@@ -112,7 +118,7 @@ it. An endpoint that serves one model gives you nothing to pick, so leave the va
 `restrained` stays on the car and keeps its hands still: one slow low-angle track, one cut at six
 seconds to a held medium shot, no music, and the room never really revealed. `extreme` turns the same
 prompt into a car commercial. It opens wide on the empty showroom, cuts at three and a half seconds
-to a close-up panning along the front wheel, finishes on a low-angle push-in, and puts a score under
+to a close-up panning along the front wheel, finishes on a low-angle push-in, and puts music under
 all of it. Two shots became three, and the camera stopped being polite.
 
 Both reference plates are committed, so this runs as written:
@@ -125,7 +131,7 @@ h3ir compile "the car rolls into the showroom and stops under the lights" \
 ```
 
 Swap `extreme` for `restrained` and you get the left half. Four positions in all: `restrained`,
-`balanced` (the default), `bold`, `extreme`. What changes is how much the writer may introduce that
+`balanced` (the default), `bold`, `extreme`. What changes is how much the writer introduces that
 you never asked for, and an explicit "no dialogue" at `extreme` still means no dialogue.
 
 **Watch it with sound:** [dial-restrained-vs-extreme.mp4](https://github.com/ruashots/open-h3-ir/blob/main/docs/media/dial-restrained-vs-extreme.mp4).
@@ -205,11 +211,12 @@ curl -s localhost:8420/v1/briefs -H 'content-type: application/json' \
 
 `intent` is the only required field. Every response comes back in three layers, so a screen never has
 to read a format it does not care about: `presentation` is plain language for showing a person, `plan`
-is the creative decisions someone might want to change, and `ir` is the document plus the manifest for
+is the creative decisions somebody wants to change, and `ir` is the document plus the manifest for
 whoever wires the render. `GET /v1/capabilities` reports the legal durations, aspects and asset limits,
 so a caller never hardcodes them. `GET /v1/contract` reports every field name, every role and every
-refusal code this build takes. A client reads it and checks itself against the service before it
-sends anything. A field this service does not know is refused by name, never dropped.
+refusal code this build takes. It carries a version number of its own, 2 in this release. A client
+reads it and checks itself against the service before it sends anything. A field this
+service does not know is refused by name, never dropped.
 
 Attachments arrive two ways. A caller that shares a filesystem with the service names a path, and
 nothing is copied. A caller on another machine sends the bytes to `PUT /v1/assets/{sha256}` and then
@@ -233,7 +240,7 @@ good enough, because the answer is either mechanically right or the render is wr
 | Cut times land past the end of the clip, or so close together the cut reads as a glitch | Every cut time is checked against the real length of the clip and against the 1.2 seconds a shot needs to hold |
 | Your exact line comes back paraphrased | Dialogue never passes through the writing model, and a brief that reworded a locked line is refused |
 | Nothing states what has to stay the same about a reference | Each one carries a stated retention in the document, and that statement is validated |
-| A model that writes a broken document is simply asked to try again | What is mechanical is corrected in place, what needs judgement is reported, and a document that still fails falls back to a deterministic draft |
+| A model that writes a broken document is asked to try again | What is mechanical is corrected in place, what needs judgement is reported, and a document that still fails falls back to a deterministic draft |
 | Every front end reimplements the rules slightly differently | One compiler behind all three doors, and no path around the validator |
 
 ## Ten seconds is not ten seconds
@@ -244,7 +251,7 @@ requested 10.0s -> 243 frames = 10.125s (nominal S.SS 10.13)
 […]
 ```
 
-H3 only makes clips whose frame count fits a fixed grid. Inside the range the model was trained on,
+MiniMax H3 only makes clips whose frame count fits a fixed grid. Inside the range the model was trained on,
 5.167s to 15.083s, there are exactly fifteen legal lengths, and **only one of them is a whole number
 of seconds** (8.0s, at 192 frames). Ten is not on the grid, so 243 frames at 10.125s is the closest
 the model can get.
@@ -268,9 +275,9 @@ about what has to stay the same about it, and a mention in every shot it appears
 ambiguous about which of several things in it you care about, `--image path.png:"the pilot"` says which,
 straight to the model that looks at it.
 
-H3 does not have one mode, it has five, and each wants the document written differently. Which one a
+MiniMax H3 does not have one mode, it has five, and each wants the document written differently. Which one a
 request needs is settled by what you attached, because that is the only thing that can settle it
-correctly. You never pick one and no screen built on this should ask. The names show up in the report
+correctly. You never pick one and no screen built on this has to ask. The names show up in the report
 if you are curious: `t2va`, `i2va`, `fl2va`, `l2va`, `ref2va`.
 
 ## Exact dialogue stays exact
@@ -306,21 +313,21 @@ $ h3ir controls
   […]
   [ok  ] MUST FAIL: <Image N> instead of <Picture N>
   […]
-22 controls, 0 failing
+23 controls, 0 failing
 ```
 
 MiniMax's own published examples are in the reference set and have to validate clean, because a rule
-that fires on the spec's own artifact is a wrong rule. That direction has already caught two rules here
+that fires on the spec's own artifact is a wrong rule. That direction already caught two rules here
 and demoted them to guidance. There is one documented exemption, where MiniMax's example omits a camera
 motion type.
 
-Going the other way, fifteen mutants of that example each carry exactly one defect, and each has to
+Going the other way, sixteen mutants of that example each carry exactly one defect, and each has to
 trip the rule that defect earns, by name. The whole gate runs in under a second and needs no model.
 
 ```console
 $ pytest -q
 […]
-981 passed, 1 skipped, 1 warning in 2.74s
+990 passed, 1 skipped, 1 warning in 2.95s
 ```
 
 That suite needs no model, no GPU and no network, which is the point: everything decidable without a
@@ -398,7 +405,7 @@ Three commands need nothing running at all, so you can poke at it before you con
 `h3ir controls`, `h3ir budget --seconds 10` and `h3ir directors`.
 
 Every brief on this page was written by Qwen3.6 27B, 4-bit, served by vLLM at 262K context on two RTX
-3090s, and H3 rendered the videos from those briefs. That is what the project is proven against and the
+3090s, and MiniMax H3 rendered the videos from those briefs. That is what the project is proven against and the
 bar to size your own box against: a 27B-class local model that can also look at images is enough.
 `h3ir eval` is there to measure what a different endpoint does to brief quality rather than guess at it.
 
@@ -407,25 +414,25 @@ Every setting, with the reason for each default, is in [`.env.example`](https://
 ## What OpenH3-IR does not do
 
 - **It does not make the video itself.** It writes the words and hands over everything the render
-  needs. Over HTTP that is a brief plus which file belongs where; in ComfyUI it is the wires that feed
-  the Render box, and every box inside there is ComfyUI's own rather than ours.
+  needs. Over HTTP that is a brief plus which file belongs where. In ComfyUI it is the wires that
+  feed the Render box, and every box inside there is ComfyUI's own rather than ours.
 - **It does not judge whether the writing is good.** It can tell you a shot dropped the wardrobe. It
   cannot tell you the edit is dull.
-- **It cannot hear.** The model that reads your files can look and cannot listen, and a model asked
-  what a piece of music is like will invent a confident answer rather than admit that. So a sound is
+- **It cannot hear.** The model that reads your files looks and does not listen, and a model asked
+  what a piece of music sounds like invents a confident answer rather than admitting that. So a sound is
   described from the line you type about it, plus its own file details, plus a transcript if you have
   one. The transcript is the channel for words, and you supply the rest.
 - **It cannot guarantee H3 obeys every reference.** The brief binds the reference and states what must
   be preserved. Whether the model delivers is a render outcome, and the hardest case is `extreme`,
   which reaches for extreme close-ups.
-- **It cannot hand back your own footage, and neither can H3.** Add something to a clip, or swap
+- **It cannot hand back your own footage, and neither can MiniMax H3.** Add something to a clip, or swap
   what is there, and your file is never touched. H3 watches it and makes a new video that follows it
   closely: the same scene, doing the same thing, at the same moments, with your change in place. So
   an edit here is a very close remake, not a repaint of your frames. That is H3's design, not this
   compiler's choice. The brief asks in plain words for everything else to hold, and how close it
   lands is a render outcome like any other.
-- **It is deliberately H3-specific.** The rules, the frame grid and the section names are H3's.
-  Pointing it at another video model would be a new compiler target, not a config change.
+- **It is deliberately MiniMax H3 specific.** The rules, the frame grid and the section names are H3's.
+  Pointing it at another video model is a new compiler target, not a config change.
 
 ## Where to go next
 
@@ -442,11 +449,11 @@ Every setting, with the reason for each default, is in [`.env.example`](https://
 
 Apache 2.0. See [LICENSE](https://github.com/ruashots/open-h3-ir/blob/main/LICENSE), and [NOTICE](https://github.com/ruashots/open-h3-ir/blob/main/NOTICE) for what belongs to whom.
 
-**That covers this compiler. It does not cover the model you point it at, and H3's own licence is
-more restrictive than you might assume.** Three terms worth knowing before you build on this,
+**That covers this compiler. It does not cover the model you point it at, and MiniMax H3's own licence is
+more restrictive than most.** Three terms worth knowing before you build on this,
 because none of them is guessable:
 
-- **H3 is not licensed for use in the European Union, the United Kingdom, the Republic of Korea or
+- **MiniMax H3 is not licensed for use in the European Union, the United Kingdom, the Republic of Korea or
   the United States of America.** Those are its Excluded Territories, and the grant is worldwide
   except for them. MiniMax invites people there to contact them for a licence.
 - A commercial product or service using H3 **shall prominently display "MiniMax H3" in its user
