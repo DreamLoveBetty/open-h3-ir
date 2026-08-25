@@ -62,14 +62,15 @@ def _fmt_time(s: float) -> str:
     return f"{s:.2f}s"
 
 
-def _salient_beats(obs: AudioObservation) -> list[float]:
+def _salient_beats(downbeats: list[float], onsets: list[float],
+                   beats: list[float]) -> list[float]:
     """The few anchors a characterisation may name, chosen from the strongest tier available.
 
     Downbeats outrank strong onsets outrank raw beats, because each tier is a stricter reading
     of the same grid. First/middle/last rather than the first three: the characterisation's job
     is to show the pulse spans the clip, and three beats from the first second shows nothing.
     """
-    tier = obs.rhythm.downbeat_times_s or obs.rhythm.strong_onsets_s or obs.rhythm.beat_times_s
+    tier = downbeats or onsets or beats
     if len(tier) <= MAX_SALIENT_BEATS:
         return list(tier)
     mid = len(tier) // 2
@@ -112,6 +113,51 @@ def _note_conflict(obs: AudioObservation, note: str) -> str | None:
     return None
 
 
+def _checked_events(obs: AudioObservation) -> tuple[list, list[Finding]]:
+    """A23: every event must satisfy 0 <= start <= end <= asset duration.
+
+    An offender is DROPPED, not repaired: the event is an analyser claim about the bytes, and
+    clamping it would replace the analyser's fact with one we invented. Dropping is safe (the
+    timeline stage maps events onto shots, and a shot mapping needs a sane span) and the WARN
+    keeps it loud -- a degradation nobody reports is the one failure mode this codebase refuses.
+    """
+    duration = obs.signal.duration_s
+    good, bad = [], []
+    for e in obs.events:
+        in_range = 0 <= e.start_s <= e.end_s and (not duration or e.end_s <= duration + 1e-6)
+        (good if in_range else bad).append(e)
+    findings = [Finding(
+        "A23-audio-event-out-of-range", "WARN",
+        f"the analyser reported {len(bad)} event(s) outside the asset's 0..{duration:.2f}s span "
+        f"({', '.join(f'{e.label}@{e.start_s:.2f}-{e.end_s:.2f}s' for e in bad[:3])}); they are "
+        "dropped from the projection rather than clamped, because a clamped timestamp is a fact "
+        "nobody measured")] if bad else []
+    return good, findings
+
+
+def _checked_beats(obs: AudioObservation) -> tuple[list[float], list[float], list[float],
+                                                   list[Finding]]:
+    """A24: beat grids must be strictly increasing to be a grid at all.
+
+    A non-monotonic beat list is not snapped into shape by sorting it: out-of-order beats mean
+    the rhythm tier's output is broken in a way sorting would disguise, and the snapping stage
+    would then snap cuts onto a grid nobody measured. The whole grid is stood down (the role's
+    characterisation still reports the tempo, which is one number and still true) and the WARN
+    says so.
+    """
+    r = obs.rhythm
+    tiers = (list(r.downbeat_times_s), list(r.strong_onsets_s), list(r.beat_times_s))
+    broken = [name for name, tier in zip(("downbeats", "strong onsets", "beats"), tiers)
+              if any(b <= a for a, b in zip(tier, tier[1:]))]
+    if not broken:
+        return tiers[2], tiers[0], tiers[1], []
+    return [], [], [], [Finding(
+        "A24-beat-times-not-monotonic", "WARN",
+        f"the analyser's {', '.join(broken)} are not strictly increasing, so the beat grid is "
+        "stood down for this projection: no cut will snap to it and no accent is named from it. "
+        "The tempo figure is unaffected -- it is one number, not an ordering")]
+
+
 def project_audio(observation: AudioObservation, role: Role, caller_note: str = "",
                   ) -> RoleAudioProjection:
     """Project one Observation into the one role the caller wired it into.
@@ -124,6 +170,11 @@ def project_audio(observation: AudioObservation, role: Role, caller_note: str = 
     obs = observation
     out = RoleAudioProjection(role=role, characterisation="")
     note = (caller_note or "").strip()
+    # A23/A24 first: everything below projects from the SANITISED lists, so a broken analyser
+    # claim can neither reach the IR text nor the timeline.
+    events, event_findings = _checked_events(obs)
+    beats, downbeats, onsets, beat_findings = _checked_beats(obs)
+    out.findings.extend(event_findings + beat_findings)
 
     facts: list[str] = []
     if role is Role.VOICE_TIMBRE:
@@ -184,7 +235,7 @@ def project_audio(observation: AudioObservation, role: Role, caller_note: str = 
         char = "a rhythmic reference"
         if obs.rhythm.tempo_bpm:
             char += f" with an approximately {obs.rhythm.tempo_bpm:.0f} BPM pulse"
-        salient = _salient_beats(obs)
+        salient = _salient_beats(downbeats, onsets, beats)
         if salient:
             char += (" and prominent accents around "
                      + ", ".join(_fmt_time(s) for s in salient))
@@ -197,27 +248,27 @@ def project_audio(observation: AudioObservation, role: Role, caller_note: str = 
             facts.append("salient_beats_s=[" + ", ".join(f"{s:.2f}" for s in salient) + "]")
         # The FULL grid travels machine-facing: beat snapping (spec §18.1) needs every beat,
         # not the three the prose may name.
-        if obs.rhythm.beat_times_s:
+        if beats:
             out.timeline_constraints.append({
                 "type": "beat_grid",
                 "tempo_bpm": obs.rhythm.tempo_bpm,
-                "beats_s": list(obs.rhythm.beat_times_s),
-                "downbeats_s": list(obs.rhythm.downbeat_times_s),
+                "beats_s": list(beats),
+                "downbeats_s": list(downbeats),
                 "max_snap_ms": MAX_BEAT_SNAP_MS,
             })
 
     elif role is Role.SFX:
         # Reference, never a copy, whatever the signal contains -- the retention marker table
         # owns that, and the AGENTS.md note on `_AUDIO_MARKER` records what relaxing it cost.
-        if obs.events:
-            first = obs.events[0]
+        if events:
+            first = events[0]
             char = (f"a sound-texture reference containing {first.label} "
                     f"at {_fmt_time(first.start_s)}")
-            if len(obs.events) > 1:
-                char += f" and {len(obs.events) - 1} further event(s)"
+            if len(events) > 1:
+                char += f" and {len(events) - 1} further event(s)"
         else:
             char = "a sound-texture reference"
-        for e in obs.events:
+        for e in events:
             out.timeline_constraints.append({
                 "type": "sfx_event",
                 "start_s": e.start_s, "end_s": e.end_s,
@@ -227,7 +278,7 @@ def project_audio(observation: AudioObservation, role: Role, caller_note: str = 
                 # the observation itself.
                 "asset_duration_s": obs.signal.duration_s,
             })
-        facts.append(f"events={len(obs.events)}")
+        facts.append(f"events={len(events)}")
 
     else:
         # A role this projector does not know. The note alone carries the characterisation,

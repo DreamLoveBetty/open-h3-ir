@@ -1058,6 +1058,39 @@ def validate(text: str, ctx: Context | None = None, **kw) -> list[Finding]:
                     + " — and that the target video's own audio is generated")
                 break
 
+        # A22: a voice reference whose whole description is its words (spec §23). The transcript
+        # supplies dialogue content; timbre is a different property, and ref-en.txt 4.2 lists them
+        # as separate referencable things. The definition line is the ONLY channel the encoder has
+        # for this signal, so a clause that spends it quoting the speech leaves the voice itself
+        # undescribed. WARN, never ERROR: the fix is a caller note or the analyser's projection,
+        # neither of which the writer may invent -- a rule whose only resolution is fabrication
+        # must not enter the fix loop.
+        #
+        # Two decidable triggers, and deliberately no vocabulary of "timbre words" (which would be
+        # a preference, not a fact): the characterisation clause IS a saying -- "a voice saying
+        # 'Don't move'", spec §14.1's own example of what not to write -- or the clause is
+        # contained in the caller's transcript. A note that leads on timbre and then quotes
+        # ("gravelly low voice; she says 'we close at six'") starts on the voice and does not fire.
+        if role == "voice_timbre":
+            dline = re.search(rf"^\s*{re.escape(label)}\s+is\s+the\s+voice-timbre\s+reference"
+                              r"[^\n]*", defs, re.M)
+            line_text = dline.group(0) if dline else ""
+            clause = line_text.split("—", 1)[1].strip().rstrip(".") if "—" in line_text else ""
+            said = next((t for lb, t in ctx.audio_transcripts if lb == label), "")
+            words_only = bool(re.search(r"\bsaying\s*[\"“'‘]", line_text))
+            if not words_only and clause and said.strip():
+                norm = lambda s: re.sub(r"[^a-z0-9 ]+", " ", s.lower()).strip()
+                c, t = norm(clause), norm(said)
+                words_only = bool(c) and (c in t or t in c)
+            if words_only:
+                add("A22-voice-from-transcript-only", "WARN",
+                    f"{label} is wired as voice_timbre, but its definition describes the voice by "
+                    "its words, and the words are dialogue content, not timbre -- the one channel "
+                    "the encoder has for this signal then carries nothing about the voice itself. "
+                    "Characterise the voice instead: pitch, energy, pace, delivery "
+                    "(\"his own voice, calm and low\"), or let the audio analyser's projection "
+                    "supply it.")
+
     # An <Audio N> asserted to BE a frame of the video. Measured on 4 of 50 recorded audio briefs,
     # all of them audio-only: "anchored by <Audio 1> as the opening frame", "<Audio 1>, which serves
     # as the first frame", and in retention_analysis the Picture-shaped parenthetical
