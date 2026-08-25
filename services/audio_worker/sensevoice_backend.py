@@ -130,6 +130,15 @@ class SenseVoiceBackend:
         self._vad = None
         self._spk = None
 
+    @property
+    def model_id(self) -> str:
+        """The identity the compiler's observation cache keys on. It must name ALL THREE
+        models: swapping only the VAD or the speaker model changes the observations this
+        backend produces, and an id of bare "speech" would let a cached observation survive
+        the swap that invalidated it."""
+        s = self.settings
+        return "+".join(p for p in (s.sensevoice_model, s.vad_model, s.speaker_model) if p)
+
     def available(self) -> tuple[bool, str]:
         try:
             import funasr  # noqa: F401

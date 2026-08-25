@@ -78,3 +78,22 @@ def test_a_midpoint_voice_joins_the_first_cluster_it_resembles():
 
 def test_no_embeddings_no_labels():
     assert cluster_speakers([], 0.65) == []
+
+
+# ------------------------------------------------------------------ the model identity
+
+def test_the_model_id_names_every_model_in_the_chain():
+    """The compiler keys its observation cache on this id. Swapping ONLY the VAD or the
+    speaker model changes what this backend produces, so an id that named just the ASR model
+    would let a cached observation survive the swap that invalidated it."""
+    from audio_worker.sensevoice_backend import SenseVoiceBackend
+    from audio_worker.settings import WorkerSettings
+
+    s = WorkerSettings(sensevoice_model="iic/SenseVoiceSmall",
+                       vad_model="iic/fsmn-vad", speaker_model="iic/campplus")
+    mid = SenseVoiceBackend(s).model_id
+    assert "iic/SenseVoiceSmall" in mid and "iic/fsmn-vad" in mid and "iic/campplus" in mid
+
+    bare = WorkerSettings(sensevoice_model="iic/SenseVoiceSmall", vad_model="",
+                          speaker_model="")
+    assert SenseVoiceBackend(bare).model_id == "iic/SenseVoiceSmall"

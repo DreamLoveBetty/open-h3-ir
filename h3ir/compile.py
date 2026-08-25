@@ -400,6 +400,10 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                     "guided_decoding": cfg.llm.guided_decoding,
                     "server_version": backend.server_version(),
                     "card_hashes": {k: v.hash() for k, v in cards.items()},
+                    # Spec §24, or None when no audio was characterised: a brief with no
+                    # characterised audio gets no audio block, so "not stated" never reads
+                    # as "no audio".
+                    "audio": _audio_provenance(plan, cards, cfg) or None,
                     "plan_hash": plan.hash(),
                     "draft_tokens": draft_tokens,
                     "timings": timings,
@@ -854,6 +858,43 @@ def _audio_projections(plan) -> tuple[tuple[str, str, str, tuple[str, ...]], ...
         role = m.role.value
         out.append((m.label, role, m.characterisation, tuple(ctx.planner_facts[m.label])))
     return tuple(out)
+
+
+def _audio_provenance(plan, cards: dict[str, AssetCard], cfg) -> dict[str, Any]:
+    """Spec §24: per characterised <Audio N>, why the IR is allowed to say what it says.
+
+    One record per label tying together the observation's content hash (which bytes), the
+    model identity chain behind it (which analyser), whether the free-form fallback touched
+    the semantic fields (and with which model), and the role the projection ran under. That
+    record is what A25's traceability asks for: an acoustic fact in the document traces to
+    the analyser through `models`, to the caller through the manifest entry's note, and to
+    the fallback through `fallback_used` -- all three from this block alone.
+
+    Empty dict when no audio was characterised, and the caller omits the key entirely: a
+    brief with no audio gets no audio block, so "not stated" never reads as "no audio".
+    """
+    out: dict[str, Any] = {}
+    for m in plan.manifest:
+        if m.kind is not AssetKind.AUDIO:
+            continue
+        card = cards.get(m.sha256)
+        obs = card.audio_observation if card else None
+        if obs is None:
+            continue
+        ids = dict(obs.model_ids)
+        rec: dict[str, Any] = {
+            "observation_hash": obs.hash(),
+            "audio_worker": ids.get("audio_worker"),
+            "sensevoice_model": ids.get("speech"),
+            "clap_model": ids.get("clap"),
+            "models": ids,
+            "fallback_used": obs.fallback_used,
+            "fallback_model": cfg.audio.fallback_model if obs.fallback_used else None,
+            "projection_role": m.role.value,
+        }
+        out[m.label] = {k: v for k, v in rec.items()
+                        if v is not None and v != "" and v != {}}
+    return out
 
 
 def _standalone_audio(plan) -> tuple[str, ...]:
