@@ -63,3 +63,39 @@ def save_observation(obs: AudioObservation, worker: WorkerInfo) -> Path:
     p = _cache_path(observation_key(obs.sha256, worker))
     p.write_text(json.dumps(obs.to_dict(), indent=1, ensure_ascii=False))
     return p
+
+
+# --------------------------------------------------------------------- fallback responses
+
+# The fallback's ANSWER is byte-derived too -- same audio, same prompt version, same model --
+# so it is cacheable on exactly those three. What is NOT cached is the decision to ask (the
+# router's, role-dependent, per request) and the merge (request-scoped). This is how spec
+# §16's "fallback model/version when fallback_used" is honoured without putting the role in
+# any key: the role decides whether the cache is consulted, never what is stored under it.
+
+def fallback_key(sha256: str, model: str) -> str:
+    from .fallback import FALLBACK_PROTOCOL_VERSION
+    return hashlib.sha256(
+        f"{sha256}|{FALLBACK_PROTOCOL_VERSION}|{model}".encode()).hexdigest()[:24]
+
+
+def load_fallback(sha256: str, model: str) -> dict | None:
+    """A cached §11 payload, or None. Re-validated on load: a cache entry that no longer
+    parses against the protocol is a miss, never a partial answer."""
+    from .fallback import PROTOCOL_KEYS
+    p = _cache_path("fb-" + fallback_key(sha256, model))
+    if not p.exists():
+        return None
+    try:
+        payload = json.loads(p.read_text())
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(payload, dict) or not set(payload) <= PROTOCOL_KEYS:
+        return None
+    return payload
+
+
+def save_fallback(sha256: str, model: str, payload: dict) -> Path:
+    p = _cache_path("fb-" + fallback_key(sha256, model))
+    p.write_text(json.dumps(payload, indent=1, ensure_ascii=False))
+    return p

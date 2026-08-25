@@ -650,6 +650,10 @@ def hydrate_audio_manifest(manifest: list[ManifestEntry],
         obs = card.audio_observation if card else None
         if obs is None:
             continue
+        # The analysis run's own findings (A26/A28) ride the card, not the observation: they
+        # describe this request's supplement decisions, and the observation is byte-keyed.
+        if card.audio_findings:
+            ctx.findings.extend(card.audio_findings)
         if project_audio is None:
             from .audio.projector import project_audio as _project_audio
             project_audio = _project_audio

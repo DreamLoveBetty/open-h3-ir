@@ -259,8 +259,8 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
         from .audio.client import AudioWorkerError
         from .audio.observer import observe_audio
         try:
-            obs = observe_audio(ref, cfg, client=audio_backend,
-                                use_cache=use_cache and cfg.audio.cache_enabled)
+            obs, audio_findings = observe_audio(ref, cfg, client=audio_backend,
+                                                use_cache=use_cache and cfg.audio.cache_enabled)
         except AudioWorkerError as e:
             if cfg.audio.required:
                 raise AssetAnalysisError(
@@ -273,7 +273,8 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
             log.warning("audio analysis degraded to typed metadata for %s: %s",
                         ref.sha256[:12], e)
         else:
-            return _card_from_observation(ref, obs, transcript, duration_s)
+            return _card_from_observation(ref, obs, transcript, duration_s,
+                                          findings=audio_findings)
 
     summary = _role_summary_sentence(ref.role)
     if ref.note:
@@ -300,7 +301,8 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
 
 
 def _card_from_observation(ref: AssetRef, obs: AudioObservation, transcript: str,
-                           duration_s: float | None) -> AssetCard:
+                           duration_s: float | None, *,
+                           findings: list | None = None) -> AssetCard:
     """Project an observation onto the legacy card fields, keeping the card's contract.
 
     The card's existing fields are the renderer's interface, and the renderer must not have to
@@ -333,6 +335,9 @@ def _card_from_observation(ref: AssetRef, obs: AudioObservation, transcript: str
         characterisation=(ref.note or "").strip(),
         transcript=transcript, language=language,
         audio_observation=obs,
+        # The fallback stage's report (A26/A28). Request-scoped like the card itself: they
+        # describe THIS analysis run's supplement decisions, not the bytes.
+        audio_findings=list(findings or []),
         analyzer_version=ANALYZER_VERSION,
         model_id="+".join(obs.model_ids.values()) or "audio-worker")
 

@@ -116,7 +116,7 @@ def test_disabling_the_cache_analyses_every_time_and_writes_nothing(audio_state)
 
 def test_the_cached_observation_round_trips_through_disk(audio_state):
     worker = FakeWorker()
-    first = observe_audio(_ref(Role.BGM, "x"), get_config(), client=worker)
+    first, _ = observe_audio(_ref(Role.BGM, "x"), get_config(), client=worker)
     loaded = load_observation(SHA, worker.info)
     assert loaded == first
     assert loaded.hash() == first.hash()

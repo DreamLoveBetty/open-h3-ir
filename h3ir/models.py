@@ -272,6 +272,10 @@ class AssetCard:
     # either direction: an audio card is still request-specific and still never cached, while
     # the observation itself is cached apart, keyed on the bytes (see audio/cache.py).
     audio_observation: AudioObservation | None = None
+    # The fallback stage's per-run report (A26/A28 findings). Request-scoped, never cached,
+    # empty on the legacy path; plan.hydrate_audio_manifest folds them into the audio context
+    # so they reach the document on both shipping paths.
+    audio_findings: list = field(default_factory=list)
     analyzer_version: str = "1"
     model_id: str = ""
 
