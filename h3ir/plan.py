@@ -23,9 +23,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .grid import Target, rows_per_latent_frame, video_latent_t
-from .models import (AUDIO_REFERENCE_ROLES, AssetCard, AssetKind, Brief, CameraMove, DialogueLine,
-                     ManifestEntry, Mode, Plan, Role, SWAP_ROLES, ShotPlan, SpeakerPlan,
-                     SubjectPlan)
+from .models import (AUDIO_REFERENCE_ROLES, AssetCard, AssetKind, AudioPlanContext, Brief,
+                     CameraMove, DialogueLine, ManifestEntry, Mode, Plan, Role, SWAP_ROLES,
+                     ShotPlan, SpeakerPlan, SubjectPlan)
 
 # Words of speech per second at a natural delivery (~155 wpm). Used to stop the planner
 # putting more dialogue into a shot than can physically be spoken inside it.
@@ -618,6 +618,53 @@ def split_sound(events: list[dict[str, Any]]) -> tuple[dict[int, list[str]], lis
     return sync, ambient
 
 
+# --------------------------------------------------------------------------- audio projection
+
+def hydrate_audio_manifest(manifest: list[ManifestEntry],
+                           cards: dict[str, AssetCard]) -> AudioPlanContext:
+    """Project every characterised audio observation into its wired role (spec §17).
+
+    Runs right after build_manifest, before anything reads the manifest, so the deterministic
+    draft and the enriched path get the same characterisations -- build_plan's two callers must
+    not disagree about what an <Audio N> is. The signature omits spec §17's `refs` because the
+    caller's note already sits on the entry: build_manifest wrote it into `characterisation`,
+    and that is exactly the `caller_note` the projector asks for. The projector returns the
+    merged description, which REPLACES the note here; the note itself is never lost -- it leads
+    the merged string (projector.py documents why intent leads and facts follow).
+
+    A card without an `audio_observation` is the legacy path -- nothing can hear it, the note
+    stays as the whole characterisation, and X15-audio-uncharacterised keeps its meaning. That
+    case must produce NO findings and NO constraints: "not analysed" is not a conflict.
+    """
+    # Lazy, per the audio package's own contract: the projector is imported on the FIRST
+    # characterised observation, so a default install that never enables audio never imports it.
+    project_audio = None
+    ctx = AudioPlanContext()
+    for entry in manifest:
+        if entry.kind is not AssetKind.AUDIO:
+            continue
+        card = cards.get(entry.sha256)
+        obs = card.audio_observation if card else None
+        if obs is None:
+            continue
+        if project_audio is None:
+            from .audio.projector import project_audio as _project_audio
+            project_audio = _project_audio
+        proj = project_audio(obs, entry.role, entry.characterisation)
+        if proj.characterisation:
+            entry.characterisation = proj.characterisation
+        ctx.findings.extend(proj.findings)
+        if proj.timeline_constraints:
+            ctx.timeline_constraints[entry.label] = proj.timeline_constraints
+        if proj.planner_facts:
+            ctx.planner_facts[entry.label] = proj.planner_facts
+        salient = [t for c in proj.timeline_constraints if c.get("type") == "beat_grid"
+                   for t in c.get("downbeats_s") or c.get("beats_s")][:3]
+        if salient:
+            ctx.salient_beats[entry.label] = salient
+    return ctx
+
+
 # --------------------------------------------------------------------------- task types
 
 def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
@@ -715,6 +762,10 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
     opts = opts or ProfileOptions()
     target = Target.build(brief.seconds, brief.aspect, brief.canvas, brief.megapixels)
     manifest = build_manifest(brief, target)
+    # Before anything reads the manifest: the enhanced audio path replaces the caller-note-only
+    # characterisation with the role-aware projection. Both build_plan callers (the draft and
+    # the enriched path) get it, so the floor and the model's brief describe the same audio.
+    audio_ctx = hydrate_audio_manifest(manifest, cards)
     subjects = build_subjects(manifest, cards)
     # Before the notes are written, because `retention_note` reads the marker this sets.
     bind_replacement(subjects, manifest)
@@ -761,6 +812,7 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
     return Plan(mode=mode, target=target, manifest=manifest, subjects=subjects,
                 speakers=speakers, shots=shots,
                 task_types=derive_task_types(manifest, brief),
+                audio_context=audio_ctx,
                 style_phrase=style_phrase.strip(),
                 ambient_sound=ambient,
                 music=(music or "").strip() or ("N/A" if brief.silent else ""),

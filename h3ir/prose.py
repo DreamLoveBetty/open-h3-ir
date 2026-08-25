@@ -260,6 +260,29 @@ def audio_task_facts(labels: tuple[str, ...], task_types: tuple[str, ...],
     return "\n".join(out)
 
 
+def audio_projection_facts(projections: tuple[tuple[str, str, str, tuple[str, ...]], ...]) -> str:
+    """The analyser's compressed facts per wired audio label, for the composing ask (spec §22).
+
+    `projections` is (label, role, characterisation, planner_facts) per characterised audio.
+    This is the ONLY form in which an observation reaches the writer: the characterisation the
+    renderer will ship plus a handful of short facts. The raw observation never crosses -- a
+    hundred beat timestamps is not a fact sheet, and a model handed the grid will quote the grid.
+
+    Emitted as JSON, matching the shape spec §22 pins, so the model reads it as data to honour
+    rather than prose to imitate.
+    """
+    if not projections:
+        return ""
+    block = {
+        label: {"role": role, "characterisation": char, "facts": list(facts)}
+        for label, role, char, facts in projections
+    }
+    return ("What the audio analyser measured about each attached <Audio N> — deterministic "
+            "facts, stated so you do not have to guess them; honour them and do not embellish "
+            "them into claims they do not make:\n"
+            + json.dumps(block, ensure_ascii=False, indent=2))
+
+
 def video_task_facts(video_roles: tuple[tuple[str, str], ...],
                      task_types: tuple[str, ...]) -> str:
     """What a declared video role settles about the task-type prefix, stated as a fact in the ask.
@@ -704,6 +727,11 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   video_roles: tuple[tuple[str, str], ...] = (),
                   audio_roles: tuple[tuple[str, str], ...] = (),
                   audio_transcripts: tuple[tuple[str, str], ...] = (),
+                  # (label, role, characterisation, planner_facts) per characterised audio, from
+                  # the role-aware projection. What the analyser can stand behind, compressed so
+                  # the writer honours it instead of guessing -- and so the raw observation never
+                  # reaches the model.
+                  audio_projections: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (),
                   # (label, what the clip shows, what its camera does) for every video attached
                   # as `edit_source`, and (picture label, the subject it takes over from) for every
                   # bound replacement. Pre-extracted like `audio_transcripts` and `picture_roles`,
@@ -793,6 +821,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         # Scoped to the full-reference shape: a base mode has no task-type prefix to constrain, and
         # cannot have an <Audio N> at all -- any audio attachment routes to ref2va (mode.py 12.2#1).
         + (f"\n{audio_task_facts(labels, task_types, audio_roles)}\n" if is_ref else "")
+        + (f"\n{audio_projection_facts(audio_projections)}\n"
+           if is_ref and audio_projections else "")
         + (f"\n{video_task_facts(video_roles, task_types)}\n"
            if is_ref and video_task_facts(video_roles, task_types) else "")
         + (f"\n{edit_source_facts(video_worlds, picture_roles)}\n"

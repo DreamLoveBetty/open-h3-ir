@@ -445,6 +445,7 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                                        picture_roles=pic_roles, video_roles=vid_roles,
                                        audio_roles=aud_roles,
                                        audio_transcripts=transcribed,
+                                       audio_projections=_audio_projections(draft_plan),
                                        video_worlds=worlds, taken_over=taken,
                                        generation_task=("video editing"
                                                         not in draft_plan.task_types),
@@ -835,6 +836,26 @@ def _audio_transcripts(plan, cards: dict[str, AssetCard]) -> tuple[tuple[str, st
     return tuple(out)
 
 
+def _audio_projections(plan) -> tuple[tuple[str, str, str, tuple[str, ...]], ...]:
+    """(label, role, characterisation, planner_facts) per characterised audio, for the ask.
+
+    Read off the plan's audio context for the same reason `_audio_transcripts` reads the
+    manifest and the cards: nothing else joins a manifest label to what the analyser said about
+    the bytes behind it. Empty when no audio was characterised, which is every brief on the
+    legacy path -- "not stated", never "no audio".
+    """
+    ctx = plan.audio_context
+    if ctx is None:
+        return ()
+    out = []
+    for m in plan.manifest:
+        if m.kind is not AssetKind.AUDIO or m.label not in ctx.planner_facts:
+            continue
+        role = m.role.value
+        out.append((m.label, role, m.characterisation, tuple(ctx.planner_facts[m.label])))
+    return tuple(out)
+
+
 def _standalone_audio(plan) -> tuple[str, ...]:
     """Which <Audio N> labels are wired standalone. Stated positively so the validator can tell "the
     wiring says unpaired" from "nobody said", which is the difference between a real finding and the
@@ -975,6 +996,13 @@ def wiring_findings(plan, brief: Brief) -> list[Finding]:
     what was asked for, so both paths get them.
     """
     findings: list[Finding] = []
+
+    # Caller/analyser conflicts the audio projection surfaced while hydrating the manifest
+    # (A9-audio-note-discrepancy -- spec §13 named it A1, but A1 is soundscape-length's number
+    # and test_no_rule_id_carries_two_meanings holds the uniqueness). Facts about the WIRING,
+    # true of whichever text ships -- the same argument this function's docstring makes for X15.
+    if plan.audio_context is not None:
+        findings.extend(plan.audio_context.findings)
 
     # Nothing in this system can hear, so an audio reference whose ROLE claims a sonic property and
     # whose text describes none is a reference carrying no information at all -- H3's tokenizer emits

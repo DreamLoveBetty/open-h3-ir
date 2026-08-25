@@ -428,6 +428,33 @@ class ModeDecision:
 
 
 @dataclass
+class AudioPlanContext:
+    """What the role-aware audio projection collected while hydrating the manifest.
+
+    The stage boundary for audio/projector.py's output, kept free of projector types so this
+    module never imports back into the audio package (audio/models.py's own header records why
+    that direction is a cycle). Everything here is derived from the manifest, the cards and the
+    brief, so it is deliberately absent from Plan.hash -- the characterisations it produced are
+    already hashed through the manifest, and hashing a derived index twice buys nothing.
+
+      * findings -- caller/analyser conflicts (A1) and anything else the projection surfaced;
+        compile.wiring_findings folds them into the document on BOTH paths, because they are
+        facts about the wiring, not about which text shipped.
+      * timeline_constraints -- machine-facing, per label: the full beat grid for snapping and
+        the SFX event spans for shot mapping (spec §18). Complete on purpose; the prose never
+        sees these.
+      * planner_facts -- the planner-facing compression (spec §22): a few short facts per
+        label, never the raw observation.
+      * salient_beats -- the handful of named accents per beat-reference label.
+    """
+
+    findings: list[Finding] = field(default_factory=list)
+    timeline_constraints: dict[str, list[dict]] = field(default_factory=dict)
+    planner_facts: dict[str, list[str]] = field(default_factory=dict)
+    salient_beats: dict[str, list[float]] = field(default_factory=dict)
+
+
+@dataclass
 class Plan:
     """Everything structural, decided deterministically. The model only fills prose slots."""
 
@@ -445,6 +472,10 @@ class Plan:
     loras: list[LoraChoice] = field(default_factory=list)
     mode_decision: ModeDecision | None = None
     planner_version: str = "1"
+    # What the audio projection settled while the manifest was hydrated (plan.hydrate_audio_manifest).
+    # None on every plan built before the enhanced-audio stage existed, which is also what a brief
+    # with no characterised audio gets -- "not stated", never "no audio".
+    audio_context: AudioPlanContext | None = None
 
     def label_counts(self) -> dict[str, int]:
         out = {"Picture": 0, "Video": 0, "Audio": 0}
