@@ -1,0 +1,20 @@
+# The service itself. Small on purpose: the weight belongs to the models below.
+fastapi
+uvicorn[standard]
+python-multipart
+numpy
+
+# Speech stack (SenseVoiceSmall + FSMN-VAD + CAM++). The worker RUNS without these and reports
+# the speech stage unavailable; install them for the full pipeline. torch is the heavy one and
+# its index URL is platform-specific (CPU vs CUDA) -- see README.md before installing blindly.
+# torch
+# torchaudio
+# funasr
+# modelscope
+
+# Optional, better tempo/beats for the DSP tier. Without it tempo falls back to onset-envelope
+# autocorrelation and beat times are not produced (the response says so via `incomplete`).
+# librosa
+
+# Phase D, not yet wired: CLAP event/texture semantics.
+# laion-clap
