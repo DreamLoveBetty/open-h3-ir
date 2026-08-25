@@ -669,6 +669,29 @@ def hydrate_audio_manifest(manifest: list[ManifestEntry],
                    for t in c.get("downbeats_s") or c.get("beats_s")][:3]
         if salient:
             ctx.salient_beats[entry.label] = salient
+
+    # Spec §19: a reference video's OWN soundtrack, observed from its bytes. No manifest entry
+    # is synthesised -- the runtime emits an <Audio N> only for a soundtrack wired as
+    # ref_video_audio_k, and a label the runtime never emits would break the numbering every
+    # later audio depends on (design 1.2 / I1; ref-en.txt 2.5). What the observation DOES get:
+    # the writer-facing facts, keyed by the video's label, and the beat grid in
+    # timeline_constraints under that same label, which is how the source's pulse reaches cut
+    # snapping without a label being claimed.
+    for entry in manifest:
+        if entry.kind is not AssetKind.VIDEO:
+            continue
+        card = cards.get(entry.sha256)
+        obs = card.soundtrack_observation if card else None
+        if obs is None:
+            continue
+        if card.soundtrack_findings:
+            ctx.findings.extend(card.soundtrack_findings)
+        from .audio.projector import project_soundtrack
+        proj = project_soundtrack(obs)
+        ctx.findings.extend(proj.findings)
+        ctx.soundtracks[entry.label] = (proj.characterisation, tuple(proj.planner_facts))
+        if proj.timeline_constraints:
+            ctx.timeline_constraints[entry.label] = proj.timeline_constraints
     return ctx
 
 
@@ -866,22 +889,24 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
         shots = allocate_shots(target, n, mode, opts)
 
     # Beat snapping applies AFTER allocation, whichever path produced the times, because the
-    # grid is a refinement of an edit that already exists (spec §18.1). The beat grid exists
-    # only when a beat_reference was characterised -- hydrate is the sole writer -- so "enabled
-    # only when a beat reference is wired" falls out of the data rather than a flag.
-    beat_grids = [c for constraints in audio_ctx.timeline_constraints.values()
+    # grid is a refinement of an edit that already exists (spec §18.1). A grid exists when a
+    # beat_reference was characterised OR a reference video's soundtrack carried one (spec
+    # §19) -- hydrate is the sole writer of both, so "enabled only when a grid exists" falls
+    # out of the data rather than a flag.
+    beat_grids = [(label, c) for label, constraints in audio_ctx.timeline_constraints.items()
                   for c in constraints if c.get("type") == "beat_grid"]
     if beat_grids:
-        all_beats = sorted({b for g in beat_grids for b in g["beats_s"]})
-        snap_ms = max(int(g.get("max_snap_ms") or 0) for g in beat_grids)
+        all_beats = sorted({b for _label, g in beat_grids for b in g["beats_s"]})
+        snap_ms = max(int(g.get("max_snap_ms") or 0) for _label, g in beat_grids)
         snaps = snap_cuts_to_beats(shots, all_beats, snap_ms)
         for shot_n, old_ms, new_ms in snaps:
             log.info("shot %d: cut snapped to the beat grid, %dms -> %dms",
                      shot_n, old_ms, new_ms)
         if snaps:
+            sources = ", ".join(sorted({label for label, _g in beat_grids}))
             audio_ctx.findings.append(Finding(
                 "X20-beat-snapped", "INFO",
-                "with a beat_reference wired, "
+                f"with the beat grid from {sources}, "
                 + ", ".join(f"shot {n}'s cut moved {o / 1000:.2f}s -> {w / 1000:.2f}s"
                             for n, o, w in snaps)
                 + f" to land on the beat (within the {snap_ms}ms window)."))

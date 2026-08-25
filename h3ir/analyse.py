@@ -177,6 +177,11 @@ def save_cached(ref: AssetRef, card: AssetCard, model: str) -> None:
     from dataclasses import asdict
     d = asdict(card)
     d["kind"] = card.kind.value
+    # The soundtrack observation is byte-derived audio truth with its own cache
+    # (audio/cache.py, keyed on the extracted wav); it must never ride the VISUAL card's
+    # cache entry, whose key knows nothing about the audio worker's identity.
+    d.pop("soundtrack_observation", None)
+    d.pop("soundtrack_findings", None)
     _cache_path(_cache_key(ref, model)).write_text(json.dumps(d, indent=1, ensure_ascii=False))
 
 
@@ -585,6 +590,79 @@ def sample_frames(path: str | Path, sha256: str,
     return made
 
 
+def extract_soundtrack(path: str | Path, sha256: str) -> Path | None:
+    """The video's own audio track as a 16 kHz mono wav, or None when the file has none.
+
+    Spec §19: analysis sees the soundtrack through the SAME observer a standalone audio asset
+    uses, so it is extracted to bytes first. The wav is cached beside the frames on the
+    video's content hash -- extraction is a deterministic read of the bytes, and re-running
+    ffmpeg on every compile would be the slow part of a cache hit. The observation cache keys
+    on the WAV's hash, so an ffmpeg build that decodes differently simply misses and
+    re-observes; a stale observation is never served.
+
+    Returns None rather than raising when there is no audio stream: a silent clip is a fact,
+    not a failure.
+    """
+    p = Path(path)
+    has_audio = _run_ff(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=index", "-of", "csv=p=0", str(p)])
+    if has_audio.returncode != 0:
+        raise AssetAnalysisError(f"ffprobe could not read {p}: {has_audio.stderr.strip()[:200]}")
+    if not has_audio.stdout.strip():
+        return None
+    out_dir = get_config().paths.cache_dir() / "soundtracks"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"{sha256[:16]}.wav"
+    if not dest.exists():
+        r = _run_ff(["ffmpeg", "-nostdin", "-y", "-i", str(p),
+                     "-vn", "-ac", "1", "-ar", "16000", str(dest)], timeout=120)
+        if r.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
+            log.warning("soundtrack extraction failed for %s: %s", p.name,
+                        r.stderr.strip()[-200:])
+            return None
+    return dest
+
+
+def _attach_soundtrack(card: AssetCard, ref: AssetRef, *, audio_backend: Any = None,
+                       use_cache: bool = True) -> None:
+    """Observe a video's embedded soundtrack onto its card (spec §19), in place.
+
+    Runs on the cache-hit path AND the fresh path, because the soundtrack is deliberately NOT
+    part of the card cache (save_cached strips it): the visual card is the model's reading of
+    sampled frames, the soundtrack observation is byte-derived audio truth, and the two have
+    different caches with different keys. The same failure discipline as analyse_audio:
+    `required` raises, otherwise the card ships without a soundtrack and the log says why.
+    """
+    cfg = get_config()
+    if not (cfg.audio.enabled and ref.path):
+        return
+    from .audio.client import AudioWorkerError
+    from .audio.observer import observe_audio
+    try:
+        wav = extract_soundtrack(ref.path, ref.sha256)
+        if wav is None:
+            return
+        # The synthetic ref's sha is the WAV's: the observation cache must key on the bytes
+        # the worker actually heard, not on the container they were lifted from. The video's
+        # note does NOT ride along -- it describes the picture, and as a caller_note it would
+        # feed the fallback router's keyword scan and the projector's conflict check with
+        # words about the wrong asset.
+        wav_ref = AssetRef(kind=AssetKind.AUDIO, role=ref.role, sha256=sha256_file(wav),
+                           path=str(wav))
+        obs, findings = observe_audio(wav_ref, cfg, client=audio_backend,
+                                      use_cache=use_cache and cfg.audio.cache_enabled)
+    except AudioWorkerError as e:
+        if cfg.audio.required:
+            raise AssetAnalysisError(
+                f"audio analysis is required (H3IR_AUDIO_REQUIRED=1) and the worker failed "
+                f"on the soundtrack of {ref.path}: {e}") from e
+        log.warning("soundtrack analysis degraded for %s: %s", ref.sha256[:12], e)
+        return
+    card.soundtrack_observation = obs
+    card.soundtrack_findings = list(findings)
+
+
 def analyse_video(backend: Backend, ref: AssetRef, frames: list[str] | None = None,
                   *, seed: int | None = None) -> AssetCard:
     """A video card is an image card for representative frames plus its motion.
@@ -700,6 +778,12 @@ def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = Tru
             hit = load_cached(ref, backend.cfg.model)
             if hit is not None:
                 log.info("card cache hit %s", ref.sha256[:12])
+                # The soundtrack is not in the cached payload (save_cached strips it), so a
+                # hit still hears the video -- through the observation cache, which is the
+                # cheap half of this call.
+                if ref.kind is AssetKind.VIDEO:
+                    _attach_soundtrack(hit, ref, audio_backend=audio_backend,
+                                       use_cache=use_cache)
                 out[ref.sha256] = hit
                 continue
         try:
@@ -712,9 +796,14 @@ def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = Tru
                 card = analyse_video(backend, ref, seed=seed)
         except AssetAnalysisError as e:
             raise _name_the_asset(e, ref) from e
-        out[ref.sha256] = card
         if cacheable:
             save_cached(ref, card, backend.cfg.model)
+        if ref.kind is AssetKind.VIDEO:
+            # After the save, so the observation never lands in the card cache even by
+            # accident of ordering (save_cached also strips the field, as the belt to this
+            # brace).
+            _attach_soundtrack(card, ref, audio_backend=audio_backend, use_cache=use_cache)
+        out[ref.sha256] = card
     return out
 
 

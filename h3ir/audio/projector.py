@@ -44,7 +44,7 @@ _LANGUAGES = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean"
 
 @dataclass
 class RoleAudioProjection:
-    role: Role
+    role: Role | None
     characterisation: str
     planner_facts: list[str] = field(default_factory=list)
     timeline_constraints: list[dict] = field(default_factory=list)
@@ -303,4 +303,70 @@ def project_audio(observation: AudioObservation, role: Role, caller_note: str = 
                 "caller's description leads the characterisation (intent is theirs); the "
                 "analyser's facts are reported alongside it (acoustics are the bytes'), and "
                 "neither has been silently rewritten."))
+    return out
+
+
+def project_soundtrack(observation: AudioObservation) -> RoleAudioProjection:
+    """The sixth reading: what a reference video's OWN audio sounds like (spec §19).
+
+    Not a role, because the caller declared nothing -- the soundtrack arrives inside the
+    video's bytes, and the projection's job is narrower than any role's: state what is
+    there, so the writer can say truthfully what the source sounds like instead of guessing
+    or ignoring it. It makes no reuse claim in either direction: whether the target's audio
+    follows the source is the request's and the writer's business, and an edit that preserves
+    timing but not sound is a legitimate brief.
+
+    Two deliberate asymmetries with the role projections:
+
+      * The beat grid DOES travel as a timeline constraint (keyed by the video's label at the
+        call site): an edit preserves the source's timing, so its pulse is exactly the grid
+        the target's cuts should snap to (spec: soundtrack timing enters H3 planning).
+      * Located events do NOT travel as timeline constraints. map_audio_events would write
+        them into the TARGET's shots as sync sound, and "the source has a door slam at 4.2s"
+        does not entitle the plan to claim the target does. They are stated as planner facts
+        for the writer instead.
+    """
+    obs = observation
+    out = RoleAudioProjection(role=None, characterisation="")
+    events, event_findings = _checked_events(obs)
+    beats, downbeats, onsets, beat_findings = _checked_beats(obs)
+    out.findings.extend(event_findings + beat_findings)
+
+    parts: list[str] = []
+    if obs.speech:
+        lang = _language(obs)
+        n_spk = obs.voice.speaker_count
+        speech = f"{len(obs.speech)} spoken segment(s)"
+        if lang:
+            speech += f" in {lang}"
+        if n_spk:
+            speech += f", {n_spk} speaker" + ("s" if n_spk != 1 else "")
+        parts.append(speech)
+    if obs.music.present:
+        character = _music_character(obs)
+        parts.append(f"a musical layer{' — ' + character if character else ''}")
+    if events:
+        named = ", ".join(f"{e.label} at {_fmt_time(e.start_s)}" for e in events[:3])
+        parts.append(f"{len(events)} sound event(s) ({named}"
+                     + (", …" if len(events) > 3 else "") + ")")
+    if obs.rhythm.tempo_bpm:
+        out.planner_facts.append(f"tempo_bpm={obs.rhythm.tempo_bpm:.1f}")
+
+    out.characterisation = ("the source video's existing soundtrack: "
+                            + ("; ".join(parts) if parts else "no speech, music or distinct "
+                               "events detected"))
+    if obs.speech:
+        out.planner_facts.append(f"spoken_segments={len(obs.speech)}")
+        if _language(obs):
+            out.planner_facts.append(f"language={_language(obs)}")
+    for e in events:
+        out.planner_facts.append(f"source_event={e.label}@{e.start_s:.2f}s")
+    if beats:
+        out.timeline_constraints.append({
+            "type": "beat_grid",
+            "tempo_bpm": obs.rhythm.tempo_bpm,
+            "beats_s": list(beats),
+            "downbeats_s": list(downbeats),
+            "max_snap_ms": MAX_BEAT_SNAP_MS,
+        })
     return out

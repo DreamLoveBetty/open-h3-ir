@@ -276,6 +276,17 @@ class AssetCard:
     # empty on the legacy path; plan.hydrate_audio_manifest folds them into the audio context
     # so they reach the document on both shipping paths.
     audio_findings: list = field(default_factory=list)
+    # Video only: what the clip's OWN audio track sounds like (spec §19). A separate field,
+    # never the visual fields above -- "不要把 audio facts 混入 video AssetCard 的 visual
+    # fields". It creates NO <Audio N> label: the runtime emits one only for a soundtrack wired
+    # as ref_video_audio_k (ref-en.txt 2.5, validator M7/M8), and an embedded track is not
+    # wired -- it is OBSERVED, so the writer can speak truthfully about the source's sound.
+    # Kept out of the card cache in both directions (analyse.save_cached strips it): the
+    # observation itself is cached apart, keyed on the extracted bytes.
+    soundtrack_observation: AudioObservation | None = None
+    # The analysis run's report about that observation (worker degradation, A26/A28). Same
+    # request-scoped discipline as audio_findings.
+    soundtrack_findings: list = field(default_factory=list)
     analyzer_version: str = "1"
     model_id: str = ""
 
@@ -456,6 +467,13 @@ class AudioPlanContext:
     timeline_constraints: dict[str, list[dict]] = field(default_factory=dict)
     planner_facts: dict[str, list[str]] = field(default_factory=dict)
     salient_beats: dict[str, list[float]] = field(default_factory=dict)
+    # Spec §19, keyed by VIDEO label: (characterisation, planner_facts) for each reference
+    # video's own embedded soundtrack. Separate from planner_facts because an <Audio N> key
+    # there names a WIRED input and a soundtrack is not one -- the runtime never receives it
+    # (ref-en.txt 2.5). Its beat grid still lands in timeline_constraints under the video's
+    # label, which is how source timing reaches cut snapping (spec: soundtrack timing enters
+    # H3 planning).
+    soundtracks: dict[str, tuple[str, tuple[str, ...]]] = field(default_factory=dict)
 
 
 @dataclass

@@ -283,6 +283,29 @@ def audio_projection_facts(projections: tuple[tuple[str, str, str, tuple[str, ..
             + json.dumps(block, ensure_ascii=False, indent=2))
 
 
+def soundtrack_facts(soundtracks: tuple[tuple[str, str, tuple[str, ...]], ...]) -> str:
+    """What the analyser heard inside each reference video's OWN audio track (spec §19).
+
+    The companion of `audio_projection_facts`, with one distinction the header must carry:
+    these labels are <Video N>, the sound arrives inside the video's bytes, and it is NOT a
+    wired input -- the runtime never receives it as an <Audio N>. So the writer may use these
+    facts to describe what the source sounds like (and, for an edit, what the target's audio
+    should follow or replace), and may NOT claim the signal itself is reused.
+    """
+    if not soundtracks:
+        return ""
+    block = {
+        label: {"characterisation": char, "facts": list(facts)}
+        for label, char, facts in soundtracks
+    }
+    return ("What the audio analyser measured about the soundtrack embedded in each reference "
+            "<Video N> — deterministic facts about the SOURCE's existing sound. This audio is "
+            "not a wired input: it reaches the model only as this description, never as a "
+            "signal, so describe what the target's audio should do about it rather than "
+            "claiming the original is reused:\n"
+            + json.dumps(block, ensure_ascii=False, indent=2))
+
+
 def video_task_facts(video_roles: tuple[tuple[str, str], ...],
                      task_types: tuple[str, ...]) -> str:
     """What a declared video role settles about the task-type prefix, stated as a fact in the ask.
@@ -732,6 +755,10 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
                   # the writer honours it instead of guessing -- and so the raw observation never
                   # reaches the model.
                   audio_projections: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (),
+                  # (video label, characterisation, planner_facts) per reference video whose
+                  # own soundtrack was characterised (spec §19). Source-side facts: the sound
+                  # arrives inside the video's bytes and is never a wired input.
+                  soundtracks: tuple[tuple[str, str, tuple[str, ...]], ...] = (),
                   # (label, what the clip shows, what its camera does) for every video attached
                   # as `edit_source`, and (picture label, the subject it takes over from) for every
                   # bound replacement. Pre-extracted like `audio_transcripts` and `picture_roles`,
@@ -823,6 +850,8 @@ def compose_brief(backend: Backend, brief: Brief, subjects: list[SubjectPlan],
         + (f"\n{audio_task_facts(labels, task_types, audio_roles)}\n" if is_ref else "")
         + (f"\n{audio_projection_facts(audio_projections)}\n"
            if is_ref and audio_projections else "")
+        + (f"\n{soundtrack_facts(soundtracks)}\n"
+           if is_ref and soundtracks else "")
         + (f"\n{video_task_facts(video_roles, task_types)}\n"
            if is_ref and video_task_facts(video_roles, task_types) else "")
         + (f"\n{edit_source_facts(video_worlds, picture_roles)}\n"

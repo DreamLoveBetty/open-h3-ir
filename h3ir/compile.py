@@ -450,6 +450,7 @@ def compile_brief(brief: Brief, *, backend: Backend | None = None,
                                        audio_roles=aud_roles,
                                        audio_transcripts=transcribed,
                                        audio_projections=_audio_projections(draft_plan),
+                                       soundtracks=_soundtrack_projections(draft_plan),
                                        video_worlds=worlds, taken_over=taken,
                                        generation_task=("video editing"
                                                         not in draft_plan.task_types),
@@ -875,10 +876,20 @@ def _audio_provenance(plan, cards: dict[str, AssetCard], cfg) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     for m in plan.manifest:
-        if m.kind is not AssetKind.AUDIO:
+        if m.kind is AssetKind.AUDIO:
+            card = cards.get(m.sha256)
+            obs = card.audio_observation if card else None
+            role_note = m.role.value
+        elif m.kind is AssetKind.VIDEO:
+            # Spec §19's second half of §24: a video's embedded soundtrack is characterised
+            # through the same analyser chain, so it gets the same traceability -- keyed by the
+            # VIDEO's label, marked as embedded, and never minting an <Audio N> the runtime
+            # did not emit.
+            card = cards.get(m.sha256)
+            obs = card.soundtrack_observation if card else None
+            role_note = f"{m.role.value} (embedded soundtrack)"
+        else:
             continue
-        card = cards.get(m.sha256)
-        obs = card.audio_observation if card else None
         if obs is None:
             continue
         ids = dict(obs.model_ids)
@@ -890,11 +901,23 @@ def _audio_provenance(plan, cards: dict[str, AssetCard], cfg) -> dict[str, Any]:
             "models": ids,
             "fallback_used": obs.fallback_used,
             "fallback_model": cfg.audio.fallback_model if obs.fallback_used else None,
-            "projection_role": m.role.value,
+            "projection_role": role_note,
         }
         out[m.label] = {k: v for k, v in rec.items()
                         if v is not None and v != "" and v != {}}
     return out
+
+
+def _soundtrack_projections(plan) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """(video label, characterisation, planner_facts) per reference video whose own soundtrack
+    was characterised (spec §19). Read off the audio context, exactly like `_audio_projections`
+    and for the same reason: nothing else joins a manifest label to what the analyser heard in
+    the bytes behind it. Empty whenever no video carried a characterised soundtrack.
+    """
+    ctx = plan.audio_context
+    if ctx is None:
+        return ()
+    return tuple((label, char, facts) for label, (char, facts) in ctx.soundtracks.items())
 
 
 def _standalone_audio(plan) -> tuple[str, ...]:
