@@ -20,6 +20,7 @@ from typing import Any
 from .backend import Backend, user_message
 from .config import get_config
 from .models import AssetCard, AssetKind, AssetRef, Role
+from .audio.models import AudioObservation
 
 log = logging.getLogger("h3ir.analyse")
 
@@ -217,11 +218,25 @@ def analyse_image(backend: Backend, ref: AssetRef, *, seed: int | None = None) -
     )
 
 
-def analyse_audio(ref: AssetRef, transcript: str = "", *,
-                  duration_s: float | None = None) -> AssetCard:
-    """Typed metadata only. NO model call -- the model is deaf and must never be asked.
+def _role_summary_sentence(role: Role) -> str:
+    return {
+        Role.VOICE_TIMBRE: "a spoken vocal reference supplying voice timbre and delivery",
+        Role.BGM: "a background music track",
+        Role.MUSIC_STYLE: "a music-style reference supplying instrumentation and tempo",
+        Role.BEAT_REFERENCE: "a rhythmic reference supplying beat and tempo",
+        Role.SFX: "a sound-effect reference",
+    }.get(role, "an audio reference")
 
-    Three reasons this is a rule and not a preference:
+
+def analyse_audio(ref: AssetRef, transcript: str = "", *,
+                  duration_s: float | None = None,
+                  audio_backend: Any = None,
+                  use_cache: bool = True) -> AssetCard:
+    """Typed metadata when the audio stack is off; observed facts when it is on.
+
+    The LEGACY path (audio disabled, no readable file, or worker unreachable without
+    `H3IR_AUDIO_REQUIRED=1`) is unchanged and still makes NO model call -- the main model is
+    deaf and must never be asked, for the three reasons this docstring has always carried:
 
       * The endpoint has a vision tower and no audio tower. Asked about a waveform it cannot
         hear, it does not say so; it invents a plausible description. A confident wrong timbre
@@ -233,18 +248,34 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
         encoder learns what that audio is, which makes an invented description actively harmful
         rather than merely useless.
 
-    What we legitimately know comes from the wiring: the role the caller assigned, the caller's
-    note, the duration, and a transcript if one was produced by an actual speech recogniser.
-    The prose stage then writes around those facts instead of about the sound.
+    The ENHANCED path changes WHERE the facts come from, not what a fact is allowed to be: an
+    AudioObservation is produced by the audio worker (SenseVoice / VAD / CAM++ / DSP / CLAP
+    over HTTP, never the reasoning model), and this function projects the renderer-facing
+    legacy fields from it. Even there, `timbre` and `music` stay EMPTY for now -- turning an
+    observation into role-aware prose is the projector's job, and it is a later phase.
     """
-    role_summary = {
-        Role.VOICE_TIMBRE: "a spoken vocal reference supplying voice timbre and delivery",
-        Role.BGM: "a background music track",
-        Role.MUSIC_STYLE: "a music-style reference supplying instrumentation and tempo",
-        Role.BEAT_REFERENCE: "a rhythmic reference supplying beat and tempo",
-        Role.SFX: "a sound-effect reference",
-    }.get(ref.role, "an audio reference")
-    summary = role_summary
+    cfg = get_config()
+    if cfg.audio.enabled and ref.path:
+        from .audio.client import AudioWorkerError
+        from .audio.observer import observe_audio
+        try:
+            obs = observe_audio(ref, cfg, client=audio_backend,
+                                use_cache=use_cache and cfg.audio.cache_enabled)
+        except AudioWorkerError as e:
+            if cfg.audio.required:
+                raise AssetAnalysisError(
+                    f"audio analysis is required (H3IR_AUDIO_REQUIRED=1) and the worker "
+                    f"failed: {e}") from e
+            # Degrade loudly in the log, silently in the artifact: the legacy card is exactly
+            # what this request produced before the audio stack existed, and rule 4's "never
+            # degrade silently" is honoured at the level that can act on it -- the operator's.
+            # Surfacing it in the IR's findings is the projector phase's job.
+            log.warning("audio analysis degraded to typed metadata for %s: %s",
+                        ref.sha256[:12], e)
+        else:
+            return _card_from_observation(ref, obs, transcript, duration_s)
+
+    summary = _role_summary_sentence(ref.role)
     if ref.note:
         summary += f", described by the caller as: {ref.note.strip()}"
     if duration_s or ref.seconds:
@@ -266,6 +297,44 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
         characterisation=(ref.note or "").strip(),
         transcript=transcript, language=language,
         analyzer_version=ANALYZER_VERSION, model_id="none (typed metadata only)")
+
+
+def _card_from_observation(ref: AssetRef, obs: AudioObservation, transcript: str,
+                           duration_s: float | None) -> AssetCard:
+    """Project an observation onto the legacy card fields, keeping the card's contract.
+
+    The card's existing fields are the renderer's interface, and the renderer must not have to
+    learn the observation schema (spec §21). What this projection does NOT do is invent sonic
+    prose: timbre and music stay empty until the role-aware projector exists, because a summary
+    auto-generated here would be a claim no one checked.
+    """
+    heard_duration = obs.signal.duration_s or None
+    summary = _role_summary_sentence(ref.role)
+    if ref.note:
+        summary += f", described by the caller as: {ref.note.strip()}"
+    seconds = heard_duration or duration_s or ref.seconds
+    if seconds:
+        summary += f" ({seconds:.2f}s)"
+
+    # A caller-supplied transcript is a real recogniser's output and stays authoritative; the
+    # worker's ASR fills the field only when the caller supplied none. Language follows the
+    # transcript that was actually used, never a guess from the filename.
+    heard_text = " ".join(s.text.strip() for s in obs.speech if s.text.strip())
+    if transcript:
+        language = (ref.provenance or {}).get("language", "") if ref.provenance else ""
+    else:
+        transcript = heard_text
+        language = next((s.language for s in obs.speech if s.language), "")
+
+    return AssetCard(
+        sha256=ref.sha256, kind=AssetKind.AUDIO,
+        summary=summary + ".",
+        timbre="", music="",
+        characterisation=(ref.note or "").strip(),
+        transcript=transcript, language=language,
+        audio_observation=obs,
+        analyzer_version=ANALYZER_VERSION,
+        model_id="+".join(obs.model_ids.values()) or "audio-worker")
 
 
 # --------------------------------------------------------------------------- what a file IS
@@ -605,20 +674,22 @@ def measure_assets(refs: list[AssetRef]) -> None:
 
 def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = True,
                 seed: int | None = None,
-                transcripts: dict[str, str] | None = None) -> dict[str, AssetCard]:
+                transcripts: dict[str, str] | None = None,
+                audio_backend: Any = None) -> dict[str, AssetCard]:
     out: dict[str, AssetCard] = {}
     for ref in refs:
-        # An AUDIO card is never cached, in either direction, and that is not a performance
-        # trade: `analyse_audio` makes no model call and reads no bytes, so there is nothing to
-        # save. Every field in it comes from the REQUEST -- the role picks the summary sentence,
-        # the note becomes `characterisation` (the only channel the encoder has for how the audio
-        # sounds), the caller's recogniser supplies the transcript -- and none of those is in the
-        # cache key, which is `sha256|version|model|kind`. So the first request to attach a wav
-        # decided what every later request attaching the same wav would say about it: the live
-        # cache entry for one probe's voice reference held `transcript: ''` plus a note from an
-        # unrelated request, and that is what reached the writer on seven runs whose caller had
-        # supplied the words. Content-addressing is right for an image or a video, where the card
-        # IS derived from the bytes; here it addresses content that contributes nothing to the card.
+        # An AUDIO card is never cached, in either direction, and that is still not a
+        # performance trade -- but with the audio stack the reason has narrowed to its correct
+        # form. The CARD is request-specific: the role picks the summary sentence, the note
+        # becomes `characterisation`, the caller's recogniser supplies the transcript -- and
+        # none of those is in the card cache key (`sha256|version|model|kind`). The first
+        # request to attach a wav used to decide what every later request attaching the same
+        # wav would say about it: the live cache entry for one probe's voice reference held
+        # `transcript: ''` plus a note from an unrelated request, and that is what reached the
+        # writer on seven runs whose caller had supplied the words. What changed with the audio
+        # stack is that the byte-derived half now EXISTS and is cached where it belongs: the
+        # AudioObservation (sha256 + analyzer version + worker identity) lives in
+        # audio/cache.py, while this card -- the projection -- stays out of both directions.
         cacheable = use_cache and ref.kind is not AssetKind.AUDIO
         if cacheable:
             hit = load_cached(ref, backend.cfg.model)
@@ -630,7 +701,8 @@ def analyse_all(backend: Backend, refs: list[AssetRef], *, use_cache: bool = Tru
             if ref.kind is AssetKind.IMAGE:
                 card = analyse_image(backend, ref, seed=seed)
             elif ref.kind is AssetKind.AUDIO:
-                card = analyse_audio(ref, (transcripts or {}).get(ref.sha256, ""))
+                card = analyse_audio(ref, (transcripts or {}).get(ref.sha256, ""),
+                                     audio_backend=audio_backend, use_cache=use_cache)
             else:
                 card = analyse_video(backend, ref, seed=seed)
         except AssetAnalysisError as e:
