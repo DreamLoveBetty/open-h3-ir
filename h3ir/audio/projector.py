@@ -222,6 +222,10 @@ def project_audio(observation: AudioObservation, role: Role, caller_note: str = 
                 "type": "sfx_event",
                 "start_s": e.start_s, "end_s": e.end_s,
                 "label": e.label, "confidence": e.confidence,
+                # The ambient test (spec §18.3) is a RATIO -- event span over asset span -- so
+                # the asset's length has to travel with the event; the timeline stage never sees
+                # the observation itself.
+                "asset_duration_s": obs.signal.duration_s,
             })
         facts.append(f"events={len(obs.events)}")
 

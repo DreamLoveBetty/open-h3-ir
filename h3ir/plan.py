@@ -18,14 +18,17 @@ This is what the four open problems from the harness runs reduce to:
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from .grid import Target, rows_per_latent_frame, video_latent_t
 from .models import (AUDIO_REFERENCE_ROLES, AssetCard, AssetKind, AudioPlanContext, Brief,
-                     CameraMove, DialogueLine, ManifestEntry, Mode, Plan, Role, SWAP_ROLES,
-                     ShotPlan, SpeakerPlan, SubjectPlan)
+                     CameraMove, DialogueLine, Finding, ManifestEntry, Mode, Plan, Role,
+                     SWAP_ROLES, ShotPlan, SpeakerPlan, SubjectPlan)
+
+log = logging.getLogger("h3ir.plan")
 
 # Words of speech per second at a natural delivery (~155 wpm). Used to stop the planner
 # putting more dialogue into a shot than can physically be spoken inside it.
@@ -665,6 +668,85 @@ def hydrate_audio_manifest(manifest: list[ManifestEntry],
     return ctx
 
 
+# --------------------------------------------------------------------------- audio timeline
+
+# spec §18.3: an event whose span covers this share of its asset's duration is ambience, not an
+# event -- "rain" for five of six seconds is the weather of the scene, and repeating it inside
+# every shot spends the word budget saying one thing five times.
+AMBIENT_COVERAGE = 0.45
+
+
+def snap_cuts_to_beats(shots: list[ShotPlan], beats_s: list[float],
+                       max_snap_ms: int) -> list[tuple[int, int, int]]:
+    """Pull each interior cut onto the nearest beat, within the window (spec §18.1).
+
+    Returns (shot_n, old_ms, new_ms) per cut moved, so the caller can log and record what
+    changed -- moving a cut the caller can no longer recognise as theirs is exactly the kind of
+    invisible edit this codebase reports. The guards are the point, not the snap:
+
+      * shot 1 never moves -- its start IS the video's start;
+      * the grid loses to the structure: a snap that would squeeze a shot under MIN_SHOT_MS or
+        invert the order is skipped, because following the beat is a refinement of the edit,
+        never a reason to break it (spec: "不能为了跟拍把镜头结构大幅改掉").
+    """
+    if not beats_s:
+        return []
+    beats_ms = sorted(int(round(b * 1000)) for b in beats_s)
+    snaps: list[tuple[int, int, int]] = []
+    for i in range(1, len(shots)):
+        cut = shots[i].start_ms
+        nearest = min(beats_ms, key=lambda b: abs(b - cut))
+        if abs(nearest - cut) > max_snap_ms or nearest == cut:
+            continue
+        # The cut is shared by the two shots it separates; both sides must keep their floor.
+        if nearest - shots[i - 1].start_ms < MIN_SHOT_MS:
+            continue
+        if shots[i].end_ms - nearest < MIN_SHOT_MS:
+            continue
+        shots[i - 1].end_ms = shots[i].start_ms = nearest
+        snaps.append((shots[i].n, cut, nearest))
+    return snaps
+
+
+def map_audio_events(shots: list[ShotPlan],
+                     ctx: AudioPlanContext) -> tuple[dict[int, list[str]], list[str]]:
+    """Map characterised SFX events onto the timeline (spec §18.2 and §18.3).
+
+    Short events land in the shot that contains their onset, as sync sound; events that span
+    AMBIENT_COVERAGE of their asset are ambience for the whole video. Both come out of the same
+    partition split_sound enforces, so an event still cannot appear in both sections.
+    """
+    sync: dict[int, list[str]] = {}
+    ambient: list[str] = []
+    for constraints in ctx.timeline_constraints.values():
+        for c in constraints:
+            if c.get("type") != "sfx_event":
+                continue
+            label = (c.get("label") or "").strip()
+            if not label:
+                continue
+            start_s, end_s = float(c.get("start_s") or 0.0), float(c.get("end_s") or 0.0)
+            asset_s = float(c.get("asset_duration_s") or 0.0)
+            span = max(end_s - start_s, 0.0)
+            if asset_s > 0 and span / asset_s >= AMBIENT_COVERAGE:
+                text = f"{label} continues throughout the video"
+                if text not in ambient:
+                    ambient.append(text)
+                continue
+            onset_ms = int(round(start_s * 1000))
+            shot = next((s for s in shots if s.start_ms <= onset_ms < s.end_ms), None)
+            if shot is None and shots:
+                # An onset past the last cut belongs to the last shot, not to nowhere.
+                shot = shots[-1] if onset_ms >= shots[-1].start_ms else None
+            if shot is None:
+                continue
+            article = "an" if label[:1].lower() in "aeiou" else "a"
+            text = f"{article} {label}"
+            if text not in sync.setdefault(shot.n, []):
+                sync[shot.n].append(text)
+    return sync, ambient
+
+
 # --------------------------------------------------------------------------- task types
 
 def derive_task_types(manifest: list[ManifestEntry], brief: Brief) -> list[str]:
@@ -778,9 +860,37 @@ def build_plan(brief: Brief, mode: Mode, cards: dict[str, AssetCard], *,
         if beats:
             n = max(1, min(len(beats), brief.shots or opts.max_shots))
         shots = allocate_shots(target, n, mode, opts)
+
+    # Beat snapping applies AFTER allocation, whichever path produced the times, because the
+    # grid is a refinement of an edit that already exists (spec §18.1). The beat grid exists
+    # only when a beat_reference was characterised -- hydrate is the sole writer -- so "enabled
+    # only when a beat reference is wired" falls out of the data rather than a flag.
+    beat_grids = [c for constraints in audio_ctx.timeline_constraints.values()
+                  for c in constraints if c.get("type") == "beat_grid"]
+    if beat_grids:
+        all_beats = sorted({b for g in beat_grids for b in g["beats_s"]})
+        snap_ms = max(int(g.get("max_snap_ms") or 0) for g in beat_grids)
+        snaps = snap_cuts_to_beats(shots, all_beats, snap_ms)
+        for shot_n, old_ms, new_ms in snaps:
+            log.info("shot %d: cut snapped to the beat grid, %dms -> %dms",
+                     shot_n, old_ms, new_ms)
+        if snaps:
+            audio_ctx.findings.append(Finding(
+                "X20-beat-snapped", "INFO",
+                "with a beat_reference wired, "
+                + ", ".join(f"shot {n}'s cut moved {o / 1000:.2f}s -> {w / 1000:.2f}s"
+                            for n, o, w in snaps)
+                + f" to land on the beat (within the {snap_ms}ms window)."))
+
     assign_dialogue(shots, brief.dialogue)
 
     sync, ambient = split_sound(sound_events or [])
+    # Characterised SFX events join the same partition: mapped onto shots here, kept out of the
+    # model's hands, so a located sound cannot be restated somewhere it did not happen.
+    a_sync, a_ambient = map_audio_events(shots, audio_ctx)
+    for shot_n, texts in a_sync.items():
+        sync.setdefault(shot_n, []).extend(t for t in texts if t not in sync.get(shot_n, []))
+    ambient.extend(t for t in a_ambient if t not in ambient)
     for s in shots:
         s.sync_sound = sync.get(s.n, [])
 
