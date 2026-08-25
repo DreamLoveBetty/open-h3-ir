@@ -16,5 +16,6 @@ numpy
 # autocorrelation and beat times are not produced (the response says so via `incomplete`).
 # librosa
 
-# Phase D, not yet wired: CLAP event/texture semantics.
-# laion-clap
+# CLAP event/texture semantics (laion/clap-htsat-unfused through transformers). The worker
+# runs without it and reports the clap stage unavailable; install with torch for the tier.
+# transformers

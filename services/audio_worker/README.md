@@ -10,7 +10,7 @@ audio bytes ──▶ POST /v1/audio/analyze (multipart)
                    │
                    ├─ DSP tier      ffmpeg decode → loudness / silence / onsets / tempo
                    ├─ Speech tier   FSMN-VAD → SenseVoiceSmall → CAM++ speaker clusters
-                   └─ CLAP tier     (Phase D — reported unavailable until then)
+                   └─ CLAP tier     sliding + onset windows → zero-shot labels, located
                    │
                    ▼
         AudioObservation-shaped JSON  (+ `incomplete: true` when a stage is missing)
@@ -25,6 +25,9 @@ pip install -r audio_worker/requirements.txt
 
 # The speech stack, when you want it (pick the torch build for your platform first):
 pip install torch torchaudio funasr modelscope
+
+# The CLAP tier, when you want it (needs torch from the line above):
+pip install transformers
 
 python -m audio_worker.app          # serves http://127.0.0.1:50000
 ```
@@ -47,7 +50,7 @@ export H3IR_AUDIO_URL=http://127.0.0.1:50000
   "capabilities": {
     "dsp": "ok",
     "speech": "ok",
-    "clap": "unavailable: CLAP lands with Phase D (spec §33, commit 9); ..."
+    "clap": "unavailable: transformers/torch not installed (...)"  // until the stack below is
   }
 }
 ```
@@ -83,10 +86,10 @@ All `AUDIO_WORKER_*`, read once in `settings.py`: `HOST`, `PORT`, `MAX_UPLOAD_BY
 The wire contract is tested end to end against the compiler's real client
 (`tests/test_app_protocol.py` drives this app through httpx's ASGI transport and parses the
 answer with `h3ir.audio.client.AudioWorkerClient`). The DSP tier is tested against real
-synthesised WAVs through real ffmpeg. The FunASR model calls are written against the
-documented `AutoModel` interface with the pure logic (tag parsing, segment merging, speaker
-clustering) unit-tested separately; they get their live verification at first bring-up on real
-weights.
+synthesised WAVs through real ffmpeg. The CLAP tier's windowing and event merging are
+unit-tested with a fake scorer; the FunASR and CLAP model calls are written against the
+documented interfaces (`AutoModel`, `ClapModel`/`ClapProcessor`) and get their live
+verification at first bring-up on real weights.
 
 ## Tests
 
