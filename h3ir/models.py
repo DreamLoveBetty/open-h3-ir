@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Any
 
 from .grid import Target, ms_to_timestamp
+from .audio.models import AudioObservation
 
 
 class Mode(str, Enum):
@@ -265,6 +266,12 @@ class AssetCard:
     language: str = ""
     timbre: str = ""
     music: str = ""
+    # The byte-derived structured facts, present only when the audio stack is enabled and the
+    # worker answered. The legacy fields above remain the renderer-facing projection of it;
+    # this is the raw truth they were projected FROM. Never part of the card cache's value in
+    # either direction: an audio card is still request-specific and still never cached, while
+    # the observation itself is cached apart, keyed on the bytes (see audio/cache.py).
+    audio_observation: AudioObservation | None = None
     analyzer_version: str = "1"
     model_id: str = ""
 

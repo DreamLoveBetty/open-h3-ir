@@ -127,6 +127,56 @@ class AssetConfig:
 
 
 @dataclass(frozen=True)
+class AudioConfig:
+    """The local audio-understanding stack, OFF by default.
+
+    Off because the default must be the behaviour every existing caller has: typed metadata
+    only, no worker, no extra hop. Turning it on points the compiler at an Audio Worker over
+    HTTP — the torch/FunASR/CLAP weight lives in that process, never in this package's
+    dependencies, for the same reason ComfyUI is reached over HTTP: the compiler and the GPU
+    are usually not the same machine.
+
+    `enabled` and `required` are separate axes. Enabled-but-unreachable degrades to the legacy
+    metadata path with a warning, because a caller cannot tell a good IR from a worse one and
+    the request can still be honoured exactly as it was before audio analysis existed.
+    `required` is for a deployment that would rather refuse than ship that: the compile fails
+    instead of silently describing a sound nobody heard.
+    """
+
+    enabled: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_ENABLED", False))
+    # The Audio Worker (SenseVoice + FSMN-VAD + CAM++ + DSP + CLAP), one POST per asset.
+    base_url: str = field(default_factory=lambda: _env("H3IR_AUDIO_URL", "http://127.0.0.1:50000"))
+    # Same convention as H3IR_LLM_KEY: the placeholder is never sent as a credential.
+    api_key: str = field(default_factory=lambda: _env("H3IR_AUDIO_KEY", "not-needed"))
+    timeout_s: float = field(default_factory=lambda: _env_float("H3IR_AUDIO_TIMEOUT", 120.0))
+    # Per-analyser switches, forwarded to the worker as form fields so one worker build can
+    # serve both a cheap pass (DSP only) and a full one.
+    diarization: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_DIARIZATION", True))
+    clap_enabled: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_CLAP", True))
+    dsp_enabled: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_DSP", True))
+    # The Qwen2.5-Omni semantic fallback. Not a second default path: the rule-based router
+    # calls it only when the deterministic chain cannot explain the audio, so it stays off
+    # until the router (a later phase) exists to gate it.
+    fallback_enabled: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_FALLBACK", False))
+    fallback_base_url: str = field(default_factory=lambda: _env(
+        "H3IR_AUDIO_FALLBACK_URL", "http://127.0.0.1:8001/v1"))
+    fallback_model: str = field(default_factory=lambda: _env(
+        "H3IR_AUDIO_FALLBACK_MODEL", "Qwen2.5-Omni-3B"))
+    fallback_api_key: str = field(default_factory=lambda: _env("H3IR_AUDIO_FALLBACK_KEY", "not-needed"))
+    fallback_timeout_s: float = field(default_factory=lambda: _env_float(
+        "H3IR_AUDIO_FALLBACK_TIMEOUT", 180.0))
+    # Router inputs. Read by audio/router.py when it lands; declared with the rest of the
+    # contract so the environment surface is one block of documentation, not five.
+    confidence_threshold: float = field(default_factory=lambda: _env_float(
+        "H3IR_AUDIO_CONFIDENCE_THRESHOLD", 0.65))
+    event_confidence_threshold: float = field(default_factory=lambda: _env_float(
+        "H3IR_AUDIO_EVENT_CONFIDENCE_THRESHOLD", 0.55))
+    # Caches the byte-derived AudioObservation, never the request-specific projection.
+    cache_enabled: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_CACHE", True))
+    required: bool = field(default_factory=lambda: _env_bool("H3IR_AUDIO_REQUIRED", False))
+
+
+@dataclass(frozen=True)
 class Paths:
     state_dir: Path = field(default_factory=lambda: Path(
         _env("H3IR_STATE_DIR", str(Path.home() / ".local/share/h3ir"))))
@@ -162,6 +212,7 @@ class Config:
     comfy: ComfyConfig = field(default_factory=ComfyConfig)
     paths: Paths = field(default_factory=Paths)
     assets: AssetConfig = field(default_factory=AssetConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     profile: str = field(default_factory=lambda: _env("H3IR_PROFILE", "h3ir/2026-08-a"))
     # If the LLM is unreachable we fail loudly rather than quietly producing a worse IR:
     # a caller cannot tell a good IR from a bad one.
