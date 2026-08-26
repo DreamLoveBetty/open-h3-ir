@@ -31,12 +31,28 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
   const [key, setKey] = useState("");
   const [keySet, setKeySet] = useState(false);
   const [msg, setMsg] = useState("");
+  const [probing, setProbing] = useState(false);
+  const [found, setFound] = useState<{ source: string; url: string; models: string[] }[] | null>(null);
 
   useEffect(() => {
     api.settings().then((s) => {
       setUrl(s.llm_url); setModel(s.llm_model); setKeySet(!!s.llm_key_set);
     }).catch(() => { });
   }, []);
+
+  const detect = async () => {
+    setProbing(true);
+    try {
+      const r = await api.detectLlm(url.trim() || undefined);
+      setFound(r.endpoints || []);
+      // one endpoint serving one model is an unambiguous answer; fill it directly
+      if (r.endpoints?.length === 1 && r.endpoints[0].models.length === 1) {
+        setUrl(r.endpoints[0].url);
+        setModel(r.endpoints[0].models[0]);
+      }
+    } catch { setFound([]); }
+    finally { setProbing(false); }
+  };
 
   const save = async () => {
     const r = await api.saveSettings({
@@ -61,6 +77,36 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
   return (
     <div className="mt-2 space-y-2 border border-line bg-well/30 p-3">
       <div className="text-[9px] tracking-[0.25em] text-dim">LLM ENDPOINT · 推理模型端点</div>
+      <button onClick={detect} disabled={probing}
+        className="w-full border border-acc/40 px-2 py-1.5 text-[10px] tracking-[0.2em] text-acc transition-colors hover:bg-acc/10 disabled:opacity-50">
+        {probing ? "探测中…" : "⟳ 自动探测本地端点（LM Studio / Ollama / vLLM）"}
+      </button>
+      {found !== null && (
+        <div className="space-y-1 border border-line/60 p-2">
+          {found.length === 0 && (
+            <div className="font-mono text-[10px] text-warn">
+              未发现本地端点 — 确认 LM Studio 已启动并在 Developer 页 serve 了模型
+            </div>
+          )}
+          {found.map((e) => (
+            <div key={e.url}>
+              <div className="font-mono text-[10px] text-dim">{e.source} · {e.url}</div>
+              <div className="mt-0.5 flex flex-wrap gap-1">
+                {e.models.map((m) => (
+                  <button key={m}
+                    onClick={() => { setUrl(e.url); setModel(m); }}
+                    className={`border px-2 py-0.5 font-mono text-[10px] transition-colors
+                      ${model === m && url === e.url
+                        ? "border-acc/60 bg-acc/10 text-acc"
+                        : "border-line text-dim hover:border-acc/40 hover:text-acc"}`}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <input value={url} onChange={(e) => setUrl(e.target.value)}
         placeholder="http://127.0.0.1:1234/v1  (LM Studio 默认)" className={field} />
       <input value={model} onChange={(e) => setModel(e.target.value)}

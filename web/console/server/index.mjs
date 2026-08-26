@@ -206,6 +206,37 @@ const server = createServer(async (req, res) => {
                               restart_needed: !!(svc && svc.exitCode === null) });
     }
 
+    // Probe the well-known local LLM servers (plus any URL the caller is typing) for their
+    // /v1/models list, so the CFG panel can offer click-to-fill instead of hand-typed ids.
+    // A server that publishes no model list is reported without one; which model has a
+    // vision tower is never guessed from metadata (repo rule) — that is what doctor is for.
+    if (p === "/api/detect-llm" && req.method === "GET") {
+      const KNOWN = [
+        ["LM Studio", "http://127.0.0.1:1234/v1"],
+        ["Ollama", "http://127.0.0.1:11434/v1"],
+        ["vLLM", "http://127.0.0.1:8000/v1"],
+      ];
+      const saved = readSettings().llm_url;
+      const extra = url.searchParams.get("extra");
+      const candidates = [...KNOWN.map(([source, u]) => ({ source, url: u }))];
+      for (const [source, u] of [["saved", saved], ["custom", extra]]) {
+        if (u && !candidates.some((c) => c.url === u)) candidates.push({ source, url: u });
+      }
+      const probeOne = async ({ source, url: base }) => {
+        try {
+          const r = await fetch(base.replace(/\/$/, "") + "/models",
+                                { signal: AbortSignal.timeout(1500) });
+          if (!r.ok) return null;
+          const body = await r.json();
+          const models = Array.isArray(body?.data)
+            ? body.data.map((m) => m?.id).filter(Boolean) : [];
+          return { source, url: base, models };
+        } catch { return null; }
+      };
+      const found = (await Promise.all(candidates.map(probeOne))).filter(Boolean);
+      return send(res, 200, { endpoints: found });
+    }
+
     if (p === "/api/status" && req.method === "GET") {
       const rows = {};
       for (const name of Object.keys(SERVICES)) rows[name] = await probe(name);
