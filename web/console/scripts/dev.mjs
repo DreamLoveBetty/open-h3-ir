@@ -12,7 +12,7 @@ const flag = (name, dflt) => {
   const i = argv.indexOf(name);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 };
-const port = Number(flag("--port", process.env.PORT || 3000));
+const port = Number(flag("--port", process.env.PORT || 7100));
 const host = flag("--host", "0.0.0.0");
 const apiPort = port + 1;
 
