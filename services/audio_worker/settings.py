@@ -54,7 +54,7 @@ class WorkerSettings:
     vad_model: str = field(default_factory=lambda: _env(
         "AUDIO_WORKER_VAD_MODEL", "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"))
     speaker_model: str = field(default_factory=lambda: _env(
-        "AUDIO_WORKER_SPEAKER_MODEL", "iic/speech_campplus_sv_zh_en_16k"))
+        "AUDIO_WORKER_SPEAKER_MODEL", "iic/speech_campplus_sv_zh-cn_16k-common"))
     clap_model: str = field(default_factory=lambda: _env(
         "AUDIO_WORKER_CLAP_MODEL", "laion/clap-htsat-unfused"))
     model_dir: Path | None = field(default_factory=lambda: (

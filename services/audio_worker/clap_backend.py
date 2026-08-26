@@ -171,7 +171,7 @@ class CLAPBackend:
         """Softmax over audio-text cosine similarities, the standard CLAP zero-shot read."""
         import torch  # noqa: PLC0415
         device = next(self._model.parameters()).device
-        inputs = self._processor(text=list(labels), audios=[chunk], sampling_rate=sr,
+        inputs = self._processor(text=list(labels), audio=[chunk], sampling_rate=sr,
                                  return_tensors="pt", padding=True).to(device)
         with torch.no_grad():
             out = self._model(**inputs)

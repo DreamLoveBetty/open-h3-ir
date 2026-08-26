@@ -28,7 +28,12 @@ from typing import Any
 
 log = logging.getLogger("h3ir.audio.fallback")
 
-FALLBACK_PROTOCOL_VERSION = "audio-fallback-1"
+# Bump when the prompt or the parse contract changes: the version is part of the fallback
+# cache key (audio/cache.py), and a cached answer must not survive a change in the logic that
+# produced it. v2: the user text now carries the §11 key skeleton -- first contact with real
+# weights showed a 3B model told only "Return JSON only" invents keys
+# ("audio_transcription", "gender", ...), which the strict parser then rejects whole.
+FALLBACK_PROTOCOL_VERSION = "audio-fallback-2"
 
 # Spec §11, verbatim in substance: supplement only, never overwrite the deterministic fields,
 # omit rather than invent. This text is the entire licence the fallback model operates under.
@@ -47,6 +52,24 @@ If you are uncertain, omit the fact.
 Do not invent precise timestamps.
 Do not infer story or intent.
 Return JSON only."""
+
+# The §11 skeleton, handed to the model verbatim. The system prompt licenses behaviour but
+# does not name the key set, and an unnamed key set is an invented one. The keys here are
+# exactly PROTOCOL_KEYS; keep them in sync when the protocol changes (and bump the version).
+FALLBACK_USER_PROMPT = """Describe this audio. Return JSON only, using exactly these top-level keys and no others:
+{
+  "semantic_summary": "",
+  "voice_delivery": [],
+  "music_style": [],
+  "instrumentation": [],
+  "soundscape": [],
+  "event_descriptions": [{"approx_start_s": null, "approx_end_s": null, "description": ""}],
+  "confidence": 0.0
+}
+Types are strict: the four list values (voice_delivery, music_style, instrumentation,
+soundscape) are lists of short STRING phrases, never objects; approx_start_s and
+approx_end_s are NUMBERS in seconds or null, never quoted; confidence is a number.
+Leave a list empty or a string empty for anything you are unsure of."""
 
 # The exact key set of the §11 protocol. A payload carrying ANY other key is rejected whole:
 # the merge policy's tiering only holds if the fallback physically cannot address a
@@ -160,7 +183,9 @@ class FallbackClient:
                 {"role": "user", "content": [
                     {"type": "input_audio",
                      "input_audio": {"data": data, "format": "wav"}},
-                    {"type": "text", "text": "Describe this audio. Return JSON only."},
+                    # The §11 skeleton, spelled out: the parser accepts exactly these keys
+                    # and rejects anything else whole, so the model has to see them.
+                    {"type": "text", "text": FALLBACK_USER_PROMPT},
                 ]},
             ],
             "temperature": 0.0,

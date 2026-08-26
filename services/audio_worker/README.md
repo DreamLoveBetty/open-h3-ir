@@ -32,11 +32,36 @@ pip install transformers
 python -m audio_worker.app          # serves http://127.0.0.1:50000
 ```
 
+Model weights download on first use. To keep them inside the project tree instead of the
+user-level caches, point both caches at `models/` before starting:
+
+```bash
+MODELSCOPE_CACHE=<repo>/models/modelscope HF_HOME=<repo>/models/hf python -m audio_worker.app
+```
+
+(macOS note: if the machine has a system proxy set, local HTTP clients need
+`NO_PROXY=127.0.0.1,localhost` or the compiler's calls to this worker get proxied away.)
+
 Point the compiler at it:
 
 ```bash
 export H3IR_AUDIO_ENABLED=1
 export H3IR_AUDIO_URL=http://127.0.0.1:50000
+```
+
+## The Omni fallback
+
+`services/omni_fallback/` is a second, separate service: a single-file FastAPI shim that loads
+the Thinker half of Qwen2.5-Omni-3B and serves the one audio-capable chat route the compiler's
+fallback client (spec §11) posts to. It is a fallback, never a default path — the compiler's
+router decides per asset whether Omni may look at it at all.
+
+```bash
+MODELSCOPE_CACHE=<repo>/models/modelscope HF_HOME=<repo>/models/hf \
+  .venv-audio/bin/python -m omni_fallback.app     # serves http://127.0.0.1:8001
+
+# compiler side:
+export H3IR_AUDIO_FALLBACK=1
 ```
 
 ## Endpoints
@@ -87,9 +112,11 @@ The wire contract is tested end to end against the compiler's real client
 (`tests/test_app_protocol.py` drives this app through httpx's ASGI transport and parses the
 answer with `h3ir.audio.client.AudioWorkerClient`). The DSP tier is tested against real
 synthesised WAVs through real ffmpeg. The CLAP tier's windowing and event merging are
-unit-tested with a fake scorer; the FunASR and CLAP model calls are written against the
-documented interfaces (`AutoModel`, `ClapModel`/`ClapProcessor`) and get their live
-verification at first bring-up on real weights.
+unit-tested with a fake scorer. The FunASR (SenseVoiceSmall + FSMN-VAD + CAM++) and CLAP
+model calls are written against the documented interfaces (`AutoModel`,
+`ClapModel`/`ClapProcessor`) and have passed first bring-up on real weights (CPU, arm64):
+all three tiers report `ok` on `/health` and the compiler's end-to-end observation and
+fallback merge have been exercised against the live services.
 
 ## Tests
 

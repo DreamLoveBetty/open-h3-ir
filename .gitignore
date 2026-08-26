@@ -20,3 +20,10 @@ acceptance/
 
 # Asset staging area, not part of the project
 _newassets/
+
+# model weights (downloaded at bring-up, never committed)
+models/
+services/.venv-audio/
+
+# macOS folder metadata
+.DS_Store

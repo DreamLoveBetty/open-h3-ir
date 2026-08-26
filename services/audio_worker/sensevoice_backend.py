@@ -14,7 +14,8 @@ Everything pure is split from everything that touches torch:
     answers honestly (and marks its responses incomplete) on a box with no FunASR install.
 
 Written against the FunASR AutoModel interface (`iic/SenseVoiceSmall`,
-`iic/speech_fsmn_vad_zh-cn-16k-common-pytorch`, `iic/speech_campplus_sv_zh_en_16k`). The pure
+`iic/speech_fsmn_vad_zh-cn-16k-common-pytorch`, `iic/speech_campplus_sv_zh-cn_16k-common` --
+the old `..._zh_en_16k` id 404s on ModelScope since its rename). The pure
 helpers are tested; the model calls themselves get their live verification at bring-up on real
 weights, which is a deployment step, not a unit test.
 """
@@ -27,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .dsp_backend import ANALYSIS_SR, BackendUnavailable
+from .dsp_backend import ANALYSIS_SR, BackendUnavailable, _np
 
 log = logging.getLogger("audio_worker.sensevoice")
 
@@ -46,6 +47,28 @@ _EVENTS = {"APPLAUSE": "applause", "BGM": "bgm", "LAUGHTER": "laughter", "CRY": 
 # VAD fragments closer than this are one breath, not two utterances: joining them spares
 # SenseVoice a per-fragment call and the speaker clustering a per-fragment embedding.
 MERGE_GAP_MS = 300
+
+
+def _segment_wav(samples, sr: int, s_ms: float, e_ms: float) -> str:
+    """A VAD window as its own 16 kHz mono wav, so the ASR and speaker models hear exactly
+    the segment and nothing around it. Caller unlinks the path."""
+    import tempfile
+    import wave
+
+    np = _np()
+    lo = max(0, int(s_ms * sr / 1000.0))
+    hi = min(len(samples), int(math.ceil(e_ms * sr / 1000.0)))
+    pcm = (np.clip(samples[lo:hi], -1.0, 1.0) * 32767.0).astype(np.int16)
+    f = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    try:
+        with wave.open(f.name, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes(pcm.tobytes())
+    finally:
+        f.close()
+    return f.name
 
 
 def parse_sensevoice_tags(text: str) -> dict[str, Any]:
@@ -173,7 +196,9 @@ class SenseVoiceBackend:
             from .dsp_backend import DSPBackend  # local import: only needed for the fallback
             dur = DSPBackend().probe(wav16k)["duration_s"]
             return [[0.0, dur * 1000.0]]
-        res = self._vad.infer(input=str(wav16k))
+        # FunASR >= 1.x exposes generate(); the .infer this file was drafted against never
+        # existed on AutoModel -- found at first bring-up on real weights.
+        res = self._vad.generate(input=str(wav16k))
         value = res[0].get("value") or res[0].get("segments") or []
         return merge_close_segments([[float(s), float(e)] for s, e in value])
 
@@ -184,31 +209,38 @@ class SenseVoiceBackend:
         self._load()
         out = SpeechResult()
         segments = self._segments(wav16k)
+        # Decoded once: SenseVoice's generate() has no vad_segments kwarg (another bring-up
+        # find), so each VAD window is cut to its own temp wav and the models hear exactly the
+        # segment. Seconds-long references make the slice cost negligible.
+        from .dsp_backend import DSPBackend  # local import: torch-free, but only needed here
+        samples, sr = DSPBackend(self.settings).decode(wav16k)
         embeddings: list[list[float]] = []
         embeddable: list[int] = []
         for i, (s_ms, e_ms) in enumerate(segments):
-            res = self._asr.infer(input=str(wav16k), cache={}, language="auto",
-                                  use_itn=True,  # readable numbers/punctuation in the words
-                                  # SenseVoice infers the whole file; restrict it to the VAD
-                                  # window by passing sample offsets the model understands.
-                                  vad_segments=[[int(s_ms), int(e_ms)]])
-            if not res:
-                continue
-            parsed = parse_sensevoice_tags(res[0].get("text", ""))
-            if not parsed["text"] and not parsed["events"]:
-                continue
-            entry = {"start_s": round(s_ms / 1000.0, 3), "end_s": round(e_ms / 1000.0, 3),
-                     "text": parsed["text"], "language": parsed["language"],
-                     "speaker_id": "", "emotion": parsed["emotion"], "confidence": None}
-            out.speech.append(entry)
-            for label in parsed["events"]:
-                out.events.append({"start_s": entry["start_s"], "end_s": entry["end_s"],
-                                   "label": label, "confidence": None, "source": "sensevoice"})
-                if label == "bgm":
-                    out.music_present = True
-            if diarization and self._spk is not None and parsed["text"]:
-                embeddings.append(self._embed(wav16k, s_ms, e_ms))
-                embeddable.append(len(out.speech) - 1)
+            seg_path = _segment_wav(samples, sr, s_ms, e_ms)
+            try:
+                res = self._asr.generate(input=seg_path, cache={}, language="auto",
+                                         use_itn=True,  # readable numbers/punctuation
+                                         )
+                if not res:
+                    continue
+                parsed = parse_sensevoice_tags(res[0].get("text", ""))
+                if not parsed["text"] and not parsed["events"]:
+                    continue
+                entry = {"start_s": round(s_ms / 1000.0, 3), "end_s": round(e_ms / 1000.0, 3),
+                         "text": parsed["text"], "language": parsed["language"],
+                         "speaker_id": "", "emotion": parsed["emotion"], "confidence": None}
+                out.speech.append(entry)
+                for label in parsed["events"]:
+                    out.events.append({"start_s": entry["start_s"], "end_s": entry["end_s"],
+                                       "label": label, "confidence": None, "source": "sensevoice"})
+                    if label == "bgm":
+                        out.music_present = True
+                if diarization and self._spk is not None and parsed["text"]:
+                    embeddings.append(self._embed(seg_path))
+                    embeddable.append(len(out.speech) - 1)
+            finally:
+                Path(seg_path).unlink(missing_ok=True)
         if diarization and embeddings:
             labels = cluster_speakers(embeddings, self.settings.speaker_threshold)
             for idx, label in zip(embeddable, labels):
@@ -223,9 +255,14 @@ class SenseVoiceBackend:
             out.degraded.append("speaker model unavailable; speaker_count is not measured")
         return out
 
-    def _embed(self, wav16k: str | Path, s_ms: float, e_ms: float) -> list[float]:
-        res = self._spk.infer(input=str(wav16k), segment=[[int(s_ms), int(e_ms)]])
-        emb = res[0].get("spk_embedding") or res[0].get("embedding")
+    def _embed(self, seg_path: str) -> list[float]:
+        res = self._spk.generate(input=seg_path)
+        # ndarray truthiness is ambiguous, so no `or` chaining here.
+        emb = res[0].get("spk_embedding")
+        if emb is None:
+            emb = res[0].get("embedding")
         if emb is None:
             raise BackendUnavailable("speaker model returned no embedding")
-        return [float(x) for x in emb]
+        np = _np()
+        # CAM++ returns shape (1, 192): flatten or the floats never come out.
+        return [float(x) for x in np.asarray(emb, dtype=np.float32).reshape(-1)]

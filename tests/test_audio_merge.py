@@ -6,9 +6,12 @@ slots). Spec §28.4's tempo conflict is pinned both ways.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from h3ir.audio.fallback import FallbackPayloadError, parse_fallback_payload
+from h3ir.audio.fallback import (FALLBACK_USER_PROMPT, PROTOCOL_KEYS,
+                                 FallbackPayloadError, parse_fallback_payload)
 from h3ir.audio.merge import deterministic_overwrite_attempt, merge_fallback
 from h3ir.audio.models import (AudioMusicProfile, AudioObservation, AudioRhythm,
                                AudioSignalFacts, TimedSpeech)
@@ -57,6 +60,15 @@ def test_an_extra_but_harmless_key_is_rejected_without_a26():
 def test_a_confidence_outside_unit_range_is_rejected():
     with pytest.raises(FallbackPayloadError):
         parse_fallback_payload('{"confidence": 1.7}')
+
+
+def test_the_user_prompt_skeleton_names_exactly_the_protocol_keys():
+    # FALLBACK_USER_PROMPT hands the model the §11 key skeleton verbatim and the parser
+    # enforces PROTOCOL_KEYS whole-payload; if the two drift apart, every real fallback
+    # answer is rejected as off-protocol and the supplement silently never lands. Top-level
+    # keys only: the nested approx_* keys of event_descriptions are not protocol keys.
+    skeleton_keys = set(re.findall(r'^  "(\w+)":', FALLBACK_USER_PROMPT, re.M))
+    assert skeleton_keys == PROTOCOL_KEYS
 
 
 # ---------------------------------------------------------------- the merge
