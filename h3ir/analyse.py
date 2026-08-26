@@ -179,9 +179,12 @@ def save_cached(ref: AssetRef, card: AssetCard, model: str) -> None:
     d["kind"] = card.kind.value
     # The soundtrack observation is byte-derived audio truth with its own cache
     # (audio/cache.py, keyed on the extracted wav); it must never ride the VISUAL card's
-    # cache entry, whose key knows nothing about the audio worker's identity.
+    # cache entry, whose key knows nothing about the audio worker's identity. The degradation
+    # stamp is run-scoped the same way: a later compile with a healthy worker must not inherit
+    # an earlier compile's outage.
     d.pop("soundtrack_observation", None)
     d.pop("soundtrack_findings", None)
+    d.pop("audio_degraded", None)
     _cache_path(_cache_key(ref, model)).write_text(json.dumps(d, indent=1, ensure_ascii=False))
 
 
@@ -260,6 +263,7 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
     observation into role-aware prose is the projector's job, and it is a later phase.
     """
     cfg = get_config()
+    degraded: str | None = None
     if cfg.audio.enabled and ref.path:
         from .audio.client import AudioWorkerError
         from .audio.observer import observe_audio
@@ -271,10 +275,10 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
                 raise AssetAnalysisError(
                     f"audio analysis is required (H3IR_AUDIO_REQUIRED=1) and the worker "
                     f"failed: {e}") from e
-            # Degrade loudly in the log, silently in the artifact: the legacy card is exactly
-            # what this request produced before the audio stack existed, and rule 4's "never
-            # degrade silently" is honoured at the level that can act on it -- the operator's.
-            # Surfacing it in the IR's findings is the projector phase's job.
+            # Degrade loudly in the log, and now also traceably in the artifact: the card is
+            # stamped so compile's provenance can say "degraded" (spec §25's A0) without the
+            # finding ever entering the fix loop -- a dead worker is not the writer's to fix.
+            degraded = str(e)[:200]
             log.warning("audio analysis degraded to typed metadata for %s: %s",
                         ref.sha256[:12], e)
         else:
@@ -302,6 +306,7 @@ def analyse_audio(ref: AssetRef, transcript: str = "", *,
         timbre="", music="",
         characterisation=(ref.note or "").strip(),
         transcript=transcript, language=language,
+        audio_degraded=degraded,
         analyzer_version=ANALYZER_VERSION, model_id="none (typed metadata only)")
 
 
@@ -657,6 +662,7 @@ def _attach_soundtrack(card: AssetCard, ref: AssetRef, *, audio_backend: Any = N
             raise AssetAnalysisError(
                 f"audio analysis is required (H3IR_AUDIO_REQUIRED=1) and the worker failed "
                 f"on the soundtrack of {ref.path}: {e}") from e
+        card.audio_degraded = str(e)[:200]
         log.warning("soundtrack analysis degraded for %s: %s", ref.sha256[:12], e)
         return
     card.soundtrack_observation = obs

@@ -90,7 +90,47 @@ def test_no_fallback_means_no_fallback_model_claimed():
 
 
 def test_uncharacterised_audio_gets_no_audio_block():
-    """The legacy path (no observation) must not record a provenance block it cannot fill:
-    'not stated', never 'no audio'."""
+    """The legacy path (no observation, never attempted) must not record a provenance block it
+    cannot fill: 'not stated', never 'no audio'."""
     doc = _compile_with(AssetCard(sha256="b" * 64, kind=AssetKind.AUDIO))
     assert not doc.provenance.get("audio")
+
+
+def test_a_degraded_audio_is_marked_where_a_document_reader_can_see_it():
+    """Spec §25's A0 as provenance: attempted-and-failed reads as 'degraded', never as 'fine'
+    -- and never as 'no audio', which is what the silent legacy path looked like before."""
+    card = AssetCard(sha256="b" * 64, kind=AssetKind.AUDIO,
+                     audio_degraded="audio worker at http://worker.test did not answer")
+    doc = _compile_with(card)
+    rec = doc.provenance["audio"]["<Audio 1>"]
+    assert rec["degraded"] is True
+    assert "did not answer" in rec["reason"]
+    assert rec["projection_role"] == "bgm"
+    assert "observation_hash" not in rec, "no bytes were heard; no hash may be claimed"
+
+
+def test_a_clean_analysis_carries_no_degraded_marker():
+    doc = _compile_with(AssetCard(sha256="b" * 64, kind=AssetKind.AUDIO,
+                                  audio_observation=_track()))
+    assert "degraded" not in doc.provenance["audio"]["<Audio 1>"]
+
+
+def test_a_degraded_video_soundtrack_is_marked_under_the_videos_label():
+    """The §19 soundtrack shares the §25 rule: a video whose soundtrack analysis failed says
+    so under its own label, marked embedded, minting no <Audio N>."""
+    brief = Brief(intent="recut this clip", seconds=8.0,
+                  assets=[AssetRef(kind=AssetKind.VIDEO, role=Role.EDIT_SOURCE,
+                                   sha256="e" * 64, seconds=6.0)])
+    card = AssetCard(sha256="e" * 64, kind=AssetKind.VIDEO, summary="a clip",
+                     audio_degraded="audio worker at http://worker.test did not answer")
+    cards = {"e" * 64: card}
+    real_analyse = C.analyse_all
+    C.analyse_all = lambda *a, **k: cards
+    try:
+        doc = C.compile_brief(brief, backend=_Backend(), llm=False)
+    finally:
+        C.analyse_all = real_analyse
+    rec = doc.provenance["audio"]["<Video 1>"]
+    assert rec["degraded"] is True
+    assert rec["projection_role"] == "edit_source (embedded soundtrack)"
+

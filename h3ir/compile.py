@@ -891,6 +891,14 @@ def _audio_provenance(plan, cards: dict[str, AssetCard], cfg) -> dict[str, Any]:
         else:
             continue
         if obs is None:
+            reason = card.audio_degraded if card else None
+            if reason:
+                # Spec §25's A0, surfaced where a DOCUMENT reader can act on it: analysis was
+                # attempted and failed, so this label's silence about acoustics is a fact about
+                # the run, not about the audio. Provenance, not a validator finding -- the fix
+                # loop is for the writer, and a dead worker is not the writer's to fix.
+                out[m.label] = {"degraded": True, "reason": reason,
+                                "projection_role": role_note}
             continue
         ids = dict(obs.model_ids)
         rec: dict[str, Any] = {

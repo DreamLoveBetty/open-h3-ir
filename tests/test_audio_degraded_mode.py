@@ -65,6 +65,17 @@ def test_an_unreachable_worker_degrades_to_legacy_with_a_warning(audio_state, ca
         "rule 4: the degradation must be loud where someone can act on it"
 
 
+def test_the_degradation_is_stamped_on_the_card_for_provenance(audio_state):
+    """Spec §25's A0: the log line is for the operator, the stamp is for the DOCUMENT reader --
+    compile's provenance turns it into a record, and a card that never attempted analysis
+    (audio off, no bytes) carries no stamp, so 'degraded' never reads as 'disabled'."""
+    card = analyse_audio(_ref(), audio_backend=UnreachableWorker())
+    assert card.audio_degraded
+    assert "did not answer" in card.audio_degraded
+    clean = analyse_audio(_ref(), audio_backend=FakeWorker())
+    assert clean.audio_degraded is None
+
+
 def test_required_turns_an_unreachable_worker_into_a_refusal(audio_state):
     set_config(Config(paths=Paths(state_dir=audio_state),
                       audio=AudioConfig(enabled=True, base_url="http://worker.test",

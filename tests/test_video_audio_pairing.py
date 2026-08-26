@@ -198,12 +198,14 @@ def test_a_required_worker_failure_on_a_soundtrack_raises(state, voiced_clip):
 
 @ffmpeg
 def test_an_optional_worker_failure_degrades_to_no_soundtrack(state, voiced_clip):
-    """The video card still ships -- the same rule analyse_audio has always had."""
+    """The video card still ships -- the same rule analyse_audio has always had -- and the
+    degradation is stamped for the provenance record (spec §25 via §19)."""
     cards = analyse_all(_Vision(), [_video_ref(voiced_clip)],
                         audio_backend=UnreachableWorker())
     card = cards[_video_ref(voiced_clip).sha256]
     assert card.soundtrack_observation is None
     assert card.summary == "a grey bar slides across a running counter"
+    assert card.audio_degraded and "did not answer" in card.audio_degraded
 
 
 @ffmpeg

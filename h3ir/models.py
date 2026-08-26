@@ -287,6 +287,11 @@ class AssetCard:
     # The analysis run's report about that observation (worker degradation, A26/A28). Same
     # request-scoped discipline as audio_findings.
     soundtrack_findings: list = field(default_factory=list)
+    # Set when audio analysis was ATTEMPTED and the worker failed (degraded, not disabled):
+    # the reason, for the provenance record. A card that simply never tried (audio off, or no
+    # bytes supplied) carries None, and "no record" stays distinguishable from "degraded".
+    # Run-scoped like the findings: save_cached strips it.
+    audio_degraded: str | None = None
     analyzer_version: str = "1"
     model_id: str = ""
 

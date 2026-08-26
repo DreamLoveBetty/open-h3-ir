@@ -52,7 +52,7 @@
 
 三态均支持：FULL（worker + 可选 fallback）/ PARTIAL（fallback 不可用 → 无补充 + finding，不失败）/ LEGACY（worker 不可达 → Role+note+transcript+duration 老路径）。
 
-**一处偏离待维护者裁决**：规格的 LEGACY 要求产生 WARN `A0-audio-analysis-degraded`；实现用的是 log warning 而非 validator Finding。理由符合仓库规则 12（Finding 的 ERROR/WARN 会进修复循环发回模型，而 worker 宕机不是模型能修的事），但规格字面是 Finding 形态——如要严格对齐需补一个不进修复循环的文档级 finding。
+~~一处偏离待维护者裁决~~ **已补齐（验收后修订）**：规格的 LEGACY 要求产生 WARN `A0-audio-analysis-degraded`。初版实现只有 log warning；现已在 `AssetCard.audio_degraded` 打印记、由 `_audio_provenance` 输出 `{degraded: true, reason, projection_role}` 记录——文档读者据此可区分"降级编译"与"分析成功"，且标记落在 provenance 而非 validator finding，不进修复循环（worker 宕机不是 writer 能修的事）。刻意不标记"配置关闭"与"无字节可分析"两种从未尝试分析的情形，使 degraded 不与 disabled 混读。
 
 ## §29 Acceptance Criteria
 
@@ -94,5 +94,5 @@
 
 - 规格 §28 九项测试要求：9/9 ✅
 - §29 完成条件：v1 9/9、v2 8/8、fallback 7/7、v3 3/4（AV alignment 为规格自定延后项）
-- 已知偏离两处，均有记录：**§19 不合成 `<Audio N>` 标签**（遵守 runtime 契约）；**§25 A0 用 log warning 而非 Finding**（待裁决）
+- 已知偏离一处，有记录且经维护者确认符合原生设计：**§19 不合成 `<Audio N>` 标签**（遵守 runtime 契约）；~~§25 A0 形态~~ 已补齐为 provenance 降级记录
 - 已知限制：真实模型权重下未做端到端验证；性能数字未实测
