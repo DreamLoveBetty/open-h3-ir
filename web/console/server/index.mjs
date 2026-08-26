@@ -22,8 +22,24 @@ const REPO = path.resolve(HERE, "../../..");
 const LOGS = path.join(HERE, "..", "logs");
 const DATA = path.join(HERE, "..", "data");
 const REGISTRY = path.join(DATA, "assets.json");
+const SETTINGS = path.join(DATA, "settings.json");
 fs.mkdirSync(LOGS, { recursive: true });
 fs.mkdirSync(DATA, { recursive: true });
+
+// User-settable LLM endpoint config, persisted in data/settings.json. Applied to the h3ir
+// service's environment when the console starts it; values set here outrank ambient env,
+// because an explicit edit in the UI is a stronger statement than whatever the shell had.
+function readSettings() {
+  try { return JSON.parse(fs.readFileSync(SETTINGS, "utf8")); } catch { return {}; }
+}
+function h3irLlmEnv() {
+  const s = readSettings();
+  const env = {};
+  if (s.llm_url) env.H3IR_LLM_URL = s.llm_url;
+  if (s.llm_model) env.H3IR_LLM_MODEL = s.llm_model;
+  if (s.llm_key) env.H3IR_LLM_KEY = s.llm_key;
+  return env;
+}
 
 const MODEL_ENV = {
   MODELSCOPE_CACHE: path.join(REPO, "models", "modelscope"),
@@ -94,7 +110,7 @@ function startService(name) {
   const logFd = fs.openSync(path.join(LOGS, `${name}.log`), "a");
   const child = spawn(svc.cmd[0], svc.cmd.slice(1), {
     cwd: svc.cwd,
-    env: { ...process.env, ...svc.env },
+    env: { ...process.env, ...svc.env, ...(name === "h3ir" ? h3irLlmEnv() : {}) },
     stdio: ["ignore", logFd, logFd],
     detached: true, // own process group, so stop reaches python's children too
   });
@@ -166,6 +182,28 @@ const server = createServer(async (req, res) => {
         "access-control-allow-headers": "content-type,x-filename",
       });
       return res.end();
+    }
+
+    if (p === "/api/settings" && req.method === "GET") {
+      const s = readSettings();
+      // the key is reported as set/not-set, never echoed back
+      return send(res, 200, { llm_url: s.llm_url || "", llm_model: s.llm_model || "",
+                              llm_key_set: !!s.llm_key });
+    }
+    if (p === "/api/settings" && req.method === "POST") {
+      const body = JSON.parse((await readBody(req)).toString() || "{}");
+      const prev = readSettings();
+      const next = {
+        llm_url: String(body.llm_url ?? prev.llm_url ?? "").trim(),
+        llm_model: String(body.llm_model ?? prev.llm_model ?? "").trim(),
+        // null means "clear it"; undefined means "leave whatever is stored"
+        llm_key: body.llm_key === null ? "" : (body.llm_key !== undefined ? String(body.llm_key) : prev.llm_key || ""),
+      };
+      fs.writeFileSync(SETTINGS, JSON.stringify(next, null, 2));
+      const svc = children.get("h3ir");
+      return send(res, 200, { ok: true, llm_url: next.llm_url, llm_model: next.llm_model,
+                              llm_key_set: !!next.llm_key,
+                              restart_needed: !!(svc && svc.exitCode === null) });
     }
 
     if (p === "/api/status" && req.method === "GET") {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type ServiceStatus } from "../lib/api";
 
 function Led({ up, busy }: { up: boolean; busy?: boolean }) {
@@ -16,6 +16,78 @@ function capsOf(detail: any): string {
   return Object.entries(c).map(([k, v]) => `${k}:${v === "ok" ? "ok" : "—"}`).join("  ");
 }
 
+/** What the running h3ir service says about its reasoning model, when it is up. */
+function llmLine(detail: any): string {
+  const l = detail?.llm;
+  if (!l || typeof l !== "object") return "";
+  const bits = [l.model || l.model_id, l.health_via, l.vision_ok === true ? "vision ok" : null]
+    .filter(Boolean);
+  return bits.join(" · ");
+}
+
+function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => void }) {
+  const [url, setUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [key, setKey] = useState("");
+  const [keySet, setKeySet] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    api.settings().then((s) => {
+      setUrl(s.llm_url); setModel(s.llm_model); setKeySet(!!s.llm_key_set);
+    }).catch(() => { });
+  }, []);
+
+  const save = async () => {
+    const r = await api.saveSettings({
+      llm_url: url, llm_model: model,
+      ...(key ? { llm_key: key } : {}),
+    });
+    setKey("");
+    setMsg(r.restart_needed ? "已保存 — 重启 H3IR 服务后生效" : "已保存，下次启动生效");
+    setTimeout(() => setMsg(""), 5000);
+  };
+
+  const restart = async () => {
+    await api.stop("h3ir");
+    await new Promise((r) => setTimeout(r, 800));
+    await api.start("h3ir");
+    setMsg("重启中…");
+    setTimeout(() => { setMsg(""); onChanged(); }, 6000);
+  };
+
+  const field = "w-full border border-line bg-black/40 px-2 py-1.5 font-mono text-[11px] text-ink outline-none placeholder:text-dim/50 focus:border-cyan-400/50";
+
+  return (
+    <div className="mt-2 space-y-2 border border-line bg-black/30 p-3">
+      <div className="text-[9px] tracking-[0.25em] text-dim">LLM ENDPOINT · 推理模型端点</div>
+      <input value={url} onChange={(e) => setUrl(e.target.value)}
+        placeholder="http://127.0.0.1:1234/v1  (LM Studio 默认)" className={field} />
+      <input value={model} onChange={(e) => setModel(e.target.value)}
+        placeholder="模型 id（单模型端点可留空）" className={field} />
+      <input value={key} onChange={(e) => setKey(e.target.value)} type="password"
+        placeholder={keySet ? "API Key 已设置（输入以更换）" : "API Key（可选）"} className={field} />
+      <div className="flex items-center gap-2">
+        <button onClick={save}
+          className="border border-cyan-400/40 px-3 py-1 text-[10px] tracking-[0.15em] text-cyan-300 hover:bg-cyan-400/10">
+          保存
+        </button>
+        {h3ir.up && h3ir.managed && (
+          <button onClick={restart}
+            className="border border-amber-300/40 px-3 py-1 text-[10px] tracking-[0.15em] text-amber-300 hover:bg-amber-400/10">
+            保存并重启
+          </button>
+        )}
+        {msg && <span className="font-mono text-[10px] text-amber-200/80">{msg}</span>}
+      </div>
+      <div className="font-mono text-[9px] leading-relaxed text-dim/70">
+        需要带视觉塔的 27B 级本地模型；纯文本 brief 无视觉也能编译。
+        改完用 h3ir doctor 验证连通性。
+      </div>
+    </div>
+  );
+}
+
 export default function ServicesPanel({
   services,
   onChanged,
@@ -26,6 +98,7 @@ export default function ServicesPanel({
   const [busy, setBusy] = useState<string>("");
   const [logFor, setLogFor] = useState<string>("");
   const [log, setLog] = useState<string>("");
+  const [cfgOpen, setCfgOpen] = useState(false);
 
   const act = async (name: string, action: "start" | "stop") => {
     setBusy(name);
@@ -73,6 +146,12 @@ export default function ServicesPanel({
                   {s.up && !s.managed ? " · external" : ""}
                 </div>
               </div>
+              {s.name === "h3ir" && (
+                <button onClick={() => setCfgOpen(!cfgOpen)}
+                  className={`px-2 py-1 text-[10px] tracking-[0.15em] transition-colors ${cfgOpen ? "text-cyan-300" : "text-dim hover:text-ink"}`}>
+                  CFG
+                </button>
+              )}
               <button onClick={() => toggleLog(s.name)}
                 className="px-2 py-1 text-[10px] tracking-[0.15em] text-dim hover:text-ink">LOG</button>
               {s.up ? (
@@ -90,6 +169,10 @@ export default function ServicesPanel({
             {s.up && capsOf(s.detail) && (
               <div className="mt-1.5 font-mono text-[10px] text-cyan-200/50">{capsOf(s.detail)}</div>
             )}
+            {s.name === "h3ir" && s.up && llmLine(s.detail) && (
+              <div className="mt-1.5 font-mono text-[10px] text-cyan-200/50">{llmLine(s.detail)}</div>
+            )}
+            {s.name === "h3ir" && cfgOpen && <LlmConfig h3ir={s} onChanged={onChanged} />}
             {logFor === s.name && (
               <pre className="mt-2 max-h-40 overflow-auto border border-line bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-dim">{log}</pre>
             )}

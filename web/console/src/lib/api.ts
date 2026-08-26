@@ -58,6 +58,15 @@ export const api = {
   forget: (sha256: string) => fetch(`/api/assets/${sha256}`, { method: "DELETE" }).then(j),
 
   directors: () => fetch("/api/directors").then((r) => j<{ directors: any[] }>(r)),
+  settings: () =>
+    fetch("/api/settings").then((r) =>
+      j<{ llm_url: string; llm_model: string; llm_key_set: boolean }>(r)),
+  saveSettings: (body: { llm_url?: string; llm_model?: string; llm_key?: string | null }) =>
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => j<{ ok: boolean; restart_needed?: boolean }>(r)),
   compile: (body: any) =>
     fetch("/api/compile", {
       method: "POST",
