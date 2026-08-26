@@ -78,6 +78,11 @@ export default function AssetsPanel({
                 <div className="truncate text-[11px] text-ink">{a.name}</div>
                 <div className="font-mono text-[9px] text-dim">{a.sha256.slice(0, 16)}… · {fmtBytes(a.bytes)}</div>
               </div>
+              {on && (
+                <span className="border border-acc/60 bg-acc/10 px-1.5 py-0.5 font-mono text-[9px] tracking-widest text-acc">
+                  ✓ 已挂载
+                </span>
+              )}
               <button
                 onClick={async (e) => { e.stopPropagation(); await api.forget(a.sha256); onChanged(); }}
                 className="px-1 font-mono text-[10px] text-dim hover:text-err">✕</button>

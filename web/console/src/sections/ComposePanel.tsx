@@ -51,6 +51,19 @@ export default function ComposePanel({
     }
   };
 
+  // The failure mode this guards is real: an intent that says "参考视频…" with no video
+  // mounted compiles fine and comes back unrelated, because the compiler can only use the
+  // assets it is handed. Mention-but-not-mounted gets a hint before the request leaves.
+  const mounted = assets.filter((a) => selected.has(a.sha256));
+  const KIND_WORDS: [AssetRow["kind"], RegExp, string][] = [
+    ["video", /视频|video|clip|画面中的|参考.*中/i, "视频"],
+    ["image", /图片|图像|照片|image|picture|photo|图中/i, "图片"],
+    ["audio", /音频|音乐|声音|audio|music|sound|配乐/i, "音频"],
+  ];
+  const missingKinds = KIND_WORDS.filter(
+    ([kind, re]) => re.test(intent) && !mounted.some((a) => a.kind === kind),
+  );
+
   const field = "w-full border border-line bg-well/40 px-3 py-2 text-[12px] text-ink outline-none placeholder:text-dim/60 focus:border-acc/50";
 
   return (
@@ -61,6 +74,24 @@ export default function ComposePanel({
       </header>
 
       <div className="flex flex-1 flex-col gap-3 p-4">
+        {/* mounted assets, named — the count alone once let a brief compile with half its inputs */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {mounted.length === 0 && (
+            <span className="font-mono text-[10px] text-dim">未挂载资产 — 纯文本编译</span>
+          )}
+          {mounted.map((a) => (
+            <span key={a.sha256}
+              className="border border-acc/40 bg-acc/5 px-2 py-0.5 font-mono text-[10px] text-acc">
+              {a.kind.toUpperCase()} · {a.name}
+            </span>
+          ))}
+        </div>
+        {missingKinds.length > 0 && (
+          <div className="border border-warn/40 bg-warn/5 px-3 py-2 font-mono text-[10px] leading-relaxed text-warn">
+            意图提到了{missingKinds.map(([, , label]) => label).join("、")}，但没有挂载对应资产
+            —— 到左侧资产库点击选中，否则编译器看不到它。
+          </div>
+        )}
         <textarea
           value={intent}
           onChange={(e) => setIntent(e.target.value)}
