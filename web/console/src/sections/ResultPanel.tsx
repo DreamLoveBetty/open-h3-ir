@@ -13,9 +13,9 @@ export default function ResultPanel({ result }: { result: CompileResult | null }
 
   const statusChip = (s?: string) => {
     const map: Record<string, string> = {
-      ready: "border-cyan-300/50 text-cyan-300",
-      degraded: "border-amber-300/50 text-amber-300",
-      needs_input: "border-fuchsia-300/50 text-fuchsia-300",
+      ready: "border-acc/50 text-acc",
+      degraded: "border-warn/50 text-warn",
+      needs_input: "border-ask/50 text-ask",
     };
     return (
       <span className={`border px-2 py-0.5 font-mono text-[10px] tracking-[0.2em] ${map[s || ""] || "border-line text-dim"}`}>
@@ -32,12 +32,12 @@ export default function ResultPanel({ result }: { result: CompileResult | null }
 
   if (result?.error) {
     body = (
-      <pre className="whitespace-pre-wrap p-4 font-mono text-[11px] leading-relaxed text-red-300">{result.error}</pre>
+      <pre className="whitespace-pre-wrap p-4 font-mono text-[11px] leading-relaxed text-err">{result.error}</pre>
     );
   } else if (result) {
     if (tab === "prompt") {
       body = (
-        <pre className="whitespace-pre-wrap p-4 font-mono text-[11px] leading-relaxed text-cyan-50/90">
+        <pre className="whitespace-pre-wrap p-4 font-mono text-[11px] leading-relaxed text-ink">
           {result.ir?.prompt || "(no prompt field)"}
         </pre>
       );
@@ -76,21 +76,21 @@ export default function ResultPanel({ result }: { result: CompileResult | null }
           {(["prompt", "plan", "json"] as Tab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-3 py-1 font-mono text-[10px] tracking-[0.2em] transition-colors
-                ${tab === t ? "bg-cyan-400/10 text-cyan-300" : "text-dim hover:text-ink"}`}>
+                ${tab === t ? "bg-acc/10 text-acc" : "text-dim hover:text-ink"}`}>
               {t.toUpperCase()}
             </button>
           ))}
           <button
             onClick={() => copy(tab === "prompt" ? result?.ir?.prompt || "" : JSON.stringify(tab === "plan" ? result?.plan : result, null, 2))}
             disabled={!result}
-            className="ml-2 border border-line px-3 py-1 font-mono text-[10px] tracking-[0.2em] text-dim hover:text-cyan-300 disabled:opacity-40">
+            className="ml-2 border border-line px-3 py-1 font-mono text-[10px] tracking-[0.2em] text-dim hover:text-acc disabled:opacity-40">
             {copied ? "已复制" : "COPY"}
           </button>
         </div>
       </header>
 
       {result?.status === "needs_input" && result.question && (
-        <div className="border-b border-fuchsia-300/20 bg-fuchsia-400/5 px-4 py-2 font-mono text-[11px] text-fuchsia-200">
+        <div className="border-b border-ask/20 bg-ask/5 px-4 py-2 font-mono text-[11px] text-ask">
           编译器提问：{(result.question as any).text || JSON.stringify(result.question)}
         </div>
       )}
@@ -100,7 +100,7 @@ export default function ResultPanel({ result }: { result: CompileResult | null }
       {result?.ir?.diagnostics?.length ? (
         <footer className="max-h-28 overflow-auto border-t border-line px-4 py-2">
           {result.ir.diagnostics.map((d: any, i: number) => (
-            <div key={i} className="font-mono text-[10px] leading-relaxed text-amber-200/70">
+            <div key={i} className="font-mono text-[10px] leading-relaxed text-warn">
               [{d.severity}] {d.rule} — {d.message}
             </div>
           ))}

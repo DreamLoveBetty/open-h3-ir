@@ -73,11 +73,43 @@
     @apply bg-background text-foreground;
   }
 }
-/* ---- H3·IR console theme ---- */
-html, body {
-  background: #05070a;
-  color: #d7dee6;
+/* ---- H3·IR console theme: semantic tokens, dark default, light on [data-theme="light"] ---- */
+:root {
+  --void: 5 7 10;
+  --panel: 9 13 18;
+  --line: 26 36 48;
+  --ink: 215 222 230;
+  --dim: 91 107 120;
+  --well: 0 0 0;            /* inset surfaces: inputs, logs, code */
+  --acc: 103 232 249;       /* cyan-300 */
+  --warn: 252 211 77;       /* amber-300 */
+  --err: 252 165 165;       /* red-300 */
+  --ask: 240 171 252;       /* fuchsia-300 */
+  --grid-line: rgba(103, 232, 249, 0.025);
+  --glow: rgba(34, 211, 238, 0.07);
+  --well-alpha: 0.4;
   color-scheme: dark;
+}
+[data-theme="light"] {
+  --void: 235 238 241;
+  --panel: 247 249 251;
+  --line: 205 213 222;
+  --ink: 24 32 40;
+  --dim: 100 112 125;
+  --well: 255 255 255;
+  --acc: 14 116 144;        /* cyan-700, readable on light */
+  --warn: 180 120 10;
+  --err: 190 50 50;
+  --ask: 150 60 170;
+  --grid-line: rgba(14, 116, 144, 0.05);
+  --glow: rgba(14, 116, 144, 0.06);
+  --well-alpha: 1;
+  color-scheme: light;
+}
+
+html, body {
+  background: rgb(var(--void));
+  color: rgb(var(--ink));
   font-family: -apple-system, "PingFang SC", "Segoe UI", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -85,21 +117,21 @@ html, body {
 /* faint engineering grid */
 .bg-grid {
   background-image:
-    linear-gradient(rgba(103, 232, 249, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(103, 232, 249, 0.025) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 44px 44px;
 }
 
 /* one cold light source, top center */
 .bg-glow {
-  background: radial-gradient(ellipse 60% 40% at 50% -10%, rgba(34, 211, 238, 0.07), transparent 70%);
+  background: radial-gradient(ellipse 60% 40% at 50% -10%, var(--glow), transparent 70%);
 }
 
 *::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: #1a2430; border-radius: 0; }
-*::-webkit-scrollbar-thumb:hover { background: #26414f; }
+*::-webkit-scrollbar-thumb { background: rgb(var(--line)); border-radius: 0; }
+*::-webkit-scrollbar-thumb:hover { background: rgb(var(--dim)); }
 *::-webkit-scrollbar-track { background: transparent; }
 
-::selection { background: rgba(34, 211, 238, 0.25); }
+::selection { background: rgb(var(--acc) / 0.25); }
 
-select option { background: #090d12; color: #d7dee6; }
+select option { background: rgb(var(--panel)); color: rgb(var(--ink)); }

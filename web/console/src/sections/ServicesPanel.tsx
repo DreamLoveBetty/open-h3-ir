@@ -3,9 +3,9 @@ import { api, type ServiceStatus } from "../lib/api";
 
 function Led({ up, busy }: { up: boolean; busy?: boolean }) {
   const cls = busy
-    ? "bg-amber-300 shadow-[0_0_10px_2px_rgba(252,211,77,.45)] animate-pulse"
+    ? "bg-warn shadow-[0_0_10px_2px_rgba(252,211,77,.45)] animate-pulse"
     : up
-      ? "bg-cyan-300 shadow-[0_0_10px_2px_rgba(103,232,249,.5)]"
+      ? "bg-acc shadow-[0_0_10px_2px_rgba(103,232,249,.5)]"
       : "bg-zinc-700";
   return <span className={`inline-block h-1.5 w-1.5 rounded-full ${cls}`} />;
 }
@@ -56,10 +56,10 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
     setTimeout(() => { setMsg(""); onChanged(); }, 6000);
   };
 
-  const field = "w-full border border-line bg-black/40 px-2 py-1.5 font-mono text-[11px] text-ink outline-none placeholder:text-dim/50 focus:border-cyan-400/50";
+  const field = "w-full border border-line bg-well/40 px-2 py-1.5 font-mono text-[11px] text-ink outline-none placeholder:text-dim/50 focus:border-acc/50";
 
   return (
-    <div className="mt-2 space-y-2 border border-line bg-black/30 p-3">
+    <div className="mt-2 space-y-2 border border-line bg-well/30 p-3">
       <div className="text-[9px] tracking-[0.25em] text-dim">LLM ENDPOINT · 推理模型端点</div>
       <input value={url} onChange={(e) => setUrl(e.target.value)}
         placeholder="http://127.0.0.1:1234/v1  (LM Studio 默认)" className={field} />
@@ -69,16 +69,16 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
         placeholder={keySet ? "API Key 已设置（输入以更换）" : "API Key（可选）"} className={field} />
       <div className="flex items-center gap-2">
         <button onClick={save}
-          className="border border-cyan-400/40 px-3 py-1 text-[10px] tracking-[0.15em] text-cyan-300 hover:bg-cyan-400/10">
+          className="border border-acc/40 px-3 py-1 text-[10px] tracking-[0.15em] text-acc hover:bg-acc/10">
           保存
         </button>
         {h3ir.up && h3ir.managed && (
           <button onClick={restart}
-            className="border border-amber-300/40 px-3 py-1 text-[10px] tracking-[0.15em] text-amber-300 hover:bg-amber-400/10">
+            className="border border-warn/40 px-3 py-1 text-[10px] tracking-[0.15em] text-warn hover:bg-warn/10">
             保存并重启
           </button>
         )}
-        {msg && <span className="font-mono text-[10px] text-amber-200/80">{msg}</span>}
+        {msg && <span className="font-mono text-[10px] text-warn/80">{msg}</span>}
       </div>
       <div className="font-mono text-[9px] leading-relaxed text-dim/70">
         需要带视觉塔的 27B 级本地模型；纯文本 brief 无视觉也能编译。
@@ -127,7 +127,7 @@ export default function ServicesPanel({
         <span className="text-[10px] tracking-[0.3em] text-dim">SERVICES · 服务矩阵</span>
         <button
           onClick={async () => { setBusy("*"); await api.startAll(); setTimeout(onChanged, 1500); setTimeout(() => { setBusy(""); onChanged(); }, 9000); }}
-          className="border border-cyan-400/40 px-3 py-1 text-[10px] tracking-[0.2em] text-cyan-300 transition-colors hover:bg-cyan-400/10"
+          className="border border-acc/40 px-3 py-1 text-[10px] tracking-[0.2em] text-acc transition-colors hover:bg-acc/10"
         >
           全部启动
         </button>
@@ -148,7 +148,7 @@ export default function ServicesPanel({
               </div>
               {s.name === "h3ir" && (
                 <button onClick={() => setCfgOpen(!cfgOpen)}
-                  className={`px-2 py-1 text-[10px] tracking-[0.15em] transition-colors ${cfgOpen ? "text-cyan-300" : "text-dim hover:text-ink"}`}>
+                  className={`px-2 py-1 text-[10px] tracking-[0.15em] transition-colors ${cfgOpen ? "text-acc" : "text-dim hover:text-ink"}`}>
                   CFG
                 </button>
               )}
@@ -157,24 +157,24 @@ export default function ServicesPanel({
               {s.up ? (
                 s.managed ? (
                   <button onClick={() => act(s.name, "stop")}
-                    className="border border-line px-3 py-1 text-[10px] tracking-[0.15em] text-red-300/80 hover:bg-red-400/10">停止</button>
+                    className="border border-line px-3 py-1 text-[10px] tracking-[0.15em] text-err hover:bg-err/10">停止</button>
                 ) : (
                   <span className="px-2 py-1 text-[10px] text-dim">运行中</span>
                 )
               ) : (
                 <button onClick={() => act(s.name, "start")}
-                  className="border border-cyan-400/40 px-3 py-1 text-[10px] tracking-[0.15em] text-cyan-300 hover:bg-cyan-400/10">启动</button>
+                  className="border border-acc/40 px-3 py-1 text-[10px] tracking-[0.15em] text-acc hover:bg-acc/10">启动</button>
               )}
             </div>
             {s.up && capsOf(s.detail) && (
-              <div className="mt-1.5 font-mono text-[10px] text-cyan-200/50">{capsOf(s.detail)}</div>
+              <div className="mt-1.5 font-mono text-[10px] text-acc/50">{capsOf(s.detail)}</div>
             )}
             {s.name === "h3ir" && s.up && llmLine(s.detail) && (
-              <div className="mt-1.5 font-mono text-[10px] text-cyan-200/50">{llmLine(s.detail)}</div>
+              <div className="mt-1.5 font-mono text-[10px] text-acc/50">{llmLine(s.detail)}</div>
             )}
             {s.name === "h3ir" && cfgOpen && <LlmConfig h3ir={s} onChanged={onChanged} />}
             {logFor === s.name && (
-              <pre className="mt-2 max-h-40 overflow-auto border border-line bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-dim">{log}</pre>
+              <pre className="mt-2 max-h-40 overflow-auto border border-line bg-well/40 p-2 font-mono text-[10px] leading-relaxed text-dim">{log}</pre>
             )}
           </div>
         ))}

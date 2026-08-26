@@ -5,12 +5,18 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // H3·IR console palette — near-black panels, hairline borders, one cyan accent
-        void: "#05070a",
-        panel: "#090d12",
-        line: "#1a2430",
-        ink: "#d7dee6",
-        dim: "#5b6b78",
+        // H3·IR console palette — semantic tokens over CSS vars, so [data-theme="light"]
+        // re-skins the whole console without touching a component.
+        void: "rgb(var(--void) / <alpha-value>)",
+        panel: "rgb(var(--panel) / <alpha-value>)",
+        line: "rgb(var(--line) / <alpha-value>)",
+        ink: "rgb(var(--ink) / <alpha-value>)",
+        dim: "rgb(var(--dim) / <alpha-value>)",
+        well: "rgb(var(--well) / <alpha-value>)",
+        acc: "rgb(var(--acc) / <alpha-value>)",
+        warn: "rgb(var(--warn) / <alpha-value>)",
+        err: "rgb(var(--err) / <alpha-value>)",
+        ask: "rgb(var(--ask) / <alpha-value>)",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

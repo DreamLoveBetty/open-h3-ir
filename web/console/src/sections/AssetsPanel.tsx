@@ -47,7 +47,7 @@ export default function AssetsPanel({
         onDrop={(e) => { e.preventDefault(); setDrag(false); send(e.dataTransfer.files); }}
         onClick={() => inputRef.current?.click()}
         className={`m-3 cursor-pointer border border-dashed px-4 py-6 text-center transition-colors
-          ${drag ? "border-cyan-300 bg-cyan-400/5" : "border-line hover:border-cyan-400/40"}`}
+          ${drag ? "border-acc bg-acc/5" : "border-line hover:border-acc/40"}`}
       >
         <div className="text-[11px] tracking-[0.2em] text-ink">{busy ? "上传中…" : "拖入或点击上传"}</div>
         <div className="mt-1 font-mono text-[10px] text-dim">
@@ -57,7 +57,7 @@ export default function AssetsPanel({
           accept="image/*,video/*,audio/*"
           onChange={(e) => send(e.target.files)} />
       </div>
-      {err && <div className="mx-3 mb-2 border border-red-400/30 bg-red-400/5 px-3 py-2 font-mono text-[10px] text-red-300">{err}</div>}
+      {err && <div className="mx-3 mb-2 border border-err/30 bg-err/5 px-3 py-2 font-mono text-[10px] text-err">{err}</div>}
 
       <div className="max-h-72 flex-1 divide-y divide-line overflow-auto">
         {assets.length === 0 && (
@@ -69,9 +69,9 @@ export default function AssetsPanel({
             <div key={a.sha256}
               onClick={() => onToggle(a.sha256)}
               className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors
-                ${on ? "bg-cyan-400/5" : "hover:bg-white/[0.02]"}`}>
+                ${on ? "bg-acc/5" : "hover:bg-ink/[0.04]"}`}>
               <span className={`w-9 border px-1 py-0.5 text-center font-mono text-[9px] tracking-widest
-                ${on ? "border-cyan-300/60 text-cyan-300" : "border-line text-dim"}`}>
+                ${on ? "border-acc/60 text-acc" : "border-line text-dim"}`}>
                 {KIND_TAG[a.kind] || "IMG"}
               </span>
               <div className="min-w-0 flex-1">
@@ -80,7 +80,7 @@ export default function AssetsPanel({
               </div>
               <button
                 onClick={async (e) => { e.stopPropagation(); await api.forget(a.sha256); onChanged(); }}
-                className="px-1 font-mono text-[10px] text-dim hover:text-red-300">✕</button>
+                className="px-1 font-mono text-[10px] text-dim hover:text-err">✕</button>
             </div>
           );
         })}

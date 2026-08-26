@@ -51,7 +51,7 @@ export default function ComposePanel({
     }
   };
 
-  const field = "w-full border border-line bg-black/40 px-3 py-2 text-[12px] text-ink outline-none placeholder:text-dim/60 focus:border-cyan-400/50";
+  const field = "w-full border border-line bg-well/40 px-3 py-2 text-[12px] text-ink outline-none placeholder:text-dim/60 focus:border-acc/50";
 
   return (
     <section className="flex flex-col border border-line bg-panel">
@@ -74,7 +74,7 @@ export default function ComposePanel({
             <span className="mb-1 block text-[9px] tracking-[0.25em] text-dim">时长 · {seconds}s</span>
             <input type="range" min={1} max={12} step={0.5} value={seconds}
               onChange={(e) => setSeconds(Number(e.target.value))}
-              className="w-full accent-cyan-300" />
+              className="w-full accent-acc" />
           </label>
           <label className="block">
             <span className="mb-1 block text-[9px] tracking-[0.25em] text-dim">画幅</span>
@@ -101,7 +101,7 @@ export default function ComposePanel({
 
         <label className="flex cursor-pointer items-center gap-2 text-[11px] text-dim">
           <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)}
-            className="accent-cyan-300" />
+            className="accent-acc" />
           静音片（不写音乐与音效）
         </label>
 
@@ -111,7 +111,7 @@ export default function ComposePanel({
           className={`mt-auto border px-4 py-3 text-[11px] tracking-[0.35em] transition-colors
             ${busy || !h3irUp || !intent.trim()
               ? "cursor-not-allowed border-line text-dim"
-              : "border-cyan-300/60 text-cyan-200 hover:bg-cyan-400/10 hover:shadow-[0_0_24px_rgba(103,232,249,0.15)]"}`}
+              : "border-acc/60 text-acc hover:bg-acc/10 hover:shadow-[0_0_24px_rgba(103,232,249,0.15)]"}`}
         >
           {busy ? "COMPILING…" : h3irUp ? "编 译 ⟶" : "等待 H3IR 服务"}
         </button>

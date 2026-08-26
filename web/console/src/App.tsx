@@ -17,6 +17,15 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<CompileResult | null>(null);
   const [clock, setClock] = useState("");
+  const [theme, setTheme] = useState<string>(
+    () => localStorage.getItem("h3ir-theme") || "dark",
+  );
+
+  useEffect(() => {
+    if (theme === "light") document.documentElement.dataset.theme = "light";
+    else delete document.documentElement.dataset.theme;
+    localStorage.setItem("h3ir-theme", theme);
+  }, [theme]);
 
   const refreshStatus = useCallback(() => {
     api.status()
@@ -54,16 +63,25 @@ export default function App() {
         <header className="flex items-end justify-between border border-line bg-panel px-4 py-3">
           <div>
             <h1 className="text-[15px] font-light tracking-[0.5em] text-ink">
-              H3<span className="text-cyan-300">·</span>IR CONSOLE
+              H3<span className="text-acc">·</span>IR CONSOLE
             </h1>
             <p className="mt-1 font-mono text-[10px] tracking-[0.15em] text-dim">
               CONTEXT-IR COMPILER CONTROL SURFACE — 本地控制台
             </p>
           </div>
-          <div className="text-right font-mono text-[10px] leading-relaxed text-dim">
-            <div>{clock}</div>
-            <div className={upCount === 3 ? "text-cyan-300" : "text-amber-300/80"}>
-              {upCount}/3 ONLINE
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+              className="border border-line px-3 py-1 font-mono text-[10px] tracking-[0.2em] text-dim transition-colors hover:border-acc/50 hover:text-acc"
+              title="切换日间/夜间主题"
+            >
+              {theme === "light" ? "◐ NIGHT" : "◑ DAY"}
+            </button>
+            <div className="text-right font-mono text-[10px] leading-relaxed text-dim">
+              <div>{clock}</div>
+              <div className={upCount === 3 ? "text-acc" : "text-warn/80"}>
+                {upCount}/3 ONLINE
+              </div>
             </div>
           </div>
         </header>
