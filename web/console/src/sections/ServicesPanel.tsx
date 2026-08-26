@@ -32,7 +32,7 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
   const [keySet, setKeySet] = useState(false);
   const [msg, setMsg] = useState("");
   const [probing, setProbing] = useState(false);
-  const [found, setFound] = useState<{ source: string; url: string; models: string[] }[] | null>(null);
+  const [found, setFound] = useState<{ source: string; url: string; models: string[]; needsAuth?: boolean }[] | null>(null);
 
   useEffect(() => {
     api.settings().then((s) => {
@@ -43,7 +43,7 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
   const detect = async () => {
     setProbing(true);
     try {
-      const r = await api.detectLlm(url.trim() || undefined);
+      const r = await api.detectLlm(url.trim() || undefined, key.trim() || undefined);
       setFound(r.endpoints || []);
       // one endpoint serving one model is an unambiguous answer; fill it directly
       if (r.endpoints?.length === 1 && r.endpoints[0].models.length === 1) {
@@ -90,7 +90,20 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
           )}
           {found.map((e) => (
             <div key={e.url}>
-              <div className="font-mono text-[10px] text-dim">{e.source} · {e.url}</div>
+              <div className="flex items-center gap-2 font-mono text-[10px] text-dim">
+                <span>{e.source} · {e.url}</span>
+                {e.needsAuth && (
+                  <button onClick={() => setUrl(e.url)}
+                    className="border border-warn/40 px-1.5 py-0 text-[9px] text-warn hover:bg-warn/10">
+                    需 API token · 点击只填地址
+                  </button>
+                )}
+              </div>
+              {e.needsAuth && (
+                <div className="mt-0.5 font-mono text-[9px] leading-relaxed text-warn/80">
+                  把 LM Studio 的 API token 填到下面 API Key 一栏再探测；或在 LM Studio → Developer → Server Settings 关掉 Require API Token
+                </div>
+              )}
               <div className="mt-0.5 flex flex-wrap gap-1">
                 {e.models.map((m) => (
                   <button key={m}

@@ -61,9 +61,14 @@ export const api = {
   settings: () =>
     fetch("/api/settings").then((r) =>
       j<{ llm_url: string; llm_model: string; llm_key_set: boolean }>(r)),
-  detectLlm: (extra?: string) =>
-    fetch("/api/detect-llm" + (extra ? `?extra=${encodeURIComponent(extra)}` : "")).then((r) =>
-      j<{ endpoints: { source: string; url: string; models: string[] }[] }>(r)),
+  detectLlm: (extra?: string, key?: string) => {
+    const q = new URLSearchParams();
+    if (extra) q.set("extra", extra);
+    if (key) q.set("key", key);
+    const qs = q.toString();
+    return fetch("/api/detect-llm" + (qs ? `?${qs}` : "")).then((r) =>
+      j<{ endpoints: { source: string; url: string; models: string[]; needsAuth?: boolean }[] }>(r));
+  },
   saveSettings: (body: { llm_url?: string; llm_model?: string; llm_key?: string | null }) =>
     fetch("/api/settings", {
       method: "POST",

@@ -216,16 +216,23 @@ const server = createServer(async (req, res) => {
         ["Ollama", "http://127.0.0.1:11434/v1"],
         ["vLLM", "http://127.0.0.1:8000/v1"],
       ];
-      const saved = readSettings().llm_url;
+      const saved = readSettings();
       const extra = url.searchParams.get("extra");
+      // Auth: the key being typed wins, then the stored one. A 401 is not "absent" — it is
+      // a live endpoint that wants a token (LM Studio's API-token requirement), so it is
+      // reported as found-but-needs-auth instead of being swallowed as silence.
+      const key = url.searchParams.get("key") || saved.llm_key || "";
       const candidates = [...KNOWN.map(([source, u]) => ({ source, url: u }))];
-      for (const [source, u] of [["saved", saved], ["custom", extra]]) {
+      for (const [source, u] of [["saved", saved.llm_url], ["custom", extra]]) {
         if (u && !candidates.some((c) => c.url === u)) candidates.push({ source, url: u });
       }
       const probeOne = async ({ source, url: base }) => {
         try {
+          const headers = key ? { authorization: `Bearer ${key}` } : {};
           const r = await fetch(base.replace(/\/$/, "") + "/models",
-                                { signal: AbortSignal.timeout(1500) });
+                                { headers, signal: AbortSignal.timeout(1500) });
+          if (r.status === 401 || r.status === 403)
+            return { source, url: base, models: [], needsAuth: true };
           if (!r.ok) return null;
           const body = await r.json();
           const models = Array.isArray(body?.data)
