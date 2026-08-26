@@ -27,3 +27,8 @@ services/.venv-audio/
 
 # macOS folder metadata
 .DS_Store
+
+# Web console (web/console): dependencies, runtime logs, asset registry, build output
+node_modules/
+web/console/logs/
+web/console/data/
