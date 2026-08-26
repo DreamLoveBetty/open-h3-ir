@@ -57,7 +57,7 @@
 ## §29 Acceptance Criteria
 
 **Audio v1（9 项）**：全部 ✅。Worker 独立运行（`services/audio_worker/`，自身 42 测试）；SenseVoice ASR / FSMN-VAD / CAM++ / DSP 在 `app.py` 接线（VAD→SenseVoice→CAM++ 单次调用链）；AudioObservation 可序列化（磁盘 round-trip 测试）；观测缓存正常；legacy 正常；非音频无回归。
-*限制：真实权重下的端到端验证是部署环境事项，测试全部走 fake/pure-function 路径。*
+~~*限制：真实权重下的端到端验证是部署环境事项，测试全部走 fake/pure-function 路径。*~~ **已实测（bring-up，见文末附录）**。
 
 **Audio v2（8 项）**：全部 ✅。CLAP 事件/声音语义（`b6b4ff8`）；role-aware projection；manifest characterisation 用投影；beat reference 影响 timeline；SFX 映射到 shot；ambient/sync 分流；新 validator 规则（上表）；caller/analyser discrepancy Finding（A9）。
 
@@ -88,11 +88,31 @@
 
 ## §30 性能目标
 
-规格定位为非硬性目标。Cache hit 路径为一次本地 HTTP round trip + JSON 读取（observer 注释记录压在 100ms 预算内）；真实硬件上的延迟数字未测量，属部署期验证项。
+规格定位为非硬性目标。Cache hit 路径为一次本地 HTTP round trip + JSON 读取（observer 注释记录压在 100ms 预算内）——bring-up 实测：**观测缓存 + fallback 缓存全命中时端到端 47 ms**（CPU, arm64, 2026-08-26），在预算内。冷路径数字见文末附录。
 
 ## 汇总
 
 - 规格 §28 九项测试要求：9/9 ✅
 - §29 完成条件：v1 9/9、v2 8/8、fallback 7/7、v3 3/4（AV alignment 为规格自定延后项）
 - 已知偏离一处，有记录且经维护者确认符合原生设计：**§19 不合成 `<Audio N>` 标签**（遵守 runtime 契约）；~~§25 A0 形态~~ 已补齐为 provenance 降级记录
-- 已知限制：真实模型权重下未做端到端验证；性能数字未实测
+- ~~已知限制：真实模型权重下未做端到端验证；性能数字未实测~~ **均已实测**，见下
+
+## 附录：真实权重 bring-up（2026-08-26，CPU / arm64 Mac / 96GB）
+
+两个服务真实拉起并端到端跑通：`services/audio_worker`（:50000，dsp/speech/clap 三层 `/health` 全 ok）与新增的 `services/omni_fallback`（:8001，Qwen2.5-Omni-3B Thinker 半边，单文件 FastAPI shim）。模型权重全部落项目内 `models/`（gitignore 已排除）。
+
+实测数字：
+
+| 路径 | 实测 |
+|---|---|
+| 语音观测冷启动（SenseVoice+VAD+CAM++ 首次加载并分析） | ~14.5 s |
+| Omni fallback 热态一次调用（路由触发→返回→严格解析→merge） | ~41 s |
+| 观测缓存 + fallback 缓存全命中端到端 | ~47 ms |
+
+Bring-up 抓到并修复四处 fake 测试覆盖不到的真实漂移（commit `9ac9a91`）：ModelScope 上 404 的 CAM++ 默认 id；FunASR 1.4 `infer`→`generate` 改名且 SenseVoice 的 `generate` 不收 `vad_segments`（改为按 VAD 段切临时 wav 逐段喂入，CAM++ 的 1×192 embedding 展平）；transformers 5.x 将 CLAP processor 的 `audios=` 改名 `audio=`；3B fallback 模型在只有 "Return JSON only" 时必发明键名被严格解析器整包拒绝——`FALLBACK_USER_PROMPT` 现带 §11 骨架与严格类型说明，协议版本升至 `audio-fallback-2`，并新增守卫测试钉住骨架键集 == `PROTOCOL_KEYS`（已按仓库纪律证伪：红→恢复→绿）。
+
+实测发现的可控行为（设计内，记录在案）：
+
+- **CLAP 对纯语音的软误报**：真实语音样本上 CLAP 报出 "glass breaking"/"drums" 类事件，置信度 0.34，低于编译器侧 `event_confidence_threshold=0.55`，不会进入卡片——阈值分层按设计生效。
+- **DSP 无 librosa 时倍频误读**：自相关 fallback 把 120 BPM 测试音读成 240 BPM（octave error，置信度 0.5 自标低）；装 librosa 后走精确路径，属已知降级档。
+- **SenseVoice ITN 粘连**：英文逆文本归一化把 "at six" 合成 "at6"——转写文本原样进卡，不改写用户/模型文字的原则同样适用于 ASR 输出，记为模型行为而非管线缺陷。
