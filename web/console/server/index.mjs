@@ -58,9 +58,18 @@ const SERVICES = {
   omni: {
     label: "OMNI FALLBACK",
     port: 8001,
-    cwd: path.join(REPO, "services"),
-    cmd: [path.join(REPO, "services", ".venv-audio", "bin", "python"), "-m", "omni_fallback.app"],
-    env: { ...MODEL_ENV },
+    cwd: REPO,
+    // Qwen2.5-Omni-3B Q8_0 through llama-server instead of the transformers shim: the same
+    // OpenAI chat shape with input_audio at ~8GB resident (mmap'd, largely reclaimable)
+    // instead of ~12GB fp32. -ngl 0 pins it to CPU so it never competes with LM Studio
+    // for the GPU pool. The Python shim in services/omni_fallback/ stays as the portable
+    // alternative for machines without llama.cpp.
+    cmd: ["llama-server",
+          "-m", path.join(REPO, "models", "gguf", "Qwen2.5-Omni-3B", "Qwen2.5-Omni-3B-Q8_0.gguf"),
+          "--mmproj", path.join(REPO, "models", "gguf", "Qwen2.5-Omni-3B", "mmproj-Qwen2.5-Omni-3B-Q8_0.gguf"),
+          "--host", "127.0.0.1", "--port", "8001",
+          "-ngl", "0", "-c", "8192"],
+    env: { ...MODEL_ENV, PATH: `/opt/homebrew/bin:${process.env.PATH || ""}` },
   },
   h3ir: {
     label: "H3IR COMPILER",

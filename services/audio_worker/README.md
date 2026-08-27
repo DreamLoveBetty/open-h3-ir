@@ -51,17 +51,30 @@ export H3IR_AUDIO_URL=http://127.0.0.1:50000
 
 ## The Omni fallback
 
-`services/omni_fallback/` is a second, separate service: a single-file FastAPI shim that loads
-the Thinker half of Qwen2.5-Omni-3B and serves the one audio-capable chat route the compiler's
+The fallback is Qwen2.5-Omni-3B serving the one audio-capable chat route the compiler's
 fallback client (spec §11) posts to. It is a fallback, never a default path — the compiler's
 router decides per asset whether Omni may look at it at all.
+
+The default runtime is llama-server over the official Q8_0 GGUF (ggml-org), resident at ~8GB
+mostly-mmap'd instead of ~12GB fp32 under transformers:
+
+```bash
+llama-server -m <repo>/models/gguf/Qwen2.5-Omni-3B/Qwen2.5-Omni-3B-Q8_0.gguf \
+  --mmproj <repo>/models/gguf/Qwen2.5-Omni-3B/mmproj-Qwen2.5-Omni-3B-Q8_0.gguf \
+  --host 127.0.0.1 --port 8001 -ngl 0 -c 8192
+
+# compiler side:
+export H3IR_AUDIO_FALLBACK=1
+```
+
+`services/omni_fallback/` remains as the portable alternative for machines without llama.cpp:
+a single-file FastAPI shim that loads the Thinker half through transformers (fp32 on CPU). It
+expects the full-precision ModelScope snapshot, which is no longer committed to `models/` —
+re-download `Qwen/Qwen2.5-Omni-3B` into `models/modelscope/` if you want this path.
 
 ```bash
 MODELSCOPE_CACHE=<repo>/models/modelscope HF_HOME=<repo>/models/hf \
   .venv-audio/bin/python -m omni_fallback.app     # serves http://127.0.0.1:8001
-
-# compiler side:
-export H3IR_AUDIO_FALLBACK=1
 ```
 
 ## Endpoints
