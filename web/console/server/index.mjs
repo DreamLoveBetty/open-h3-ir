@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { request as httpRequest } from "node:http";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../../..");
@@ -183,6 +184,34 @@ function readBody(req, limit = 1024 * 1024 * 1024) {
     });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
+  });
+}
+
+// Long-timeout POST for the compile proxy. Global fetch (undici) enforces a default
+// 300s headersTimeout no matter what AbortSignal you pass, and a local 27B compile
+// legitimately runs past that; node:http has no such hidden ceiling.
+function postWithTimeout(url, body, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = httpRequest(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
+        res.on("error", reject);
+      },
+    );
+    req.on("timeout", () => { req.destroy(new Error("upstream timeout")); });
+    req.on("error", reject);
+    req.end(body);
   });
 }
 
@@ -358,16 +387,12 @@ const server = createServer(async (req, res) => {
       const t0 = Date.now();
       // 20 minutes: a local 27B doing video analysis plus a long write can pass 5 minutes
       // easily, and the compiler's own LLM timeout is 600s per call -- the proxy must not
-      // give up while the service is still legitimately working.
-      const r = await fetch(`${H3IR}/v1/briefs`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-        signal: AbortSignal.timeout(1_200_000),
-      });
-      const text = await r.text();
+      // give up while the service is still legitimately working. This goes through
+      // node:http directly because the global fetch (undici) has a default
+      // headersTimeout of 300s that fires before any signal we can pass it.
+      const r = await postWithTimeout(`${H3IR}/v1/briefs`, body, 1_200_000);
       let json;
-      try { json = JSON.parse(text); } catch { json = { raw: text }; }
+      try { json = JSON.parse(r.text); } catch { json = { raw: r.text }; }
       return send(res, r.status, { ...json, _elapsed_ms: Date.now() - t0 });
     }
 
