@@ -7,9 +7,11 @@
 //
 // Every service child is spawned in its own process group with output appended to
 // logs/<name>.log; stopping sends SIGTERM to the group. Services already running
-// (started outside this console) are reported as {up, managed:false} and are never killed.
+// (started outside this console) are reported as {up, managed:false}; stopping one of
+// those kills the port listener only when its command line provably belongs to this
+// repo, so a foreign process holding the port is left alone.
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs";
@@ -148,10 +150,33 @@ function startService(name) {
 
 function stopService(name) {
   const child = children.get(name);
-  if (!child || child.exitCode !== null) return { stopped: false, reason: "not managed here" };
-  try { process.kill(-child.pid, "SIGTERM"); } catch { try { child.kill("SIGTERM"); } catch { } }
-  children.delete(name);
-  return { stopped: true };
+  if (child && child.exitCode === null) {
+    try { process.kill(-child.pid, "SIGTERM"); } catch { try { child.kill("SIGTERM"); } catch { } }
+    children.delete(name);
+    return { stopped: true };
+  }
+  // Not managed here: a service started outside the console still answers on its port,
+  // and leaving it running leaks whatever it holds in memory (the omni llama-server
+  // keeps ~8GB of model weights resident). Take it down only when the port listener's
+  // command line provably belongs to this project.
+  return stopForeignListener(SERVICES[name]);
+}
+
+function stopForeignListener(svc) {
+  let pids;
+  try {
+    pids = execSync(`lsof -tiTCP:${svc.port} -sTCP:LISTEN`, { encoding: "utf8" })
+      .trim().split("\n").filter(Boolean).map(Number);
+  } catch { return { stopped: false, reason: "not running" }; }
+  const ours = [];
+  for (const pid of pids) {
+    let cmdline = "";
+    try { cmdline = execSync(`ps -p ${pid} -o command=`, { encoding: "utf8" }); } catch { continue; }
+    if (cmdline.includes(REPO)) ours.push(pid);
+  }
+  if (!ours.length) return { stopped: false, reason: `port ${svc.port} held by a foreign process, left alone` };
+  for (const pid of ours) { try { process.kill(pid, "SIGTERM"); } catch { } }
+  return { stopped: true, killed: ours };
 }
 
 // ------------------------------------------------------------------ asset registry
