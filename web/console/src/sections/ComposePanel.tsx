@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { api, type AssetRow, type CompileResult } from "../lib/api";
 
 const CREATIVITY = ["restrained", "balanced", "bold", "extreme"] as const;
-const ASPECTS = ["16:9", "9:16", "1:1"] as const;
+const CREATIVITY_ZH: Record<string, string> = {
+  restrained: "克制", balanced: "均衡", bold: "大胆", extreme: "极限",
+};
+// the six the contract publishes (h3ir.contract.ASPECTS); keep in sync with it
+const ASPECTS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] as const;
+const DIRECTOR_ZH: Record<string, string> = {
+  cameron: "詹姆斯·卡梅隆", tarantino: "昆汀·塔伦蒂诺", anderson: "韦斯·安德森",
+  villeneuve: "丹尼斯·维伦纽瓦", bigelow: "凯瑟琳·毕格罗", wong: "王家卫",
+  spielberg: "史蒂文·斯皮尔伯格",
+};
 
 export default function ComposePanel({
   assets, selected, h3irUp, onResult,
@@ -103,7 +112,7 @@ export default function ComposePanel({
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-1 block text-[9px] tracking-[0.25em] text-dim">时长 · {seconds}s</span>
-            <input type="range" min={1} max={12} step={0.5} value={seconds}
+            <input type="range" min={1} max={15} step={0.5} value={seconds}
               onChange={(e) => setSeconds(Number(e.target.value))}
               className="w-full accent-acc" />
           </label>
@@ -116,16 +125,22 @@ export default function ComposePanel({
           <label className="block">
             <span className="mb-1 block text-[9px] tracking-[0.25em] text-dim">创造力 · CREATIVITY</span>
             <select value={creativity} onChange={(e) => setCreativity(e.target.value)} className={field}>
-              {CREATIVITY.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CREATIVITY.map((c) => <option key={c} value={c}>{c} · {CREATIVITY_ZH[c]}</option>)}
             </select>
           </label>
           <label className="block">
             <span className="mb-1 block text-[9px] tracking-[0.25em] text-dim">导演 · DIRECTOR</span>
             <select value={director} onChange={(e) => setDirector(e.target.value)} className={field}>
               <option value="">（无 — nobody's taste）</option>
-              {directors.map((d) => (
-                <option key={d.id || d.name} value={d.id || d.name}>{d.id || d.name}</option>
-              ))}
+              {directors.map((d) => {
+                const id = d.id || d.name;
+                const zh = DIRECTOR_ZH[id];
+                return (
+                  <option key={id} value={id}>
+                    {zh ? `${zh} · ${d.name || id}` : (d.name || id)}
+                  </option>
+                );
+              })}
             </select>
           </label>
         </div>

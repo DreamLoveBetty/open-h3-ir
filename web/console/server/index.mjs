@@ -79,6 +79,7 @@ const SERVICES = {
 const H3IR = `http://127.0.0.1:${SERVICES.h3ir.port}`;
 
 const children = new Map(); // name -> ChildProcess
+let h3irHealthCache = { at: 0, detail: null }; // see probe(): /health is expensive on h3ir
 
 function healthUrl(svc) { return `http://127.0.0.1:${svc.port}/health`; }
 
@@ -86,13 +87,29 @@ async function probe(name) {
   const svc = SERVICES[name];
   const child = children.get(name);
   const managedAlive = !!child && child.exitCode === null && !child.killed;
+  // h3ir's /health runs the LLM liveness check, which re-fetches the endpoint's model list
+  // on every call -- at the console's 3s poll cadence that is a needless /v1/models hammer.
+  // Liveness here uses the static /v1/contract instead; the LLM detail block is fetched at
+  // most once a minute and served from this cache in between.
+  const livenessUrl = name === "h3ir"
+    ? `http://127.0.0.1:${svc.port}/v1/contract` : healthUrl(svc);
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 4000);
-    const r = await fetch(healthUrl(svc), { signal: ctrl.signal });
+    const r = await fetch(livenessUrl, { signal: ctrl.signal });
     clearTimeout(t);
     let detail = null;
-    try { detail = await r.json(); } catch { /* body optional */ }
+    if (name === "h3ir") {
+      if (r.ok && Date.now() - h3irHealthCache.at > 60_000) {
+        try {
+          const hr = await fetch(healthUrl(svc), { signal: AbortSignal.timeout(10_000) });
+          h3irHealthCache = { at: Date.now(), detail: hr.ok ? await hr.json() : null };
+        } catch { /* keep the stale cache */ }
+      }
+      detail = r.ok ? h3irHealthCache.detail : null;
+    } else {
+      try { detail = await r.json(); } catch { /* body optional */ }
+    }
     return { name, label: svc.label, port: svc.port, up: r.ok, managed: managedAlive,
              pid: managedAlive ? child.pid : null, detail };
   } catch {
@@ -330,11 +347,14 @@ const server = createServer(async (req, res) => {
         return send(res, 503, { error: "h3ir service is not running — start it first" });
       const body = await readBody(req, 16 * 1024 * 1024);
       const t0 = Date.now();
+      // 20 minutes: a local 27B doing video analysis plus a long write can pass 5 minutes
+      // easily, and the compiler's own LLM timeout is 600s per call -- the proxy must not
+      // give up while the service is still legitimately working.
       const r = await fetch(`${H3IR}/v1/briefs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(1_200_000),
       });
       const text = await r.text();
       let json;
