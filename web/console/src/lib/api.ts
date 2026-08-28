@@ -81,6 +81,12 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => j<CompileResult>(r)),
+  translateZh: (text: string) =>
+    fetch("/api/translate-zh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then((r) => j<{ zh?: string; error?: string }>(r)),
 };
 
 export function fmtBytes(n: number): string {

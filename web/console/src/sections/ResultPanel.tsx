@@ -1,15 +1,37 @@
-import { useState } from "react";
-import type { CompileResult } from "../lib/api";
+import { useEffect, useState } from "react";
+import { api, type CompileResult } from "../lib/api";
 
 type Tab = "prompt" | "plan" | "json";
 
 export default function ResultPanel({ result }: { result: CompileResult | null }) {
   const [tab, setTab] = useState<Tab>("prompt");
   const [copied, setCopied] = useState(false);
+  // Bilingual output: the canonical document is English (it is what H3 consumes, and COPY
+  // always copies it); 中文 is a display-only translation of the PROMPT tab, fetched once
+  // per result from the configured LLM endpoint.
+  const [lang, setLang] = useState<"en" | "zh">("en");
+  const [zh, setZh] = useState<string | null>(null);
+  const [zhBusy, setZhBusy] = useState(false);
+  const [zhErr, setZhErr] = useState("");
 
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { }
   };
+
+  const switchLang = async (l: "en" | "zh") => {
+    setLang(l);
+    if (l === "zh" && zh === null && !zhBusy && result?.ir?.prompt) {
+      setZhBusy(true); setZhErr("");
+      try {
+        const r = await api.translateZh(result.ir.prompt);
+        if (r.zh) setZh(r.zh); else setZhErr(r.error || "translation failed");
+      } catch (e: any) { setZhErr(e?.message || "translation failed"); }
+      finally { setZhBusy(false); }
+    }
+  };
+
+  // A new result invalidates the old translation view.
+  useEffect(() => { setZh(null); setZhErr(""); setLang("en"); }, [result?.id]);
 
   const statusChip = (s?: string) => {
     const map: Record<string, string> = {
@@ -36,9 +58,12 @@ export default function ResultPanel({ result }: { result: CompileResult | null }
     );
   } else if (result) {
     if (tab === "prompt") {
+      const shown = lang === "zh" ? zh : result.ir?.prompt;
       body = (
         <pre className="whitespace-pre-wrap p-4 font-mono text-[11px] leading-relaxed text-ink">
-          {result.ir?.prompt || "(no prompt field)"}
+          {lang === "zh" && zhBusy ? "翻译中…（首次切换需要几秒）"
+            : lang === "zh" && zhErr ? `翻译失败：${zhErr} — 仍可切回 EN 查看原文`
+            : shown || "(no prompt field)"}
         </pre>
       );
     } else if (tab === "plan") {
@@ -80,9 +105,22 @@ export default function ResultPanel({ result }: { result: CompileResult | null }
               {t.toUpperCase()}
             </button>
           ))}
+          {tab === "prompt" && result && !result.error && (
+            <>
+              <span className="mx-1 h-3 w-px bg-line" />
+              {(["en", "zh"] as const).map((l) => (
+                <button key={l} onClick={() => switchLang(l)}
+                  className={`px-2 py-1 font-mono text-[10px] tracking-[0.15em] transition-colors
+                    ${lang === l ? "bg-acc/10 text-acc" : "text-dim hover:text-ink"}`}>
+                  {l === "en" ? "EN" : "中"}
+                </button>
+              ))}
+            </>
+          )}
           <button
             onClick={() => copy(tab === "prompt" ? result?.ir?.prompt || "" : JSON.stringify(tab === "plan" ? result?.plan : result, null, 2))}
             disabled={!result}
+            title="始终复制英文原文 — H3 只认英文版"
             className="ml-2 border border-line px-3 py-1 font-mono text-[10px] tracking-[0.2em] text-dim hover:text-acc disabled:opacity-40">
             {copied ? "已复制" : "COPY"}
           </button>

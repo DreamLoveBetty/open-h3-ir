@@ -246,6 +246,39 @@ async function h3irUp() {
   } catch { return false; }
 }
 
+// ------------------------------------------------------- output translation
+// Display-only Chinese rendering of the compiled IR, for the ResultPanel's EN/中 toggle.
+// The translation is never fed back anywhere: COPY and every downstream consumer keep the
+// canonical English document. Cached by content hash so toggling costs nothing the second
+// time, and keyed on text rather than result id because the same IR can come back from a
+// re-run.
+const zhCache = new Map(); // sha256(text) -> zh string
+
+async function translateToZh(text) {
+  const s = readSettings();
+  if (!s.llm_url || !s.llm_model) throw new Error("no LLM endpoint configured in CFG");
+  const headers = { "content-type": "application/json" };
+  if (s.llm_key) headers.authorization = `Bearer ${s.llm_key}`;
+  const r = await fetch(s.llm_url.replace(/\/+$/, "") + "/chat/completions", {
+    method: "POST",
+    headers,
+    signal: AbortSignal.timeout(180_000),
+    body: JSON.stringify({
+      model: s.llm_model,
+      messages: [
+        { role: "system", content: "Translate the user's video-generation IR document into Simplified Chinese, for reading only. Preserve EXACTLY as-is: every structural label and section name, every tag such as <Subject 1>, <Picture 1>, <Video 1>, <0.5 seconds>, every shot label like [Shot 1], and every timecode. Output the translation only, no commentary." },
+        { role: "user", content: text },
+      ],
+      temperature: 0.1,
+    }),
+  });
+  if (!r.ok) throw new Error(`translator endpoint said HTTP ${r.status}`);
+  const body = await r.json();
+  const zh = body?.choices?.[0]?.message?.content;
+  if (!zh) throw new Error("translator returned no content");
+  return zh;
+}
+
 // ------------------------------------------------------------------ routes
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
@@ -430,6 +463,20 @@ const server = createServer(async (req, res) => {
       let json;
       try { json = JSON.parse(r.text); } catch { json = { raw: r.text }; }
       return send(res, r.status, { ...json, _elapsed_ms: Date.now() - t0 });
+    }
+
+    if (p === "/api/translate-zh" && req.method === "POST") {
+      const { text } = JSON.parse((await readBody(req, 4 * 1024 * 1024)).toString() || "{}");
+      if (!text) return send(res, 400, { error: "nothing to translate" });
+      const key = createHash("sha256").update(text).digest("hex");
+      if (zhCache.has(key)) return send(res, 200, { zh: zhCache.get(key), cached: true });
+      try {
+        const zh = await translateToZh(text);
+        zhCache.set(key, zh);
+        return send(res, 200, { zh });
+      } catch (e) {
+        return send(res, 502, { error: `translation failed: ${e.message}` });
+      }
     }
 
     send(res, 404, { error: `no route ${req.method} ${p}` });
