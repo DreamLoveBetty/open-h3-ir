@@ -91,8 +91,6 @@ const SERVICES = {
 const H3IR = `http://127.0.0.1:${SERVICES.h3ir.port}`;
 
 const children = new Map(); // name -> ChildProcess
-let h3irHealthCache = { at: 0, detail: null }; // see probe(): /health is expensive on h3ir
-
 function healthUrl(svc) { return `http://127.0.0.1:${svc.port}/health`; }
 
 async function probe(name) {
@@ -100,9 +98,9 @@ async function probe(name) {
   const child = children.get(name);
   const managedAlive = !!child && child.exitCode === null && !child.killed;
   // h3ir's /health runs the LLM liveness check, which re-fetches the endpoint's model list
-  // on every call -- at the console's 3s poll cadence that is a needless /v1/models hammer.
-  // Liveness here uses the static /v1/contract instead; the LLM detail block is fetched at
-  // most once a minute and served from this cache in between.
+  // on every call. The console polls status every 3s, and the owner asked for NO timed
+  // probing of the LLM endpoint at all -- detection is the CFG panel's manual button only.
+  // So h3ir liveness reads the static /v1/contract and its detail block stays empty.
   const livenessUrl = name === "h3ir"
     ? `http://127.0.0.1:${svc.port}/v1/contract` : healthUrl(svc);
   try {
@@ -111,15 +109,7 @@ async function probe(name) {
     const r = await fetch(livenessUrl, { signal: ctrl.signal });
     clearTimeout(t);
     let detail = null;
-    if (name === "h3ir") {
-      if (r.ok && Date.now() - h3irHealthCache.at > 60_000) {
-        try {
-          const hr = await fetch(healthUrl(svc), { signal: AbortSignal.timeout(10_000) });
-          h3irHealthCache = { at: Date.now(), detail: hr.ok ? await hr.json() : null };
-        } catch { /* keep the stale cache */ }
-      }
-      detail = r.ok ? h3irHealthCache.detail : null;
-    } else {
+    if (name !== "h3ir") {
       try { detail = await r.json(); } catch { /* body optional */ }
     }
     return { name, label: svc.label, port: svc.port, up: r.ok, managed: managedAlive,
@@ -309,8 +299,12 @@ const server = createServer(async (req, res) => {
       const probeOne = async ({ source, url: base }) => {
         try {
           const headers = key ? { authorization: `Bearer ${key}` } : {};
+          // Loopback answers in milliseconds or not at all; a remote endpoint across a LAN
+          // or the internet needs real patience, especially through TLS.
+          const host = new URL(base).hostname;
+          const local = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host);
           const r = await fetch(base.replace(/\/$/, "") + "/models",
-                                { headers, signal: AbortSignal.timeout(1500) });
+                                { headers, signal: AbortSignal.timeout(local ? 1500 : 8000) });
           if (r.status === 401 || r.status === 403)
             return { source, url: base, models: [], needsAuth: true };
           if (!r.ok) return null;

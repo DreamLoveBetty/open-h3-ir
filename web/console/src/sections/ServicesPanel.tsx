@@ -16,15 +16,6 @@ function capsOf(detail: any): string {
   return Object.entries(c).map(([k, v]) => `${k}:${v === "ok" ? "ok" : "—"}`).join("  ");
 }
 
-/** What the running h3ir service says about its reasoning model, when it is up. */
-function llmLine(detail: any): string {
-  const l = detail?.llm;
-  if (!l || typeof l !== "object") return "";
-  const bits = [l.model || l.model_id, l.health_via, l.vision_ok === true ? "vision ok" : null]
-    .filter(Boolean);
-  return bits.join(" · ");
-}
-
 function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => void }) {
   const [url, setUrl] = useState("");
   const [model, setModel] = useState("");
@@ -76,16 +67,16 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
 
   return (
     <div className="mt-2 space-y-2 border border-line bg-well/30 p-3">
-      <div className="text-[9px] tracking-[0.25em] text-dim">LLM ENDPOINT · 推理模型端点</div>
+      <div className="text-[9px] tracking-[0.25em] text-dim">LLM ENDPOINT · 推理模型端点（本地或远程）</div>
       <button onClick={detect} disabled={probing}
         className="w-full border border-acc/40 px-2 py-1.5 text-[10px] tracking-[0.2em] text-acc transition-colors hover:bg-acc/10 disabled:opacity-50">
-        {probing ? "探测中…" : "⟳ 自动探测本地端点（LM Studio / Ollama / vLLM）"}
+        {probing ? "探测中…" : "⟳ 探测端点（含上方填写的地址，支持远程）"}
       </button>
       {found !== null && (
         <div className="space-y-1 border border-line/60 p-2">
           {found.length === 0 && (
             <div className="font-mono text-[10px] text-warn">
-              未发现本地端点 — 确认 LM Studio 已启动并在 Developer 页 serve 了模型
+              未发现可用端点 — 本地确认 LM Studio 已 serve；远程检查地址、网络与 API Key
             </div>
           )}
           {found.map((e) => (
@@ -121,11 +112,11 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
         </div>
       )}
       <input value={url} onChange={(e) => setUrl(e.target.value)}
-        placeholder="http://127.0.0.1:1234/v1  (LM Studio 默认)" className={field} />
+        placeholder="http://127.0.0.1:1234/v1 或远程 https://主机:端口/v1" className={field} />
       <input value={model} onChange={(e) => setModel(e.target.value)}
         placeholder="模型 id（单模型端点可留空）" className={field} />
       <input value={key} onChange={(e) => setKey(e.target.value)} type="password"
-        placeholder={keySet ? "API Key 已设置（输入以更换）" : "API Key（可选）"} className={field} />
+        placeholder={keySet ? "API Key 已设置（输入以更换）" : "API Key（远程端点通常必填）"} className={field} />
       <div className="flex items-center gap-2">
         <button onClick={save}
           className="border border-acc/40 px-3 py-1 text-[10px] tracking-[0.15em] text-acc hover:bg-acc/10">
@@ -227,9 +218,6 @@ export default function ServicesPanel({
             </div>
             {s.up && capsOf(s.detail) && (
               <div className="mt-1.5 font-mono text-[10px] text-acc/50">{capsOf(s.detail)}</div>
-            )}
-            {s.name === "h3ir" && s.up && llmLine(s.detail) && (
-              <div className="mt-1.5 font-mono text-[10px] text-acc/50">{llmLine(s.detail)}</div>
             )}
             {s.name === "h3ir" && cfgOpen && <LlmConfig h3ir={s} onChanged={onChanged} />}
             {logFor === s.name && (
