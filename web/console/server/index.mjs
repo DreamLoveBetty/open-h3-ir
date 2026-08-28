@@ -276,10 +276,12 @@ const server = createServer(async (req, res) => {
                               restart_needed: !!(svc && svc.exitCode === null) });
     }
 
-    // Probe the well-known local LLM servers (plus any URL the caller is typing) for their
-    // /v1/models list, so the CFG panel can offer click-to-fill instead of hand-typed ids.
-    // A server that publishes no model list is reported without one; which model has a
-    // vision tower is never guessed from metadata (repo rule) — that is what doctor is for.
+    // Probe the well-known local LLM servers (plus any URL the caller is typing, local or
+    // remote) for their /v1/models list, so the CFG panel can offer click-to-fill instead of
+    // hand-typed ids. Gateways that serve a web UI at /models are distinguished from the real
+    // API by whether the body parses as a model list. A server that publishes no model list is
+    // reported without one; which model has a vision tower is never guessed from metadata
+    // (repo rule) — that is what doctor is for.
     if (p === "/api/detect-llm" && req.method === "GET") {
       const KNOWN = [
         ["LM Studio", "http://127.0.0.1:1234/v1"],
@@ -297,22 +299,31 @@ const server = createServer(async (req, res) => {
         if (u && !candidates.some((c) => c.url === u)) candidates.push({ source, url: u });
       }
       const probeOne = async ({ source, url: base }) => {
-        try {
-          const headers = key ? { authorization: `Bearer ${key}` } : {};
-          // Loopback answers in milliseconds or not at all; a remote endpoint across a LAN
-          // or the internet needs real patience, especially through TLS.
-          const host = new URL(base).hostname;
-          const local = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host);
-          const r = await fetch(base.replace(/\/$/, "") + "/models",
-                                { headers, signal: AbortSignal.timeout(local ? 1500 : 8000) });
-          if (r.status === 401 || r.status === 403)
-            return { source, url: base, models: [], needsAuth: true };
-          if (!r.ok) return null;
-          const body = await r.json();
-          const models = Array.isArray(body?.data)
-            ? body.data.map((m) => m?.id).filter(Boolean) : [];
-          return { source, url: base, models };
-        } catch { return null; }
+        const headers = key ? { authorization: `Bearer ${key}` } : {};
+        // Loopback answers in milliseconds or not at all; a remote endpoint across a LAN
+        // or the internet needs real patience, especially through TLS.
+        const host = new URL(base).hostname;
+        const local = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host);
+        const timeoutMs = local ? 1500 : 8000;
+        // Gateways (New API / One API and friends) serve a WEB PAGE at /models and the real
+        // API at /v1/models, so a bare host:port has to try both -- and a 200 that does not
+        // parse as a model list is the web UI, not an answer.
+        const stem = base.replace(/\/+$/, "");
+        const paths = /\/v\d+\w*$/.test(stem) ? ["/models"] : ["/v1/models", "/models"];
+        for (const suffix of paths) {
+          const apiRoot = stem + suffix.replace(/\/models$/, "");
+          try {
+            const r = await fetch(stem + suffix, { headers, signal: AbortSignal.timeout(timeoutMs) });
+            if (r.status === 401 || r.status === 403)
+              return { source, url: apiRoot || stem, models: [], needsAuth: true };
+            if (!r.ok) continue;
+            const body = await r.json().catch(() => null);
+            if (!body || !Array.isArray(body.data)) continue; // web UI page, not the API
+            const models = body.data.map((m) => m?.id).filter(Boolean);
+            return { source, url: apiRoot || stem, models };
+          } catch { /* try the next path */ }
+        }
+        return null;
       };
       const found = (await Promise.all(candidates.map(probeOne))).filter(Boolean);
       return send(res, 200, { endpoints: found });

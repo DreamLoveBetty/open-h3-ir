@@ -86,13 +86,13 @@ function LlmConfig({ h3ir, onChanged }: { h3ir: ServiceStatus; onChanged: () => 
                 {e.needsAuth && (
                   <button onClick={() => setUrl(e.url)}
                     className="border border-warn/40 px-1.5 py-0 text-[9px] text-warn hover:bg-warn/10">
-                    需 API token · 点击只填地址
+                    需 API Key · 点击只填地址
                   </button>
                 )}
               </div>
               {e.needsAuth && (
                 <div className="mt-0.5 font-mono text-[9px] leading-relaxed text-warn/80">
-                  把 LM Studio 的 API token 填到下面 API Key 一栏再探测；或在 LM Studio → Developer → Server Settings 关掉 Require API Token
+                  端点在线但要求鉴权：把 API Key 填到下面一栏再探测（远程网关的 Key 在服务商后台生成）
                 </div>
               )}
               <div className="mt-0.5 flex flex-wrap gap-1">
