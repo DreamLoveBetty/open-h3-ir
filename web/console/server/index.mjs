@@ -54,6 +54,7 @@ const SERVICES = {
   worker: {
     label: "AUDIO WORKER",
     port: 50000,
+    signatures: ["audio_worker"],
     cwd: path.join(REPO, "services"),
     cmd: [path.join(REPO, "services", ".venv-audio", "bin", "python"), "-m", "audio_worker.app"],
     env: { ...MODEL_ENV },
@@ -61,6 +62,7 @@ const SERVICES = {
   omni: {
     label: "OMNI FALLBACK",
     port: 8001,
+    signatures: ["llama-server"],
     cwd: REPO,
     // Qwen2.5-Omni-3B Q8_0 through llama-server instead of the transformers shim: the same
     // OpenAI chat shape with input_audio at ~8GB resident (mmap'd, largely reclaimable)
@@ -77,6 +79,7 @@ const SERVICES = {
   h3ir: {
     label: "H3IR COMPILER",
     port: 8420,
+    signatures: ["h3ir.cli"],
     cwd: REPO,
     cmd: [path.join(REPO, ".venv", "bin", "python"), "-m", "h3ir.cli",
           "serve", "--host", "127.0.0.1", "--port", "8420"],
@@ -162,7 +165,10 @@ function stopForeignListener(svc) {
   for (const pid of pids) {
     let cmdline = "";
     try { cmdline = execSync(`ps -p ${pid} -o command=`, { encoding: "utf8" }); } catch { continue; }
-    if (cmdline.includes(REPO)) ours.push(pid);
+    // An absolute path containing the repo, or the service's own module/binary signature —
+    // a launch from inside the repo shows up as `.venv/bin/python -m h3ir.cli`, with no
+    // absolute path in it at all.
+    if (cmdline.includes(REPO) || svc.signatures.some((s) => cmdline.includes(s))) ours.push(pid);
   }
   if (!ours.length) return { stopped: false, reason: `port ${svc.port} held by a foreign process, left alone` };
   for (const pid of ours) { try { process.kill(pid, "SIGTERM"); } catch { } }
